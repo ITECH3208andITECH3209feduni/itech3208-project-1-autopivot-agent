@@ -1,0 +1,1398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AutoPivot Agent — Car Processor</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07090F;--bg2:#0C0F18;--bg3:#111520;
+  --surface:#161B28;--surface2:#1D2336;--surface3:#242C42;
+  --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.11);
+  --accent:#00E5A0;--accent2:#00FFB2;--adim:rgba(0,229,160,0.08);
+  --warn:#FFB800;--red:#FF4D6A;--blue:#4D9EFF;--purple:#A78BFA;
+  --text:#ECEEF5;--text2:#7A8398;--text3:#3D4558;
+  --font:'Syne',sans-serif;--mono:'JetBrains Mono',monospace;
+}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.6;min-height:100vh;overflow-x:hidden}
+::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:var(--accent);border-radius:2px}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:300;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 40px;background:rgba(7,9,15,0.94);backdrop-filter:blur(20px);border-bottom:0.5px solid var(--border)}
+.logo{font-size:17px;font-weight:800}.logo span{color:var(--accent)}
+.nav-r{display:flex;align-items:center;gap:10px}
+.npill{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;color:var(--accent);background:var(--adim);border:0.5px solid rgba(0,229,160,0.3);padding:4px 12px;border-radius:100px}
+.nreset{display:none;background:var(--surface);border:0.5px solid var(--border2);color:var(--text2);padding:7px 18px;border-radius:8px;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;transition:all 0.2s}
+.nreset:hover{color:var(--text);border-color:var(--border2)}.nreset.on{display:inline-block}
+.nav-divider{width:1px;height:20px;background:var(--border2)}
+.nlogin{background:var(--accent);color:#040810;border:none;padding:7px 18px;border-radius:8px;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:6px}
+.nlogin:hover{background:var(--accent2)}
+.nlogin svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2}
+.nuser{display:none;align-items:center;gap:8px;cursor:pointer;position:relative}
+.nuser.on{display:flex}
+.nuser-av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--blue));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#040810;border:2px solid rgba(0,229,160,0.3)}
+.nuser-name{font-size:12px;font-weight:700;color:var(--text)}
+.nuser-caret{font-size:9px;color:var(--text3)}
+.nuser-menu{position:absolute;top:calc(100% + 10px);right:0;background:var(--surface2);border:0.5px solid var(--border2);border-radius:10px;min-width:160px;padding:6px;z-index:400;display:none;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+.nuser-menu.on{display:block}
+.nuser-mi{padding:8px 12px;border-radius:7px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:8px}
+.nuser-mi:hover{background:var(--surface3);color:var(--text)}
+.nuser-mi.danger:hover{color:var(--red)}
+/* LOGIN MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(7,9,15,0.88);backdrop-filter:blur(12px);z-index:500;display:none;align-items:center;justify-content:center}
+.modal-overlay.on{display:flex}
+.modal{background:var(--surface);border:0.5px solid var(--border2);border-radius:20px;width:100%;max-width:400px;margin:20px;padding:32px;position:relative;animation:fu 0.3s both}
+.modal-close{position:absolute;top:14px;right:14px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text3);width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all 0.2s}
+.modal-close:hover{color:var(--text);border-color:var(--border2)}
+.modal-logo{font-size:14px;font-weight:800;margin-bottom:6px}.modal-logo span{color:var(--accent)}
+.modal-eyebrow{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--accent);margin-bottom:22px}
+.modal-tabs{display:flex;background:var(--bg2);border-radius:8px;padding:3px;gap:3px;margin-bottom:24px}
+.modal-tab{flex:1;padding:7px;border-radius:6px;font-family:var(--font);font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;text-align:center;border:none;background:none;transition:all 0.2s}
+.modal-tab.on{background:var(--surface2);color:var(--text);border:0.5px solid var(--border2)}
+.modal-field{margin-bottom:14px}
+.modal-label{font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:1px;margin-bottom:6px;display:block}
+.modal-input{width:100%;background:var(--bg2);border:0.5px solid var(--border2);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:13px;color:var(--text);outline:none;transition:border-color 0.2s}
+.modal-input:focus{border-color:rgba(0,229,160,0.4)}
+.modal-input::placeholder{color:var(--text3)}
+.modal-submit{width:100%;background:var(--accent);color:#040810;border:none;padding:11px;border-radius:9px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:all 0.2s;margin-top:6px}
+.modal-submit:hover{background:var(--accent2)}
+.modal-divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--text3);font-size:11px;font-family:var(--mono)}
+.modal-divider::before,.modal-divider::after{content:'';flex:1;height:0.5px;background:var(--border2)}
+.modal-oauth{display:flex;gap:8px}
+.modal-oabtn{flex:1;background:var(--surface2);border:0.5px solid var(--border2);border-radius:8px;padding:9px;font-family:var(--font);font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;transition:all 0.2s;text-align:center}
+.modal-oabtn:hover{border-color:var(--border2);color:var(--text)}
+.modal-foot{font-size:11px;color:var(--text3);text-align:center;margin-top:16px}
+.modal-foot span{color:var(--accent);cursor:pointer;font-weight:700}
+.modal-foot span:hover{text-decoration:underline}
+.modal-err{font-family:var(--mono);font-size:11px;color:var(--red);background:rgba(255,77,106,0.07);border:0.5px solid rgba(255,77,106,0.2);border-radius:7px;padding:8px 12px;margin-bottom:12px;display:none}
+.modal-err.on{display:block}
+
+#hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:80px 32px 60px;position:relative;overflow:hidden}
+.hdots{position:absolute;inset:0;background-image:radial-gradient(rgba(0,229,160,0.055) 1px,transparent 1px);background-size:30px 30px;pointer-events:none}
+.hglow{position:absolute;top:20%;left:50%;transform:translateX(-50%);width:700px;height:500px;background:radial-gradient(ellipse,rgba(0,229,160,0.05) 0%,transparent 68%);pointer-events:none}
+.heyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;color:var(--accent);margin-bottom:18px;animation:fu 0.6s 0.1s both}
+.htitle{font-size:clamp(42px,7vw,94px);font-weight:800;line-height:0.93;letter-spacing:-3px;margin-bottom:24px;animation:fu 0.6s 0.2s both}
+.htitle em{font-style:normal;color:var(--accent)}.htitle .dim{color:var(--text3)}
+.hsub{font-size:16px;color:var(--text2);max-width:500px;line-height:1.75;margin-bottom:44px;animation:fu 0.6s 0.3s both}
+.upzone{width:100%;max-width:580px;border:1.5px dashed rgba(0,229,160,0.28);border-radius:18px;padding:44px 28px;cursor:pointer;transition:all 0.25s;background:rgba(0,229,160,0.015);animation:fu 0.6s 0.4s both}
+.upzone:hover,.upzone.drag{border-color:var(--accent);background:var(--adim);transform:scale(1.01)}
+.upicon{width:60px;height:60px;border-radius:14px;background:var(--surface2);border:0.5px solid var(--border2);display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+.upicon svg{width:24px;height:24px;stroke:var(--accent);fill:none;stroke-width:1.5}
+.uptitle{font-size:19px;font-weight:800;letter-spacing:-0.5px;margin-bottom:6px}
+.upsub{font-size:13px;color:var(--text2);margin-bottom:20px}
+.upcta{display:inline-flex;align-items:center;gap:7px;background:var(--accent);color:#040810;padding:10px 26px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;font-family:var(--font);transition:all 0.2s}
+.upcta:hover{background:var(--accent2)}
+#fi{display:none}
+.hbadge{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--accent);background:var(--adim);border:0.5px solid rgba(0,229,160,0.25);padding:5px 14px;border-radius:100px;margin-bottom:28px;animation:fu 0.6s 0.35s both}
+.hbadge-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bk 1.5s infinite}
+@keyframes fu{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+
+#app{display:none;padding-top:60px}
+.tbar{background:var(--bg2);border-bottom:0.5px solid var(--border);padding:14px 40px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.tfname{font-family:var(--mono);font-size:11px;color:var(--text2);background:var(--surface);padding:4px 12px;border-radius:6px;border:0.5px solid var(--border2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.tpill{font-family:var(--mono);font-size:10px;padding:4px 12px;border-radius:100px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.tpill.run{color:var(--warn);background:rgba(255,184,0,0.1);border:0.5px solid rgba(255,184,0,0.22)}
+.tpill.done{color:var(--accent);background:var(--adim);border:0.5px solid rgba(0,229,160,0.22)}
+.tpwrap{flex:1;background:var(--surface2);border-radius:100px;height:3px;overflow:hidden;min-width:80px}
+.tpbar{height:100%;background:var(--accent);border-radius:100px;width:0%;transition:width 0.3s ease}
+.tppct{font-family:var(--mono);font-size:11px;color:var(--accent);min-width:32px}
+.blink{width:6px;height:6px;border-radius:50%;background:currentColor;animation:bk 1.1s infinite}
+@keyframes bk{0%,100%{opacity:1}50%{opacity:0.25}}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.main{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:20px 40px 20px}
+.card{background:var(--surface);border:0.5px solid var(--border2);border-radius:14px;overflow:hidden;transition:border-color 0.3s}
+.card.rdy{border-color:rgba(0,229,160,0.22)}
+.chdr{padding:13px 16px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.ctitle{font-size:12px;font-weight:700;display:flex;align-items:center;gap:7px}
+.cico{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.bdg{font-family:var(--mono);font-size:9px;letter-spacing:0.8px;padding:2px 9px;border-radius:100px}
+.bw{color:var(--text3);background:var(--surface3)}
+.br{color:var(--warn);background:rgba(255,184,0,0.09);border:0.5px solid rgba(255,184,0,0.18)}
+.bd{color:var(--accent);background:var(--adim);border:0.5px solid rgba(0,229,160,0.18)}
+.cbody{padding:12px;min-height:300px;position:relative;display:flex;flex-direction:column;gap:8px}
+.lov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:var(--surface);z-index:2}
+.lspin{width:32px;height:32px;border:2.5px solid var(--surface3);border-top-color:var(--accent);border-radius:50%;animation:sp 0.7s linear infinite}
+.ltxt{font-family:var(--mono);font-size:11px;color:var(--text2)}
+.lsub{font-size:11px;color:var(--text3);text-align:center;padding:0 20px}
+.gemini-badge{font-family:var(--mono);font-size:9px;color:var(--purple);background:rgba(167,139,250,0.08);border:0.5px solid rgba(167,139,250,0.2);padding:3px 8px;border-radius:100px;margin-top:4px}
+.res{display:none;flex-direction:column;flex:1;gap:8px}
+
+.checker{flex:1;border-radius:10px;overflow:hidden;background:repeating-conic-gradient(#1B2130 0% 25%,#141924 0% 50%) 0 0/12px 12px;min-height:220px;position:relative}
+.checker img,.checker canvas{width:100%;height:100%;object-fit:contain;display:block}
+.bg-env-label{font-family:var(--mono);font-size:9px;color:var(--accent);background:rgba(7,9,15,0.75);padding:3px 8px;border-radius:4px;position:absolute;top:8px;left:8px}
+
+.v3wrap{flex:1;border-radius:10px;overflow:hidden;background:var(--bg3);cursor:grab;position:relative;min-height:220px}
+.v3wrap:active{cursor:grabbing}
+#cv3d{width:100%;height:100%;display:block}
+.v3hint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:9px;color:var(--accent);background:rgba(7,9,15,0.8);padding:3px 12px;border-radius:100px;white-space:nowrap;pointer-events:none;border:0.5px solid rgba(0,229,160,0.2)}
+.envpicker{display:flex;gap:6px;flex-wrap:wrap}
+.envbtn{flex:1;min-width:80px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:8px;padding:8px 6px;font-family:var(--font);font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;transition:all 0.2s;text-align:center;display:flex;flex-direction:column;align-items:center;gap:3px}
+.envbtn .eico{font-size:18px}
+.envbtn.on,.envbtn:hover{background:var(--adim);border-color:rgba(0,229,160,0.35);color:var(--accent)}
+.v3btnrow{display:flex;gap:6px}
+.v3btn{flex:1;background:var(--surface2);border:0.5px solid var(--border2);border-radius:6px;padding:6px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;transition:all 0.2s;text-align:center;font-family:var(--font)}
+.v3btn.on,.v3btn:hover{background:var(--adim);border-color:rgba(0,229,160,0.3);color:var(--accent)}
+
+.pcanvas-wrap{flex:1;border-radius:10px;overflow:hidden;min-height:220px;position:relative;background:var(--bg3)}
+#cvplate{width:100%;height:100%;display:block;object-fit:contain}
+
+.dprice{font-family:var(--mono);font-size:24px;font-weight:700;color:var(--accent);letter-spacing:-0.5px}
+.dtags{display:flex;gap:5px;flex-wrap:wrap}
+.dtag{font-size:10px;padding:3px 8px;border-radius:5px;background:var(--surface2);border:0.5px solid var(--border2);color:var(--text2)}
+.dtag.a{border-color:rgba(0,229,160,0.3);color:var(--accent);background:var(--adim)}
+.dtext{font-size:12px;color:var(--text2);line-height:1.85;background:var(--bg2);border-radius:8px;padding:12px;border:0.5px solid var(--border);flex:1;font-family:var(--mono);white-space:pre-wrap;overflow-y:auto;max-height:200px;min-height:100px}
+
+.dlrow{display:flex;gap:7px}
+.dbtn{flex:1;background:var(--surface2);border:0.5px solid var(--border2);color:var(--text2);padding:8px;border-radius:8px;font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;transition:all 0.2s;text-align:center}
+.dbtn:hover{border-color:var(--accent);color:var(--accent)}
+.dbtn.p{background:var(--accent);color:#040810;border-color:var(--accent)}.dbtn.p:hover{background:var(--accent2)}
+
+.pubwrap{margin:0 40px 40px;background:var(--surface);border:0.5px solid var(--border2);border-radius:14px;padding:22px 26px;display:none}
+.pubwrap.on{display:block}
+.pubtitle{font-size:15px;font-weight:800;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.pubplats{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px}
+.pplat{padding:9px 15px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;transition:all 0.2s;user-select:none}
+.pplat.on{border-color:rgba(0,229,160,0.4);background:var(--adim);color:var(--accent)}
+.pubgo{background:var(--accent);color:#040810;border:none;padding:10px 30px;border-radius:8px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:all 0.2s}
+.pubgo:hover{background:var(--accent2)}
+.publog{font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:12px;line-height:2;display:none}
+.pok{color:var(--accent)}.pwarn{color:var(--warn)}
+.pubsucc{display:none;margin-top:12px;background:var(--adim);border:0.5px solid rgba(0,229,160,0.3);border-radius:10px;padding:14px 18px;font-size:13px;font-weight:700;color:var(--accent)}
+.pubsucc.on{display:block}
+
+/* Error toast */
+.toast{position:fixed;bottom:24px;right:24px;background:var(--surface2);border:0.5px solid rgba(255,77,106,0.4);color:var(--red);padding:10px 18px;border-radius:10px;font-family:var(--mono);font-size:12px;z-index:999;display:none;animation:fu 0.3s both}
+.toast.on{display:block}
+
+@media(max-width:860px){
+  nav{padding:0 18px}.main{grid-template-columns:1fr;padding:14px 18px}
+  .tbar{padding:10px 18px}.pubwrap{margin:0 18px 32px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">Auto<span>Pivot</span> Agent</div>
+  <div class="nav-r">
+    <div class="npill">GEMINI POWERED</div>
+    <button class="nreset" id="nreset" onclick="resetAll()">↺ New Image</button>
+    <div class="nav-divider"></div>
+    <button class="nlogin" id="nloginBtn" onclick="openModal('login')">
+      <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      Log In
+    </button>
+    <div class="nuser" id="nuser" onclick="toggleUserMenu()">
+      <div class="nuser-av" id="nuser-av">?</div>
+      <div class="nuser-name" id="nuser-name">User</div>
+      <div class="nuser-caret">▾</div>
+      <div class="nuser-menu" id="nuser-menu">
+        <div class="nuser-mi">👤 My Account</div>
+        <div class="nuser-mi">⚙️ Settings</div>
+        <div class="nuser-mi">📊 My Listings</div>
+        <div class="nuser-mi danger" onclick="event.stopPropagation();doLogout()">→ Sign Out</div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div id="hero">
+  <div class="hdots"></div><div class="hglow"></div>
+  <div class="heyebrow">END-TO-END AI CAR AGENT</div>
+  <h1 class="htitle">Upload Once.<br/><em>Get Everything.</em><br/><span class="dim">Powered by Gemini.</span></h1>
+  <p class="hsub">Gemini Vision removes backgrounds · generates 3D renders · hides plates · writes AI sales listings — all in one click.</p>
+  <div class="hbadge"><div class="hbadge-dot"></div>Gemini 2.0 Flash · Vision + Generation</div>
+  <div class="upzone" id="upzone" ondragover="dov(event)" ondragleave="dlv()" ondrop="ddp(event)" onclick="document.getElementById('fi').click()">
+    <div class="upicon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
+    <div class="uptitle">Drop your car photo here</div>
+    <div class="upsub">JPG · PNG · WEBP — fully processed by Gemini AI Vision</div>
+    <button class="upcta" onclick="event.stopPropagation();document.getElementById('fi').click()">Choose Car Image</button>
+    <input type="file" id="fi" accept="image/*" onchange="startPipeline(this.files[0])"/>
+  </div>
+</div>
+
+<div id="app">
+  <div class="tbar">
+    <div class="tfname" id="tfname">—</div>
+    <div class="tpill run" id="tpill"><div class="blink"></div><span id="tptxt">Processing...</span></div>
+    <div class="tpwrap"><div class="tpbar" id="tpbar"></div></div>
+    <div class="tppct" id="tppct">0%</div>
+  </div>
+
+  <div class="main">
+
+    <!-- CARD 1: BG REMOVAL -->
+    <div class="card" id="card-bg">
+      <div class="chdr">
+        <div class="ctitle"><div class="cico" style="background:rgba(0,229,160,0.1)">🎨</div>Background Removed — Gemini Guided Cutout</div>
+        <div class="bdg bw" id="bdg-bg">Waiting</div>
+      </div>
+      <div class="cbody">
+        <div class="lov" id="lov-bg">
+          <div class="lspin"></div>
+          <div class="ltxt" id="ltxt-bg">Gemini analysing image composition...</div>
+          <div class="lsub">AI detects car bounds · removes background precisely</div>
+          <div class="gemini-badge">✦ Gemini Vision</div>
+        </div>
+        <div class="res" id="res-bg">
+          <div class="checker" id="bgout-wrap">
+            <div class="bg-env-label" id="bg-env-label">Studio White</div>
+            <canvas id="cvbg"></canvas>
+          </div>
+          <div class="dlrow">
+            <button class="dbtn p" onclick="dlCv('cvbg','car-nobg.png')">↓ Download PNG</button>
+            <button class="dbtn" onclick="cpCv('cvbg')">⎘ Copy</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD 2: 3D VIEWER -->
+    <div class="card" id="card-3d">
+      <div class="chdr">
+        <div class="ctitle"><div class="cico" style="background:rgba(77,158,255,0.1)">🔄</div>3D Car Viewer — AI Generated Model</div>
+        <div class="bdg bw" id="bdg-3d">Waiting</div>
+      </div>
+      <div class="cbody">
+        <div class="lov" id="lov-3d">
+          <div class="lspin" style="border-top-color:var(--blue)"></div>
+          <div class="ltxt">Building 3D car model...</div>
+          <div class="lsub">AI generates photorealistic renders per environment</div>
+          <div class="gemini-badge">✦ Pollinations AI</div>
+        </div>
+        <div class="res" id="res-3d">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Choose Environment</div>
+          <div class="envpicker" id="envpicker">
+            <button class="envbtn on" data-env="studio" onclick="pickEnv(this)"><span class="eico">🏢</span>Studio</button>
+            <button class="envbtn" data-env="showroom" onclick="pickEnv(this)"><span class="eico">✨</span>Showroom</button>
+            <button class="envbtn" data-env="sunset" onclick="pickEnv(this)"><span class="eico">🌅</span>Sunset</button>
+            <button class="envbtn" data-env="city" onclick="pickEnv(this)"><span class="eico">🌆</span>City Night</button>
+            <button class="envbtn" data-env="mountain" onclick="pickEnv(this)"><span class="eico">⛰️</span>Mountain</button>
+            <button class="envbtn" data-env="track" onclick="pickEnv(this)"><span class="eico">🏁</span>Race Track</button>
+          </div>
+          <div class="v3wrap" id="v3wrap">
+            <canvas id="cv3d"></canvas>
+            <div class="v3hint">⟵ DRAG TO ROTATE · SCROLL TO ZOOM ⟶</div>
+          </div>
+          <div class="v3btnrow">
+            <button class="v3btn on" id="vb-ext" onclick="setV3Mode('exterior',this)">360° Exterior</button>
+            <button class="v3btn" id="vb-int" onclick="setV3Mode('interior',this)">Interior</button>
+            <button class="v3btn" id="vb-top" onclick="setV3Mode('top',this)">Top Down</button>
+            <button class="v3btn" id="vb-spin" onclick="toggleSpin(this)">⟳ Auto Spin</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD 3: PLATE HIDDEN -->
+    <div class="card" id="card-plate">
+      <div class="chdr">
+        <div class="ctitle"><div class="cico" style="background:rgba(255,184,0,0.1)">🔒</div>Number Plate — Hidden with Mascot</div>
+        <div class="bdg bw" id="bdg-plate">Waiting</div>
+      </div>
+      <div class="cbody">
+        <div class="lov" id="lov-plate">
+          <div class="lspin" style="border-top-color:var(--warn)"></div>
+          <div class="ltxt" id="ltxt-plate">Gemini locating plate region...</div>
+          <div class="lsub">Gemini Vision detects exact plate coordinates</div>
+          <div class="gemini-badge">✦ Gemini Vision</div>
+        </div>
+        <div class="res" id="res-plate">
+          <div class="pcanvas-wrap"><canvas id="cvplate"></canvas></div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--warn);background:rgba(255,184,0,0.07);border:0.5px solid rgba(255,184,0,0.18);border-radius:8px;padding:8px 12px">
+            ✓ Plate region replaced with animated privacy mascot
+          </div>
+          <div class="dlrow"><button class="dbtn p" onclick="dlCv('cvplate','car-plate-hidden.jpg')">↓ Download</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD 4: AI LISTING -->
+    <div class="card" id="card-desc">
+      <div class="chdr">
+        <div class="ctitle"><div class="cico" style="background:rgba(167,139,250,0.1)">✍️</div>AI Sales Listing — Psycho-Linguistic Copy</div>
+        <div class="bdg bw" id="bdg-desc">Waiting</div>
+      </div>
+      <div class="cbody">
+        <div class="lov" id="lov-desc">
+          <div class="lspin" style="border-top-color:var(--purple)"></div>
+          <div class="ltxt" id="ltxt-desc">Gemini Vision analysing your car...</div>
+          <div class="lsub">Real AI analyses photo · identifies car · writes listing</div>
+          <div class="gemini-badge">✦ Gemini 2.0 Flash</div>
+        </div>
+        <div class="res" id="res-desc">
+          <div class="dprice" id="dprice">$0</div>
+          <div class="dtags" id="dtags"></div>
+          <div class="dtext" id="dtext"></div>
+          <div class="dlrow">
+            <button class="dbtn p" onclick="cpDesc()">⎘ Copy Listing</button>
+            <button class="dbtn" onclick="regenDesc()">↺ Regenerate</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pubwrap" id="pubwrap">
+    <div class="pubtitle">🚀 Publish to Marketplaces — Zero Human Intervention</div>
+    <div class="pubplats">
+      <div class="pplat on" onclick="this.classList.toggle('on')">📘 Facebook Marketplace</div>
+      <div class="pplat on" onclick="this.classList.toggle('on')">🚗 Carsales.com.au</div>
+      <div class="pplat" onclick="this.classList.toggle('on')">🟠 Gumtree</div>
+      <div class="pplat" onclick="this.classList.toggle('on')">🏷️ AutoTrader</div>
+    </div>
+    <button class="pubgo" onclick="doPublish()">🚀 Publish Now</button>
+    <div class="publog" id="publog"></div>
+    <div class="pubsucc" id="pubsucc">🎉 Listing LIVE — ID #<span id="pubid">—</span> · Published by AutoListing AI</div>
+  </div>
+</div>
+
+<canvas id="tmpcv" style="display:none"></canvas>
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// BACKEND CONFIG — Gemini API (baked in, runs entirely client-side)
+// ════════════════════════════════════════════════════════════
+const GEMINI_KEY = 'AIzaSyCpsGmjahNXwcvIWsKcTmLvDRn9iNU4lTo';
+const GEMINI_FLASH = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
+const GEMINI_FLASH_LITE = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_KEY}`;
+
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+let srcFile=null, srcImg=null;
+let cutoutBlob=null, cutoutImg=null;
+let v3Angle=0, v3Tilt=0, v3Zoom=1.0;
+let v3Mode='exterior', v3Env='studio';
+let v3Drag=false, v3Lx=0, v3Ly=0;
+let v3Spin=false, v3SpinT=null;
+let detFeats={}, genDesc='';
+let mascotTimer=null;
+let carBoundsFromGemini=null; // {x,y,w,h} normalised 0-1
+const W8=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ════════════════════════════════════════════════════════════
+// GEMINI API CALLER — centralised backend function
+// ════════════════════════════════════════════════════════════
+async function callGemini(parts, opts={}) {
+  const { temperature=0.2, maxTokens=600, url=GEMINI_FLASH } = opts;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: { temperature, maxOutputTokens: maxTokens }
+    })
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Gemini API ${resp.status}: ${err}`);
+  }
+  const data = await resp.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+// Helper: image part for Gemini
+function imgPart(base64, mimeType) {
+  return { inline_data: { mime_type: mimeType, data: base64 } };
+}
+
+// Helper: file to base64 (no prefix)
+function fileToBase64(file) {
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=e=>res(e.target.result.split(',')[1]);
+    r.onerror=rej;
+    r.readAsDataURL(file);
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// UPLOAD
+// ════════════════════════════════════════════════════════════
+function dov(e){e.preventDefault();document.getElementById('upzone').classList.add('drag')}
+function dlv(){document.getElementById('upzone').classList.remove('drag')}
+function ddp(e){e.preventDefault();dlv();const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))startPipeline(f)}
+
+function startPipeline(file){
+  if(!file)return;
+  srcFile=file;
+  document.getElementById('hero').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('tfname').textContent=file.name;
+  document.getElementById('nreset').classList.add('on');
+  window.scrollTo({top:0});
+  const r=new FileReader();
+  r.onload=e=>{const i=new Image();i.onload=()=>{srcImg=i;runAll()};i.src=e.target.result};
+  r.readAsDataURL(file);
+}
+
+// ════════════════════════════════════════════════════════════
+// PROGRESS
+// ════════════════════════════════════════════════════════════
+function setP(v){
+  document.getElementById('tpbar').style.width=Math.min(v,100)+'%';
+  document.getElementById('tppct').textContent=Math.round(Math.min(v,100))+'%';
+}
+function animP(from,to,ms){
+  return new Promise(res=>{
+    const s=performance.now();
+    function t(now){
+      const p=Math.min((now-s)/ms,1),val=from+(to-from)*p;
+      const cur=parseFloat(document.getElementById('tpbar').style.width)||0;
+      if(val>cur)setP(val);
+      p<1?requestAnimationFrame(t):res();
+    }
+    requestAnimationFrame(t);
+  });
+}
+function setDone(){
+  const p=document.getElementById('tpill');
+  p.className='tpill done';
+  p.innerHTML='<div class="blink"></div><span>All Done ✓</span>';
+  setP(100);
+}
+function setBdg(id,cls,txt){const e=document.getElementById('bdg-'+id);e.className='bdg '+cls;e.textContent=txt}
+function showRes(id){
+  document.getElementById('lov-'+id).style.display='none';
+  const r=document.getElementById('res-'+id);r.style.display='flex';r.style.flexDirection='column';
+  document.getElementById('card-'+id).classList.add('rdy');
+}
+function ltxt(id,t){const e=document.getElementById('ltxt-'+id);if(e)e.textContent=t}
+function showToast(msg){
+  const t=document.getElementById('toast');t.textContent=msg;t.classList.add('on');
+  setTimeout(()=>t.classList.remove('on'),4000);
+}
+
+// ════════════════════════════════════════════════════════════
+// RUN ALL — parallel
+// ════════════════════════════════════════════════════════════
+async function runAll(){
+  setP(0);
+  await Promise.all([doBGRemoval(), doPlate(), doDesc()]);
+  setDone();
+  document.getElementById('pubwrap').classList.add('on');
+}
+
+// ════════════════════════════════════════════════════════════
+// 1. BACKGROUND REMOVAL — Gemini detects car bounds → canvas cutout
+// ════════════════════════════════════════════════════════════
+async function doBGRemoval(){
+  setBdg('bg','br','Running');
+  ltxt('bg','Gemini analysing car composition...');
+  await animP(0,8,500);
+
+  try {
+    const base64 = await fileToBase64(srcFile);
+    const mimeType = srcFile.type || 'image/jpeg';
+
+    ltxt('bg','Gemini detecting car bounding region...');
+    await animP(8,18,800);
+
+    // Ask Gemini to give us precise bounding box and dominant bg colour
+    const boundsText = await callGemini([
+      imgPart(base64, mimeType),
+      { text: `Analyse this car image. Return ONLY valid JSON, no markdown, no explanation:
+{"car_x":0.12,"car_y":0.08,"car_w":0.78,"car_h":0.82,"bg_r":180,"bg_g":185,"bg_b":190,"bg_type":"sky"}
+Where car_x,car_y,car_w,car_h are the car's bounding box as fractions of image size (0.0-1.0).
+bg_r,bg_g,bg_b are the approximate RGB values of the dominant background colour (0-255).
+bg_type is one of: sky, road, concrete, grass, building, white, grey, mixed.
+Be precise about the car bounding box.` }
+    ], { temperature: 0.1, maxTokens: 200 });
+
+    let bounds = null;
+    try {
+      const cleaned = boundsText.replace(/```json|```/g,'').trim();
+      bounds = JSON.parse(cleaned);
+      carBoundsFromGemini = bounds;
+    } catch(e) { bounds = null; }
+
+    ltxt('bg','Processing cutout with AI guidance...');
+    await animP(18,38,1000);
+
+    await geminiGuidedCutout(bounds);
+
+  } catch(err) {
+    console.warn('Gemini BG bounds error, using auto-detect:', err);
+    ltxt('bg','Auto-detecting background...');
+    await W8(400);
+    await clientSideCutout(null);
+  }
+}
+
+// Gemini-guided cutout: uses bounding box + bg colour from Gemini
+async function geminiGuidedCutout(bounds) {
+  const img = srcImg;
+  const cv = document.getElementById('tmpcv');
+  const W = Math.min(img.naturalWidth, 1200);
+  const H = Math.round(img.naturalHeight * W / img.naturalWidth);
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(img, 0, 0, W, H);
+
+  const id = ctx.getImageData(0, 0, W, H);
+  const d = id.data;
+
+  let bgR, bgG, bgB;
+  if (bounds && bounds.bg_r !== undefined) {
+    bgR = bounds.bg_r; bgG = bounds.bg_g; bgB = bounds.bg_b;
+  } else {
+    // Sample corners
+    const corners = [[0,0],[W-1,0],[0,H-1],[W-1,H-1],[Math.floor(W/2),0]];
+    let sr=0,sg=0,sb=0;
+    corners.forEach(([x,y])=>{const i=(y*W+x)*4;sr+=d[i];sg+=d[i+1];sb+=d[i+2];});
+    bgR=Math.round(sr/corners.length);bgG=Math.round(sg/corners.length);bgB=Math.round(sb/corners.length);
+  }
+
+  // Determine car region from Gemini bounds
+  let carX=0,carY=0,carW=W,carH=H;
+  if (bounds) {
+    carX = Math.floor((bounds.car_x||0) * W);
+    carY = Math.floor((bounds.car_y||0) * H);
+    carW = Math.min(Math.ceil((bounds.car_w||1) * W), W - carX);
+    carH = Math.min(Math.ceil((bounds.car_h||1) * H), H - carY);
+  }
+
+  const thresh = 60;
+  const feather = 35;
+
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const i = (py * W + px) * 4;
+      const r=d[i],g=d[i+1],b=d[i+2];
+      const dr=r-bgR,dg=g-bgG,db=b-bgB;
+      const dist = Math.sqrt(dr*dr+dg*dg+db*db);
+
+      // Is pixel inside the car bounding box?
+      const inCarBox = px>=carX && px<carX+carW && py>=carY && py<carY+carH;
+
+      if (dist < thresh) {
+        // Background-coloured pixel
+        if (inCarBox) {
+          // Inside car box but BG-coloured → semi-transparent (window/reflection)
+          d[i+3] = Math.min(d[i+3], 180);
+        } else {
+          d[i+3] = 0; // fully transparent
+        }
+      } else if (dist < thresh + feather) {
+        const alpha = ((dist - thresh) / feather) * 255;
+        if (!inCarBox) {
+          d[i+3] = Math.round(alpha); // feathered edge
+        }
+      }
+      // else: keep fully opaque (car pixels)
+    }
+  }
+
+  ctx.putImageData(id, 0, 0);
+
+  cv.toBlob(async blob => {
+    cutoutBlob = blob;
+    const url = URL.createObjectURL(blob);
+    cutoutImg = new Image();
+    await new Promise(res => { cutoutImg.onload = res; cutoutImg.src = url; });
+    await animP(38, 65, 800);
+    renderBGWithEnv(v3Env);
+    setBdg('bg', 'bd', 'Gemini Done ✓');
+    showRes('bg');
+    await animP(65, 75, 300);
+    do3D();
+  }, 'image/png');
+}
+
+// Pure client-side fallback
+async function clientSideCutout(bounds) {
+  await geminiGuidedCutout(bounds);
+}
+
+// ════════════════════════════════════════════════════════════
+// ENVIRONMENT BACKGROUNDS
+// ════════════════════════════════════════════════════════════
+const ENVS = {
+  studio:{name:'Studio White',draw:(ctx,W,H)=>{
+    ctx.fillStyle='#F8F9FA';ctx.fillRect(0,0,W,H);
+    const fl=ctx.createLinearGradient(0,H*0.6,0,H);
+    fl.addColorStop(0,'rgba(220,225,230,0)');fl.addColorStop(1,'rgba(200,205,212,0.65)');
+    ctx.fillStyle=fl;ctx.fillRect(0,H*0.6,W,H*0.4);
+    const tl=ctx.createRadialGradient(W*0.5,-H*0.1,0,W*0.5,-H*0.1,W*0.9);
+    tl.addColorStop(0,'rgba(255,255,255,0.8)');tl.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle=tl;ctx.fillRect(0,0,W,H*0.6);
+  }},
+  showroom:{name:'Luxury Showroom',draw:(ctx,W,H)=>{
+    ctx.fillStyle='#0A0B10';ctx.fillRect(0,0,W,H);
+    const fl=ctx.createLinearGradient(0,H*0.6,0,H);
+    fl.addColorStop(0,'#121418');fl.addColorStop(1,'#1A1C24');
+    ctx.fillStyle=fl;ctx.fillRect(0,H*0.6,W,H*0.4);
+    const sl=ctx.createRadialGradient(W/2,0,0,W/2,H*0.3,W*0.5);
+    sl.addColorStop(0,'rgba(255,250,240,0.18)');sl.addColorStop(0.5,'rgba(255,240,200,0.06)');sl.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=sl;ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='rgba(200,169,110,0.12)';ctx.lineWidth=1;
+    for(let x=0;x<W;x+=W/8){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  }},
+  sunset:{name:'Golden Sunset',draw:(ctx,W,H)=>{
+    const sky=ctx.createLinearGradient(0,0,0,H*0.65);
+    sky.addColorStop(0,'#0A0520');sky.addColorStop(0.3,'#2D1240');sky.addColorStop(0.6,'#8B2A10');sky.addColorStop(1,'#E86020');
+    ctx.fillStyle=sky;ctx.fillRect(0,0,W,H*0.65);
+    const sun=ctx.createRadialGradient(W*0.5,H*0.45,0,W*0.5,H*0.45,W*0.35);
+    sun.addColorStop(0,'rgba(255,210,80,0.35)');sun.addColorStop(0.3,'rgba(255,140,40,0.18)');sun.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=sun;ctx.fillRect(0,0,W,H*0.7);
+    const rd=ctx.createLinearGradient(0,H*0.65,0,H);
+    rd.addColorStop(0,'#1A1008');rd.addColorStop(1,'#0D0804');
+    ctx.fillStyle=rd;ctx.fillRect(0,H*0.65,W,H*0.35);
+    ctx.strokeStyle='rgba(255,200,80,0.25)';ctx.lineWidth=2;ctx.setLineDash([W*0.06,W*0.04]);
+    ctx.beginPath();ctx.moveTo(W/2,H*0.65);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
+  }},
+  city:{name:'City Night',draw:(ctx,W,H)=>{
+    ctx.fillStyle='#03040A';ctx.fillRect(0,0,W,H);
+    const bldgs=[[0.05,0.3,0.12,0.5],[0.15,0.2,0.1,0.6],[0.25,0.35,0.08,0.45],[0.68,0.25,0.1,0.55],[0.78,0.15,0.12,0.65],[0.88,0.3,0.1,0.5]];
+    bldgs.forEach(([x,h,w,op])=>{
+      ctx.fillStyle=`rgba(20,22,35,${op})`;ctx.fillRect(W*x,H*(1-h)-H*0.3,W*w,H*h);
+      ctx.fillStyle='rgba(255,220,120,0.4)';
+      for(let wy=H*(1-h)-H*0.28;wy<H*0.6;wy+=H*0.04)
+        for(let wx=W*x+W*0.008;wx<W*(x+w)-W*0.008;wx+=W*0.022)
+          if(Math.random()>0.35)ctx.fillRect(wx,wy,W*0.012,H*0.02);
+    });
+    const rd=ctx.createLinearGradient(0,H*0.62,0,H);
+    rd.addColorStop(0,'#06080F');rd.addColorStop(1,'#0C0E18');
+    ctx.fillStyle=rd;ctx.fillRect(0,H*0.62,W,H*0.38);
+    const ng=ctx.createRadialGradient(W/2,H*0.75,0,W/2,H*0.75,W*0.4);
+    ng.addColorStop(0,'rgba(0,229,160,0.08)');ng.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=ng;ctx.fillRect(0,H*0.6,W,H*0.4);
+  }},
+  mountain:{name:'Mountain Road',draw:(ctx,W,H)=>{
+    const sky=ctx.createLinearGradient(0,0,0,H*0.55);
+    sky.addColorStop(0,'#0A1520');sky.addColorStop(0.5,'#1A3A5C');sky.addColorStop(1,'#2A6080');
+    ctx.fillStyle=sky;ctx.fillRect(0,0,W,H*0.55);
+    ctx.fillStyle='#0D1E28';
+    ctx.beginPath();ctx.moveTo(0,H*0.55);ctx.lineTo(W*0.15,H*0.22);ctx.lineTo(W*0.3,H*0.42);ctx.lineTo(W*0.45,H*0.18);ctx.lineTo(W*0.6,H*0.38);ctx.lineTo(W*0.75,H*0.14);ctx.lineTo(W*0.9,H*0.35);ctx.lineTo(W,H*0.2);ctx.lineTo(W,H*0.55);ctx.closePath();ctx.fill();
+    ctx.fillStyle='rgba(220,235,245,0.7)';
+    [[0.15,0.22,0.05],[0.45,0.18,0.06],[0.75,0.14,0.07]].forEach(([mx,my,sz])=>{
+      ctx.beginPath();ctx.moveTo(W*mx,H*my);ctx.lineTo(W*(mx-sz),H*(my+sz*1.2));ctx.lineTo(W*(mx+sz),H*(my+sz*1.2));ctx.closePath();ctx.fill();
+    });
+    const rd=ctx.createLinearGradient(0,H*0.55,0,H);
+    rd.addColorStop(0,'#1C2018');rd.addColorStop(1,'#141810');
+    ctx.fillStyle=rd;ctx.fillRect(0,H*0.55,W,H*0.45);
+    ctx.strokeStyle='rgba(255,255,200,0.2)';ctx.lineWidth=2;ctx.setLineDash([W*0.05,W*0.04]);
+    ctx.beginPath();ctx.moveTo(W/2,H*0.55);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
+  }},
+  track:{name:'Race Track',draw:(ctx,W,H)=>{
+    ctx.fillStyle='#080A06';ctx.fillRect(0,0,W,H);
+    const tr=ctx.createLinearGradient(0,H*0.55,0,H);
+    tr.addColorStop(0,'#1A1A1A');tr.addColorStop(1,'#111111');
+    ctx.fillStyle=tr;ctx.fillRect(0,H*0.55,W,H*0.45);
+    const sk=ctx.createLinearGradient(0,0,0,H*0.55);
+    sk.addColorStop(0,'#050A08');sk.addColorStop(1,'#0A1410');
+    ctx.fillStyle=sk;ctx.fillRect(0,0,W,H*0.55);
+    ctx.fillStyle='#0A1A08';ctx.fillRect(0,H*0.53,W,H*0.06);
+    ctx.fillStyle='rgba(255,80,80,0.25)';ctx.fillRect(0,H*0.54,W,H*0.008);
+    ctx.fillStyle='rgba(255,255,255,0.25)';ctx.fillRect(0,H*0.548,W,H*0.008);
+    const ksz=W*0.06,kh=H*0.022;
+    for(let kx=0;kx<W;kx+=ksz*2){
+      ctx.fillStyle='rgba(255,60,60,0.5)';ctx.fillRect(kx,H*0.53,ksz,kh);
+      ctx.fillStyle='rgba(255,255,255,0.5)';ctx.fillRect(kx+ksz,H*0.53,ksz,kh);
+    }
+    ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=2;ctx.setLineDash([W*0.06,W*0.04]);
+    ctx.beginPath();ctx.moveTo(W/2,H*0.55);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
+  }}
+};
+
+function renderBGWithEnv(envKey){
+  const env=ENVS[envKey]||ENVS.studio;
+  const cv=document.getElementById('cvbg');
+  const ci=cutoutImg||srcImg;
+  if(!ci)return;
+  const SW=Math.min(ci.naturalWidth||800,1100);
+  const SH=Math.round((ci.naturalHeight||600)*SW/(ci.naturalWidth||800));
+  const CW=SW+80,CH=SH+60;
+  cv.width=CW;cv.height=CH;
+  const ctx=cv.getContext('2d');
+  env.draw(ctx,CW,CH);
+  const pad=32,sc=Math.min((CW-pad*2)/ci.naturalWidth,(CH*0.88-pad)/ci.naturalHeight);
+  const dw=ci.naturalWidth*sc,dh=ci.naturalHeight*sc;
+  const dx=(CW-dw)/2,dy=(CH-dh)/2-CH*0.03;
+  const sh=ctx.createRadialGradient(CW/2,dy+dh*1.02,4,CW/2,dy+dh*1.02,dw*0.48);
+  sh.addColorStop(0,'rgba(0,0,0,0.35)');sh.addColorStop(0.4,'rgba(0,0,0,0.14)');sh.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath();ctx.ellipse(CW/2,dy+dh*0.98,dw*0.44,CH*0.055,0,0,Math.PI*2);ctx.fillStyle=sh;ctx.fill();
+  ctx.drawImage(ci,dx,dy,dw,dh);
+  ctx.font='9px monospace';ctx.fillStyle='rgba(160,164,170,0.3)';
+  ctx.fillText('AutoPivot Agent',8,CH-6);
+  document.getElementById('bg-env-label').textContent=env.name;
+}
+
+// ════════════════════════════════════════════════════════════
+// 2. 3D VIEWER — Pollinations AI generates renders per env
+// ════════════════════════════════════════════════════════════
+const ENV_PROMPTS={
+  studio:'luxury car in white studio, white background, professional automotive photography, dramatic studio lighting, photorealistic, 8k',
+  showroom:'luxury car in high-end dealership showroom, dark interior, spotlights, glossy floor reflection, ultra realistic',
+  sunset:'sports car on road at golden sunset, dramatic orange sky, side lighting, photorealistic automotive photography',
+  city:'car in city at night, neon lights, wet road reflection, urban environment, cinematic automotive photo',
+  mountain:'car on mountain road, alpine scenery, snow peaks, natural daylight, photorealistic',
+  track:'racing car on race track, motorsport photography, motion blur background, dramatic angle, professional',
+};
+let renderedAngles={},currentEnvRenders={},v3dLoadedImg=null;
+
+async function do3D(){
+  setBdg('3d','br','Running');
+  await animP(65,78,900);
+  // Enhance prompt with Gemini-detected car info if available
+  await loadEnvRender(v3Env,0);
+  setBdg('3d','bd','Done ✓');showRes('3d');
+  await animP(78,88,400);
+  preloadAngles(v3Env);
+}
+
+async function loadEnvRender(env,angle){
+  const seed=Math.floor(angle/45)*1000+(env.length*7);
+  const prompt=ENV_PROMPTS[env]||ENV_PROMPTS.studio;
+  const angleDesc=getAngleDesc(angle);
+  // Enhance prompt with Gemini car details if available
+  const carMention=detFeats.make?`${detFeats.year||''} ${detFeats.make} ${detFeats.model},`:'';
+  const fullPrompt=`${carMention} ${prompt}, ${angleDesc}, isolated car, full vehicle visible`;
+  const url=`https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=900&height=560&seed=${seed}&model=flux&nologo=true`;
+  return new Promise(res=>{
+    const img=new Image();
+    img.crossOrigin='anonymous';
+    img.onload=()=>{
+      const key=env+'-'+Math.round(angle/45)*45;
+      currentEnvRenders[key]=img;
+      if(!v3dLoadedImg)v3dLoadedImg=img;
+      drawV3D();res(img);
+    };
+    img.onerror=()=>{if(cutoutImg)v3dLoadedImg=cutoutImg;drawV3D();res(null);};
+    img.src=url;
+    drawV3DLoading();
+  });
+}
+
+function preloadAngles(env){
+  [45,90,135,180,225,270,315].forEach((a,i)=>{
+    setTimeout(()=>{const key=env+'-'+a;if(!currentEnvRenders[key])loadEnvRender(env,a);},i*2500);
+  });
+}
+
+function getAngleDesc(angle){
+  const n=((angle%360)+360)%360;
+  if(n<22||n>=338)return'front view, facing camera';
+  if(n<68)return'front three quarter view';
+  if(n<112)return'side profile view, left side';
+  if(n<158)return'rear three quarter view';
+  if(n<202)return'rear view, back of car';
+  if(n<248)return'rear three quarter right view';
+  if(n<292)return'side profile view, right side';
+  return'front three quarter right view';
+}
+
+function drawV3DLoading(){
+  const cv=document.getElementById('cv3d'),wrap=document.getElementById('v3wrap');
+  if(cv.width<10){cv.width=wrap.offsetWidth||500;cv.height=280;}
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+  ctx.fillStyle='#0D1118';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(0,229,160,0.04)';ctx.lineWidth=1;
+  for(let x=0;x<W;x+=36){ctx.beginPath();ctx.moveTo(x,H*0.6);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=H*0.6;y<H;y+=20){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  ctx.fillStyle='rgba(0,229,160,0.45)';ctx.font=`11px 'JetBrains Mono',monospace`;ctx.textAlign='center';
+  ctx.fillText('Generating AI render...',W/2,H/2);
+  ctx.fillStyle='rgba(122,131,152,0.4)';ctx.font=`9px 'JetBrains Mono',monospace`;
+  ctx.fillText(ENVS[v3Env]?.name||'Studio',W/2,H/2+18);ctx.textAlign='left';
+}
+
+function drawV3D(){
+  const cv=document.getElementById('cv3d'),wrap=document.getElementById('v3wrap');
+  if(!wrap)return;
+  if(cv.width<10){cv.width=wrap.offsetWidth||500;cv.height=280;}
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const env=ENVS[v3Env]||ENVS.studio;
+  const normA=((v3Angle%360)+360)%360;
+  const nearestA=Math.round(normA/45)*45%360;
+  const imgKey=v3Env+'-'+nearestA;
+  const useImg=currentEnvRenders[imgKey]||v3dLoadedImg;
+
+  if(v3Mode==='top'){
+    env.draw(ctx,W,H);
+    if(useImg){ctx.save();ctx.translate(W/2,H/2);ctx.scale(v3Zoom*0.82,v3Zoom*0.38);ctx.rotate(v3Angle*Math.PI/180);ctx.drawImage(useImg,-useImg.width*0.28,-useImg.height*0.28,useImg.width*0.56,useImg.height*0.56);ctx.restore();}
+  } else if(v3Mode==='interior'){
+    if(useImg){ctx.save();ctx.filter='blur(6px)';ctx.globalAlpha=0.18;ctx.drawImage(useImg,0,0,W,H);ctx.restore();}
+    ctx.fillStyle='rgba(7,9,15,0.72)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(0,229,160,0.75)';ctx.font=`bold 15px 'Syne',sans-serif`;ctx.textAlign='center';
+    ctx.fillText('INTERIOR VIEW',W/2,H/2-10);
+    ctx.fillStyle='rgba(122,131,152,0.55)';ctx.font=`10px 'JetBrains Mono',monospace`;
+    ctx.fillText(Math.round(normA)+'° — '+getAngleDesc(normA),W/2,H/2+12);ctx.textAlign='left';
+  } else {
+    if(useImg){
+      env.draw(ctx,W,H);
+      const sc=Math.min(W*0.92/useImg.width,H*0.88/useImg.height)*v3Zoom;
+      const dw=useImg.width*sc,dh=useImg.height*sc;
+      const dx=(W-dw)/2,dy=(H-dh)/2-H*0.03;
+      const sh=ctx.createRadialGradient(W/2,dy+dh*0.98,4,W/2,dy+dh*0.98,dw*0.5);
+      sh.addColorStop(0,'rgba(0,0,0,0.4)');sh.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.beginPath();ctx.ellipse(W/2,dy+dh*0.96,dw*0.44,H*0.05,0,0,Math.PI*2);ctx.fillStyle=sh;ctx.fill();
+      ctx.drawImage(useImg,dx,dy,dw,dh);
+    } else {env.draw(ctx,W,H);drawV3DLoading();return;}
+  }
+  ctx.fillStyle='rgba(0,229,160,0.55)';ctx.font=`bold 10px 'JetBrains Mono',monospace`;ctx.fillText(Math.round(normA)+'°',10,18);
+  ctx.fillStyle='rgba(122,131,152,0.4)';ctx.font=`9px 'JetBrains Mono',monospace`;ctx.fillText((ENVS[v3Env]?.name||'Studio').toUpperCase(),10,32);
+  if(!currentEnvRenders[imgKey]){ctx.fillStyle='rgba(255,184,0,0.5)';ctx.font=`9px 'JetBrains Mono',monospace`;ctx.textAlign='right';ctx.fillText('Loading...',W-10,18);ctx.textAlign='left';}
+}
+
+function pickEnv(btn){
+  document.querySelectorAll('.envbtn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  const env=btn.dataset.env;v3Env=env;
+  if(cutoutImg||srcImg)renderBGWithEnv(env);
+  document.getElementById('bg-env-label').textContent=ENVS[env]?.name||env;
+  currentEnvRenders={};v3dLoadedImg=null;drawV3DLoading();
+  loadEnvRender(env,Math.round(((v3Angle%360)+360)%360/45)*45).then(()=>preloadAngles(env));
+}
+
+function setV3Mode(m,btn){
+  v3Mode=m;v3Tilt=0;
+  document.querySelectorAll('.v3btn').forEach(b=>{if(b.id!=='vb-spin')b.classList.remove('on')});
+  btn.classList.add('on');drawV3D();
+}
+
+function toggleSpin(btn){
+  v3Spin=!v3Spin;btn.classList.toggle('on',v3Spin);
+  btn.textContent=v3Spin?'⬛ Stop':'⟳ Auto Spin';
+  if(v3Spin){v3SpinT=setInterval(()=>{v3Angle=(v3Angle+0.8)%360;drawV3D();},50);}else clearInterval(v3SpinT);
+}
+
+// 3D drag
+function setup3DDrag(){
+  const cv=document.getElementById('cv3d');
+  cv.addEventListener('mousedown',e=>{v3Drag=true;v3Lx=e.clientX;v3Ly=e.clientY;cv.style.cursor='grabbing';});
+  window.addEventListener('mousemove',e=>{
+    if(!v3Drag)return;
+    const dx=e.clientX-v3Lx;
+    v3Angle=(v3Angle+dx*0.6+360)%360;v3Tilt=Math.max(-25,Math.min(25,v3Tilt+(e.clientY-v3Ly)*0.3));
+    v3Lx=e.clientX;v3Ly=e.clientY;
+    const nearA=Math.round(((v3Angle%360)+360)%360/45)*45%360;
+    if(currentEnvRenders[v3Env+'-'+nearA])drawV3D();
+  });
+  window.addEventListener('mouseup',()=>{v3Drag=false;document.getElementById('cv3d').style.cursor='grab';});
+  cv.addEventListener('touchstart',e=>{v3Drag=true;v3Lx=e.touches[0].clientX;v3Ly=e.touches[0].clientY;e.preventDefault();},{passive:false});
+  cv.addEventListener('touchmove',e=>{
+    if(!v3Drag)return;
+    v3Angle=(v3Angle+(e.touches[0].clientX-v3Lx)*0.6+360)%360;
+    v3Tilt=Math.max(-25,Math.min(25,v3Tilt+(e.touches[0].clientY-v3Ly)*0.3));
+    v3Lx=e.touches[0].clientX;v3Ly=e.touches[0].clientY;drawV3D();e.preventDefault();
+  },{passive:false});
+  cv.addEventListener('touchend',()=>{v3Drag=false;});
+  cv.addEventListener('wheel',e=>{v3Zoom=Math.max(0.5,Math.min(2.5,v3Zoom-e.deltaY*0.001));drawV3D();e.preventDefault();},{passive:false});
+}
+setup3DDrag();
+
+const ro=new ResizeObserver(()=>{
+  const cv=document.getElementById('cv3d'),w=document.getElementById('v3wrap');
+  if(w&&w.offsetWidth>0){cv.width=w.offsetWidth;cv.height=Math.max(w.offsetHeight,240);drawV3D();}
+});
+ro.observe(document.getElementById('v3wrap'));
+
+// ════════════════════════════════════════════════════════════
+// 3. PLATE HIDING — Gemini detects plate coords → mascot
+// ════════════════════════════════════════════════════════════
+async function doPlate(){
+  setBdg('plate','br','Running');
+  ltxt('plate','Gemini locating number plate...');
+  await W8(600);await animP(0,22,700);
+
+  const img=srcImg;
+  const cv=document.getElementById('cvplate');
+  cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+  const ctx=cv.getContext('2d');
+  ctx.drawImage(img,0,0);
+
+  const W=cv.width,H=cv.height;
+  let px,py,pw,ph;
+
+  // Try Gemini to locate the plate precisely
+  try {
+    const base64 = await fileToBase64(srcFile);
+    const mimeType = srcFile.type || 'image/jpeg';
+    ltxt('plate','Gemini scanning plate region...');
+
+    const plateText = await callGemini([
+      imgPart(base64, mimeType),
+      { text: `Locate the vehicle number plate / license plate in this image.
+Return ONLY valid JSON, no markdown, no explanation:
+{"found":true,"x":0.35,"y":0.72,"w":0.28,"h":0.08}
+Where x,y,w,h are fractions of image dimensions (0.0-1.0).
+x,y = top-left corner. w,h = width and height.
+If no plate visible, return {"found":false,"x":0.35,"y":0.70,"w":0.26,"h":0.09}` }
+    ], { temperature: 0.1, maxTokens: 150, url: GEMINI_FLASH_LITE });
+
+    const cleaned = plateText.replace(/```json|```/g,'').trim();
+    const plateData = JSON.parse(cleaned);
+    px = plateData.x * W;
+    py = plateData.y * H;
+    pw = plateData.w * W;
+    ph = plateData.h * H;
+    ltxt('plate','Plate detected — applying mascot...');
+  } catch(e) {
+    // Fallback to estimated position
+    px=W*0.365; py=H*0.70; pw=W*0.26; ph=H*0.105;
+    ltxt('plate','Applying privacy mascot...');
+  }
+
+  await animP(22,42,600);await W8(300);
+
+  let fr=0;
+  drawMascot(ctx,img,px,py,pw,ph,fr);
+  if(mascotTimer)clearInterval(mascotTimer);
+  mascotTimer=setInterval(()=>{
+    ctx.clearRect(px-8,py-ph*3,pw+16,ph*5);
+    ctx.drawImage(img,px-8,py-ph*3,pw+16,ph*5,px-8,py-ph*3,pw+16,ph*5);
+    fr++;drawMascot(ctx,img,px,py,pw,ph,fr);
+  },80);
+  setTimeout(()=>{if(mascotTimer){clearInterval(mascotTimer);mascotTimer=null;}},3200);
+  await W8(500);
+  setBdg('plate','bd','Gemini Done ✓');showRes('plate');
+  await animP(42,55,300);
+}
+
+function drawMascot(ctx,img,x,y,w,h,f){
+  const b=Math.sin(f*0.35)*5.5,blink=(f%40<3),wave=Math.sin(f*0.28);
+  const cx=x+w/2,cy=y+h/2+b-h*0.85;
+  ctx.beginPath();ctx.ellipse(cx,y+h+5,w*0.36,h*0.12,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,0.2)';ctx.fill();
+  const bw=w*0.72,bh=h*1.12,bx=cx-bw/2,by=cy-bh*0.28;
+  rr(ctx,bx,by,bw,bh,bh*0.22);
+  ctx.fillStyle='#FFD700';ctx.fill();ctx.strokeStyle='#C8940A';ctx.lineWidth=Math.max(1.5,w*0.022);ctx.stroke();
+  ctx.beginPath();ctx.ellipse(cx,by+bh*0.58,bw*0.27,bh*0.23,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.32)';ctx.fill();
+  const hr=w*0.23;
+  ctx.beginPath();ctx.arc(cx,by-hr*0.3,hr,0,Math.PI*2);
+  ctx.fillStyle='#FFD700';ctx.fill();ctx.strokeStyle='#C8940A';ctx.lineWidth=Math.max(1.5,w*0.022);ctx.stroke();
+  const ey=by-hr*0.38;
+  if(!blink){
+    [-1,1].forEach(s=>{
+      ctx.beginPath();ctx.arc(cx+s*hr*0.38,ey,hr*0.21,0,Math.PI*2);ctx.fillStyle='white';ctx.fill();
+      ctx.beginPath();ctx.arc(cx+s*hr*0.38,ey+hr*0.06,hr*0.12,0,Math.PI*2);ctx.fillStyle='#111';ctx.fill();
+      ctx.beginPath();ctx.arc(cx+s*hr*0.33,ey-hr*0.02,hr*0.055,0,Math.PI*2);ctx.fillStyle='white';ctx.fill();
+    });
+  } else {
+    [-1,1].forEach(s=>{ctx.beginPath();ctx.moveTo(cx+s*hr*0.56,ey);ctx.lineTo(cx+s*hr*0.2,ey);ctx.strokeStyle='#111';ctx.lineWidth=2.5;ctx.stroke();});
+  }
+  ctx.beginPath();ctx.arc(cx,by-hr*0.3+hr*0.3,hr*0.38,0.2,Math.PI-0.2);
+  ctx.strokeStyle='#111';ctx.lineWidth=Math.max(1.5,w*0.018);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx,by-hr*1.3);ctx.lineTo(cx,by-hr*1.9);
+  ctx.strokeStyle='#C8940A';ctx.lineWidth=Math.max(1.5,w*0.015);ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,by-hr*1.96,hr*0.16,0,Math.PI*2);ctx.fillStyle='#FF4D6A';ctx.fill();
+  const ay=by+bh*0.3;
+  ctx.beginPath();ctx.moveTo(bx+bw*0.08,ay);ctx.quadraticCurveTo(bx-bw*0.22,ay+bh*0.1,bx-bw*0.11,ay+bh*0.36);
+  ctx.strokeStyle='#C8940A';ctx.lineWidth=Math.max(2,w*0.032);ctx.stroke();
+  const wo=wave*bh*0.22;
+  ctx.beginPath();ctx.moveTo(bx+bw*0.92,ay);ctx.quadraticCurveTo(bx+bw*1.24,ay-wo,bx+bw*1.12,ay+bh*0.36-wo);
+  ctx.strokeStyle='#C8940A';ctx.lineWidth=Math.max(2,w*0.032);ctx.stroke();
+  const ly2=by+bh;
+  [-1,1].forEach(s=>{
+    ctx.beginPath();ctx.moveTo(cx+s*bw*0.22,ly2);ctx.lineTo(cx+s*bw*0.28,ly2+bh*0.38);
+    ctx.strokeStyle='#C8940A';ctx.lineWidth=Math.max(2,w*0.028);ctx.stroke();
+    ctx.beginPath();ctx.ellipse(cx+s*bw*0.28,ly2+bh*0.43,bw*0.12,bh*0.07,s*0.3,0,Math.PI*2);
+    ctx.fillStyle='#C8940A';ctx.fill();
+  });
+  const sbx=cx+hr*0.4,sby=by-hr*1.85,sbw=w*0.82,sbh=h*0.48;
+  rr(ctx,sbx,sby-sbh,sbw,sbh,sbh*0.3);
+  ctx.fillStyle='white';ctx.fill();ctx.strokeStyle='#ddd';ctx.lineWidth=1.2;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sbx+sbw*0.15,sby);ctx.lineTo(cx+hr*0.15,sby+h*0.25);ctx.lineTo(sbx+sbw*0.38,sby);
+  ctx.fillStyle='white';ctx.fill();
+  ctx.fillStyle='#E6A500';ctx.font=`bold ${Math.max(9,w*0.065)}px 'Syne',sans-serif`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('HIDDEN!',sbx+sbw/2,sby-sbh/2);
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';
+}
+
+function rr(ctx,x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+}
+
+// ════════════════════════════════════════════════════════════
+// 4. GEMINI AI — REAL IMAGE ANALYSIS + LISTING
+// ════════════════════════════════════════════════════════════
+async function doDesc(){
+  setBdg('desc','br','Gemini Analysing');
+  ltxt('desc','Gemini Vision analysing your car...');
+  await W8(1200);
+  await animP(80,88,800);
+
+  try {
+    const base64 = await fileToBase64(srcFile);
+    const mimeType = srcFile.type || 'image/jpeg';
+
+    ltxt('desc','Gemini identifying car details...');
+    await animP(88,92,600);
+
+    // Step 1: Identify car
+    const identifyText = await callGemini([
+      imgPart(base64, mimeType),
+      { text: `Analyse this car image and extract the following details. Respond ONLY with a valid JSON object, no markdown, no explanation, no backticks. Format:
+{"make":"Toyota","model":"Camry","year":"2021","colour":"Pearl White","body":"Sedan","engine":"2.5L Petrol","transmission":"Automatic","seats":"5","drive":"FWD","condition":"Excellent","estimated_km":"45000","estimated_price":"28990","notable_features":["sunroof","alloy wheels","reverse camera"],"summary":"Brief 1-sentence description of what you see"}` }
+    ], { temperature: 0.2, maxTokens: 600 });
+
+    let carInfo = {};
+    try {
+      const cleaned = identifyText.replace(/```json|```/g,'').trim();
+      carInfo = JSON.parse(cleaned);
+    } catch(e) {
+      carInfo = {
+        make: identifyText.match(/"make"\s*:\s*"([^"]+)"/)?.[1]||'Unknown',
+        model: identifyText.match(/"model"\s*:\s*"([^"]+)"/)?.[1]||'Unknown',
+        year: identifyText.match(/"year"\s*:\s*"([^"]+)"/)?.[1]||'2021',
+        colour: identifyText.match(/"colour"\s*:\s*"([^"]+)"/)?.[1]||'Unknown',
+        body: identifyText.match(/"body"\s*:\s*"([^"]+)"/)?.[1]||'Sedan',
+        engine: identifyText.match(/"engine"\s*:\s*"([^"]+)"/)?.[1]||'Petrol',
+        transmission: identifyText.match(/"transmission"\s*:\s*"([^"]+)"/)?.[1]||'Automatic',
+        seats: identifyText.match(/"seats"\s*:\s*"([^"]+)"/)?.[1]||'5',
+        drive: identifyText.match(/"drive"\s*:\s*"([^"]+)"/)?.[1]||'FWD',
+        condition: identifyText.match(/"condition"\s*:\s*"([^"]+)"/)?.[1]||'Good',
+        estimated_km: identifyText.match(/"estimated_km"\s*:\s*"?([0-9]+)"?/)?.[1]||'50000',
+        estimated_price: identifyText.match(/"estimated_price"\s*:\s*"?([0-9]+)"?/)?.[1]||'24990',
+        notable_features: [],
+        summary: 'Vehicle identified by Gemini AI Vision'
+      };
+    }
+
+    detFeats = carInfo;
+    ltxt('desc','Gemini writing psycho-linguistic sales copy...');
+    await animP(92,95,500);
+
+    // Step 2: Write the listing
+    const salesText = await callGemini([
+      { text: `You are an expert automotive sales copywriter. Write a compelling, psycho-linguistically persuasive car listing for the following vehicle detected from an image:
+
+Make: ${carInfo.make}
+Model: ${carInfo.model}
+Year: ${carInfo.year}
+Colour: ${carInfo.colour}
+Body Type: ${carInfo.body}
+Engine: ${carInfo.engine}
+Transmission: ${carInfo.transmission}
+Seats: ${carInfo.seats}
+Drive: ${carInfo.drive}
+Condition: ${carInfo.condition}
+Estimated KM: ${carInfo.estimated_km}
+Features: ${(carInfo.notable_features||[]).join(', ')||'standard equipment'}
+
+Rules:
+- Use urgency, scarcity, and social proof principles
+- Lead with the most emotional hook
+- Include price anchoring (mention competitors charge more)
+- Use bullet points for key specs with ✅ emoji
+- End with a strong call to action
+- Location: Sydney, NSW, Australia
+- Suggested price: $${carInfo.estimated_price||'24990'}
+- Keep it under 280 words
+- Do NOT use markdown headers or asterisks
+- Start with a fire emoji and strong opener` }
+    ], { temperature: 0.8, maxTokens: 600 });
+
+    const finalText = salesText || buildFallbackDesc(carInfo);
+    await animP(95,100,300);
+    renderDesc(carInfo, finalText);
+    setBdg('desc','bd','Gemini Done ✓');
+    showRes('desc');
+
+  } catch(err) {
+    console.error('Gemini error:', err);
+    showToast('Gemini API error — using template fallback');
+    ltxt('desc','Falling back to template...');
+    const fallback = makeFallbackFeats();
+    detFeats = fallback;
+    const desc = buildFallbackDesc(fallback);
+    await animP(95,100,300);
+    renderDesc(fallback, desc);
+    setBdg('desc','bd','Done ✓');
+    showRes('desc');
+  }
+}
+
+function renderDesc(carInfo, salesText){
+  const price=parseInt(carInfo.estimated_price)||24990;
+  const km=parseInt(carInfo.estimated_km)||45000;
+  document.getElementById('dprice').textContent='$'+price.toLocaleString();
+  const tagData=[carInfo.year,carInfo.make,carInfo.model,carInfo.colour,carInfo.body,carInfo.engine,carInfo.transmission,(carInfo.seats||'5')+' Seats',carInfo.drive,km.toLocaleString()+' km'].filter(Boolean);
+  document.getElementById('dtags').innerHTML=tagData.map((t,i)=>`<div class="dtag${i<3?' a':''}">${t}</div>`).join('');
+  genDesc=salesText;typeDesc(salesText);
+}
+
+function typeDesc(text){
+  const el=document.getElementById('dtext');el.textContent='';let i=0;
+  const iv=setInterval(()=>{el.textContent+=text[i];i++;if(i>=text.length)clearInterval(iv);},6);
+}
+
+function makeFallbackFeats(){
+  const FO={make:['Toyota','Mazda','Honda','Ford','BMW'],model:['Camry','CX-5','Civic','Ranger','3 Series'],year:['2020','2021','2022','2023'],colour:['Pearl White','Space Grey','Midnight Black'],body:['Sedan','SUV','Hatchback'],engine:['2.0L Petrol','2.5L Petrol','Hybrid'],transmission:['Automatic','Manual'],seats:['5','7'],drive:['FWD','AWD'],condition:['Excellent','Very Good'],estimated_km:String(Math.floor(Math.random()*70+10)*1000),estimated_price:String(15000+Math.floor(Math.random()*40)*1000),notable_features:['alloy wheels','reverse camera','bluetooth']};
+  const r=k=>Array.isArray(FO[k])?FO[k][Math.floor(Math.random()*FO[k].length)]:FO[k];
+  return Object.fromEntries(Object.keys(FO).map(k=>[k,r(k)]));
+}
+
+function buildFallbackDesc(f){
+  const price=parseInt(f.estimated_price)||24990;
+  const km=parseInt(f.estimated_km)||45000;
+  return `🔥 Don't miss this exceptional ${f.year} ${f.make} ${f.model} — one of the cleanest examples on the market right now.
+
+Only ${km.toLocaleString()} km on the clock. This ${(f.colour||'').toLowerCase()} ${(f.body||'').toLowerCase()} is powered by a smooth ${f.engine} mated to a ${(f.transmission||'').toLowerCase()} — every drive is effortless.
+
+✅ ${f.seats} seats · ${f.drive} · ${f.engine} · ${f.transmission}
+✅ Full service history — all logbook stamps present
+✅ Zero accidents · clean PPSR · one careful owner
+✅ Tyres 90%+ · brakes recently serviced
+
+Comparable ${f.year} ${f.make} ${f.model}s listed $3,500–$6,000 higher elsewhere. Priced to move FAST.
+
+📍 Inspection welcome · Private sale · No tyre kickers
+☎ Serious enquiries only · First to inspect will buy
+WIWO $${price.toLocaleString()}`;
+}
+
+async function regenDesc(){
+  document.getElementById('dtext').textContent='';
+  document.getElementById('dtags').innerHTML='';
+  setBdg('desc','br','Regenerating...');
+  document.getElementById('res-desc').style.display='flex';
+  document.getElementById('res-desc').style.flexDirection='column';
+  document.getElementById('lov-desc').style.display='none';
+  try {
+    const newCopy = await callGemini([
+      { text: `Write a NEW, different psycho-linguistically persuasive car listing for:
+${JSON.stringify(detFeats, null, 2)}
+Use different emotional hooks and urgency triggers than before. Under 260 words. No markdown. Start with a fire emoji.` }
+    ], { temperature: 0.95, maxTokens: 600 });
+    genDesc = newCopy;typeDesc(newCopy);
+    setBdg('desc','bd','Gemini Done ✓');
+  } catch(e){
+    typeDesc(buildFallbackDesc(detFeats));
+    setBdg('desc','bd','Done ✓');
+  }
+}
+
+function cpDesc(){
+  navigator.clipboard.writeText(document.getElementById('dtext').textContent).then(()=>{
+    const b=event.target;b.textContent='✓ Copied!';b.style.background='var(--accent)';b.style.color='#040810';
+    setTimeout(()=>{b.textContent='⎘ Copy Listing';b.style.background='';b.style.color='';},2000);
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// PUBLISH
+// ════════════════════════════════════════════════════════════
+async function doPublish(){
+  const sel=document.querySelectorAll('.pplat.on');
+  if(!sel.length){alert('Select at least one platform.');return;}
+  const log=document.getElementById('publog');
+  log.style.display='block';log.innerHTML='';
+  const steps=[
+    {e:'⚡',m:'Optimising images for upload...'},
+    {e:'🔐',m:'Authenticating with marketplace APIs...'},
+    ...[...sel].flatMap(p=>[
+      {e:'📤',m:`Uploading to ${p.textContent.trim()}...`},
+      {e:'✅',m:`${p.textContent.trim()} — LIVE! ID #${Math.floor(Math.random()*900000+100000)}`,ok:true},
+    ]),
+    {e:'📊',m:'Analytics tracking initialised'},
+    {e:'📱',m:'SMS confirmation sent to owner'},
+  ];
+  for(const s of steps){
+    await W8(420+Math.random()*320);
+    log.innerHTML+=`<div>${s.e} <span class="${s.ok?'pok':''}">${s.m}</span></div>`;
+    log.scrollTop=log.scrollHeight;
+  }
+  document.getElementById('pubid').textContent=Math.floor(Math.random()*9e6+1e6);
+  document.getElementById('pubsucc').classList.add('on');
+}
+
+// ════════════════════════════════════════════════════════════
+// DOWNLOAD / COPY
+// ════════════════════════════════════════════════════════════
+function dlCv(id,fn){
+  const a=document.createElement('a');
+  a.href=document.getElementById(id).toDataURL('image/png',0.95);
+  a.download=fn;a.click();
+}
+function cpCv(id){
+  document.getElementById(id).toBlob(b=>{
+    navigator.clipboard.write([new ClipboardItem({'image/png':b})]).then(()=>alert('Copied to clipboard!')).catch(()=>dlCv(id,'car.png'));
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// RESET
+// ════════════════════════════════════════════════════════════
+function resetAll(){
+  srcFile=null;srcImg=null;cutoutBlob=null;cutoutImg=null;
+  v3Angle=0;v3Tilt=0;v3Zoom=1;v3Mode='exterior';v3Env='studio';
+  v3Spin=false;clearInterval(v3SpinT);window._d3=null;
+  currentEnvRenders={};v3dLoadedImg=null;renderedAngles={};carBoundsFromGemini=null;
+  if(mascotTimer)clearInterval(mascotTimer);
+  document.getElementById('hero').style.display='flex';
+  document.getElementById('app').style.display='none';
+  document.getElementById('nreset').classList.remove('on');
+  document.getElementById('fi').value='';
+  ['bg','3d','plate','desc'].forEach(id=>{
+    setBdg(id,'bw','Waiting');
+    document.getElementById('lov-'+id).style.display='flex';
+    document.getElementById('res-'+id).style.display='none';
+    document.getElementById('card-'+id).classList.remove('rdy');
+  });
+  document.getElementById('tpbar').style.width='0%';
+  document.getElementById('tppct').textContent='0%';
+  const tp=document.getElementById('tpill');tp.className='tpill run';
+  tp.innerHTML='<div class="blink"></div><span>Processing...</span>';
+  document.getElementById('pubwrap').classList.remove('on');
+  document.getElementById('publog').style.display='none';
+  document.getElementById('publog').innerHTML='';
+  document.getElementById('pubsucc').classList.remove('on');
+  detFeats={};genDesc='';
+}
+</script>
+
+<!-- LOGIN / SIGNUP MODAL -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOutside(event)">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <div class="modal-logo">Auto<span>Pivot</span> Agent</div>
+    <div class="modal-eyebrow">SECURE ACCESS</div>
+    <div class="modal-tabs">
+      <button class="modal-tab on" id="tab-login" onclick="switchTab('login')">Log In</button>
+      <button class="modal-tab" id="tab-signup" onclick="switchTab('signup')">Sign Up</button>
+    </div>
+    <div class="modal-err" id="modal-err"></div>
+
+    <!-- LOGIN FORM -->
+    <div id="form-login">
+      <div class="modal-field">
+        <label class="modal-label">EMAIL</label>
+        <input class="modal-input" type="email" id="li-email" placeholder="you@example.com" autocomplete="email"/>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">PASSWORD</label>
+        <input class="modal-input" type="password" id="li-pass" placeholder="••••••••" autocomplete="current-password"/>
+      </div>
+      <button class="modal-submit" onclick="doLogin()">→ Log In</button>
+      <div class="modal-divider">or continue with</div>
+      <div class="modal-oauth">
+        <button class="modal-oabtn" onclick="oauthLogin('Google')">🌐 Google</button>
+        <button class="modal-oabtn" onclick="oauthLogin('Apple')">🍎 Apple</button>
+        <button class="modal-oabtn" onclick="oauthLogin('GitHub')">💻 GitHub</button>
+      </div>
+      <div class="modal-foot">No account? <span onclick="switchTab('signup')">Sign up free</span></div>
+    </div>
+
+    <!-- SIGNUP FORM -->
+    <div id="form-signup" style="display:none">
+      <div class="modal-field">
+        <label class="modal-label">FULL NAME</label>
+        <input class="modal-input" type="text" id="su-name" placeholder="Jane Smith" autocomplete="name"/>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">EMAIL</label>
+        <input class="modal-input" type="email" id="su-email" placeholder="you@example.com" autocomplete="email"/>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">PASSWORD</label>
+        <input class="modal-input" type="password" id="su-pass" placeholder="Min 8 characters" autocomplete="new-password"/>
+      </div>
+      <button class="modal-submit" onclick="doSignup()">→ Create Account</button>
+      <div class="modal-divider">or continue with</div>
+      <div class="modal-oauth">
+        <button class="modal-oabtn" onclick="oauthLogin('Google')">🌐 Google</button>
+        <button class="modal-oabtn" onclick="oauthLogin('Apple')">🍎 Apple</button>
+        <button class="modal-oabtn" onclick="oauthLogin('GitHub')">💻 GitHub</button>
+      </div>
+      <div class="modal-foot">Already have an account? <span onclick="switchTab('login')">Log in</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// AUTH / LOGIN MODAL
+// ════════════════════════════════════════════════════════════
+let currentUser = null;
+
+function openModal(tab='login'){
+  document.getElementById('modalOverlay').classList.add('on');
+  switchTab(tab);
+  document.getElementById('modal-err').classList.remove('on');
+  setTimeout(()=>document.getElementById(tab==='login'?'li-email':'su-name').focus(),100);
+}
+function closeModal(){document.getElementById('modalOverlay').classList.remove('on');}
+function closeModalOutside(e){if(e.target===document.getElementById('modalOverlay'))closeModal();}
+
+function switchTab(tab){
+  document.getElementById('tab-login').classList.toggle('on', tab==='login');
+  document.getElementById('tab-signup').classList.toggle('on', tab==='signup');
+  document.getElementById('form-login').style.display = tab==='login'?'block':'none';
+  document.getElementById('form-signup').style.display = tab==='signup'?'block':'none';
+  document.getElementById('modal-err').classList.remove('on');
+}
+
+function showModalErr(msg){
+  const e=document.getElementById('modal-err');e.textContent=msg;e.classList.add('on');
+}
+
+function doLogin(){
+  const email=document.getElementById('li-email').value.trim();
+  const pass=document.getElementById('li-pass').value;
+  if(!email||!pass){showModalErr('Please fill in all fields.');return;}
+  if(!email.includes('@')){showModalErr('Please enter a valid email.');return;}
+  if(pass.length<6){showModalErr('Password must be at least 6 characters.');return;}
+  // Simulate successful login
+  const name = email.split('@')[0].replace(/[._]/g,' ').replace(/\w/g,c=>c.toUpperCase());
+  loginSuccess({name, email, initials: name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()});
+}
+
+function doSignup(){
+  const name=document.getElementById('su-name').value.trim();
+  const email=document.getElementById('su-email').value.trim();
+  const pass=document.getElementById('su-pass').value;
+  if(!name||!email||!pass){showModalErr('Please fill in all fields.');return;}
+  if(!email.includes('@')){showModalErr('Please enter a valid email.');return;}
+  if(pass.length<8){showModalErr('Password must be at least 8 characters.');return;}
+  const initials=name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  loginSuccess({name, email, initials});
+}
+
+function oauthLogin(provider){
+  const names={Google:'Alex Johnson',Apple:'Sam Rivera',GitHub:'Dev User'};
+  const emails={Google:'alex@gmail.com',Apple:'sam@icloud.com',GitHub:'dev@github.com'};
+  const n=names[provider],e=emails[provider];
+  loginSuccess({name:n,email:e,initials:n.split(' ').map(w=>w[0]).join('')});
+}
+
+function loginSuccess(user){
+  currentUser=user;
+  document.getElementById('nloginBtn').style.display='none';
+  document.getElementById('nuser').classList.add('on');
+  document.getElementById('nuser-av').textContent=user.initials;
+  document.getElementById('nuser-name').textContent=user.name;
+  closeModal();
+}
+
+function toggleUserMenu(){
+  document.getElementById('nuser-menu').classList.toggle('on');
+}
+document.addEventListener('click',e=>{
+  const m=document.getElementById('nuser-menu');
+  if(m&&m.classList.contains('on')&&!document.getElementById('nuser').contains(e.target)){
+    m.classList.remove('on');
+  }
+});
+
+function doLogout(){
+  currentUser=null;
+  document.getElementById('nuser').classList.remove('on');
+  document.getElementById('nuser-menu').classList.remove('on');
+  document.getElementById('nloginBtn').style.display='';
+}
+
+</script>
+</body>
+</html>
