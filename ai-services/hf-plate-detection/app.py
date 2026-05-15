@@ -2,7 +2,6 @@ from flask import Flask, request, send_file
 from transformers import YolosImageProcessor, YolosForObjectDetection
 from PIL import Image
 import torch
-import cv2
 import numpy as np
 import io
 
@@ -19,6 +18,10 @@ model = YolosForObjectDetection.from_pretrained(
 )
 
 print("Model loaded")
+
+# LOAD LOGO
+
+logo = Image.open("assets/logo.png").convert("RGB")
 
 @app.route("/blur-plate", methods=["POST"])
 def blur_plate():
@@ -51,23 +54,24 @@ def blur_plate():
 
         x1, y1, x2, y2 = box
 
-        roi = image_np[y1:y2, x1:x2]
+        plate_width = x2 - x1
+        plate_height = y2 - y1
 
-        if roi.size > 0:
+        if plate_width > 0 and plate_height > 0:
 
-            blurred = cv2.GaussianBlur(
-                roi,
-                (99, 99),
-                30
+            resized_logo = logo.resize(
+                (plate_width, plate_height)
             )
 
-            image_np[y1:y2, x1:x2] = blurred
+            resized_logo_np = np.array(resized_logo)
 
-    output = Image.fromarray(image_np)
+            image_np[y1:y2, x1:x2] = resized_logo_np
+
+    output_image = Image.fromarray(image_np)
 
     img_io = io.BytesIO()
 
-    output.save(img_io, format="PNG")
+    output_image.save(img_io, format="PNG")
 
     img_io.seek(0)
 
