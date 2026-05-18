@@ -1,30 +1,47 @@
-# AutoPivot Agent  
-## AI-Based Vehicle Listing Automation System
+# AutoPivot Agent
 
-![Status](https://img.shields.io/badge/status-prototype-yellow)
-![Version](https://img.shields.io/badge/version-0.1-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Tech](https://img.shields.io/badge/stack-HTML%20%7C%20Python-lightgrey)
+AutoPivot Agent is a demo application that performs server-side vehicle image processing with background removal, vehicle detection, license plate detection, and optional plate overlay.
 
----
+## Backend
 
-## Overview  
+The backend is implemented in `autopivot_backend.py` using FastAPI. It hosts endpoints for:
 
-AutoPivot Agent is a prototype system designed to automate the process of generating vehicle listings from raw images. The project focuses on reducing manual effort by combining image processing with AI-driven content generation.
+- `POST /remove-background` — remove image background with RMBG-2.0
+- `POST /detect-vehicles` — detect vehicles with YOLOv8
+- `POST /detect-plates` — detect license plates with YOLOS
+- `POST /overlay-plate` — cover detected plates with a solid color or uploaded overlay image
 
-The goal is to enable users to upload vehicle images and receive structured, listing-ready outputs suitable for online marketplaces.
+## Requirements
 
----
+- Python 3.10+
+- `torch`, `transformers`, `ultralytics`, `fastapi`, `uvicorn`, `pillow`, `numpy`, `pyngrok`
 
-## Key Features  
+Install dependencies with:
 
-- Image upload interface  
-- Background removal (working implementation)  
-- Description generation (under development)  
-- Number plate detection and removal (planned)  
+```bash
+pip install -r requirements.txt
+```
 
----
+## Run
 
-## System Architecture  
+Start the backend locally:
 
-The system follows a pipeline-based approach for processing vehicle images.
+```bash
+python autopivot_backend.py
+```
+
+The server listens on `http://127.0.0.1:8000` by default.
+
+To expose the service with ngrok:
+
+```bash
+python autopivot_backend.py --ngrok
+```
+
+## Frontend
+
+Open `index.html` in a browser and set `BACKEND_URL` in `app.js` if needed. The frontend uploads images to the backend and displays processed results.
+
+## Notes
+
+This repository is a demo implementation and is intended for local testing and prototyping.

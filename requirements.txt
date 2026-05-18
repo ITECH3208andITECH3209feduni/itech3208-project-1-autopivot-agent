@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pyngrok
+python-multipart
+nest-asyncio
+transformers
+torch
+torchvision
+pillow
+opencv-python-headless
+ultralytics
+numpy
