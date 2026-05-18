@@ -4,16 +4,31 @@ const multer = require("multer");
 const axios = require("axios");
 const FormData = require("form-data");
 const fs = require("fs");
+const path = require("path");
 
 const app = express();
 
 app.use(cors());
 
 // ======================================
+// CREATE OUTPUTS FOLDER IF NOT EXISTS
+// ======================================
+
+if (!fs.existsSync("outputs")) {
+
+  fs.mkdirSync("outputs");
+
+}
+
+// ======================================
 // EXPOSE OUTPUT IMAGES
 // ======================================
 
 app.use("/outputs", express.static("outputs"));
+
+// ======================================
+// MULTER SETUP
+// ======================================
 
 const upload = multer({
   dest: "uploads/",
@@ -37,7 +52,21 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
 
   try {
 
+    console.log("======================================");
     console.log("STEP 1: Request received");
+
+    // ======================================
+    // SAVE ORIGINAL PREVIEW
+    // ======================================
+
+    const originalBuffer = fs.readFileSync(req.file.path);
+
+    fs.writeFileSync(
+      "outputs/original-preview.png",
+     originalBuffer
+    );
+
+    console.log("STEP 2: Original image saved");
 
     // ======================================
     // REMOVE BACKGROUND
@@ -50,7 +79,7 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
       fs.createReadStream(req.file.path)
     );
 
-    console.log("STEP 2: Removing background");
+    console.log("STEP 3: Sending image to RMBG AI");
 
     const bgResponse = await axios.post(
       "http://127.0.0.1:8000/remove-bg",
@@ -58,6 +87,8 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
       {
         headers: bgForm.getHeaders(),
         responseType: "arraybuffer",
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
       }
     );
 
@@ -70,20 +101,22 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
       bgResponse.data
     );
 
-    console.log("STEP 3: Background removed image saved");
+    console.log("STEP 4: Background removed image saved");
 
     // ======================================
-    // SEND IMAGE TO NUMBER PLATE AI
+    // SEND TO NUMBER PLATE AI
     // ======================================
 
     const plateForm = new FormData();
 
     plateForm.append(
       "image",
-      fs.createReadStream("outputs/background-output.png")
+      fs.createReadStream(
+        "outputs/background-output.png"
+      )
     );
 
-    console.log("STEP 4: Processing number plate");
+    console.log("STEP 5: Sending image to plate AI");
 
     const plateResponse = await axios.post(
       "http://127.0.0.1:9000/blur-plate",
@@ -91,6 +124,8 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
       {
         headers: plateForm.getHeaders(),
         responseType: "arraybuffer",
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
       }
     );
 
@@ -103,23 +138,54 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
       plateResponse.data
     );
 
-    console.log("STEP 5: Final image saved");
+    console.log("STEP 6: Final AI result saved");
+
+    // ======================================
+    // CLEAN TEMP FILE
+    // ======================================
+
+    fs.unlinkSync(req.file.path);
+
+    console.log("STEP 7: Temp upload deleted");
+
+    console.log("======================================");
 
     // ======================================
     // RETURN SUCCESS
     // ======================================
 
     res.json({
-      message: "Processing complete",
+      success: true,
+      message: "AI vehicle processing complete",
+      original:
+        "http://localhost:5000/outputs/original-preview.png",
+
+      backgroundRemoved:
+        "http://localhost:5000/outputs/background-output.png",
+
+      final:
+        "http://localhost:5000/outputs/final-output.png",
     });
 
   } catch (error) {
 
+    console.log("======================================");
     console.log("PROCESSING ERROR:");
 
-    console.log(error);
+    if (error.response) {
+
+      console.log(error.response.data);
+
+    } else {
+
+      console.log(error.message);
+
+    }
+
+    console.log("======================================");
 
     res.status(500).json({
+      success: false,
       error: "Car processing failed",
     });
 
@@ -133,6 +199,9 @@ app.post("/process-car", upload.single("image"), async (req, res) => {
 
 app.listen(5000, () => {
 
+  console.log("======================================");
+  console.log("AutoPivot Backend Running");
   console.log("Server running on port 5000");
+  console.log("======================================");
 
 });
