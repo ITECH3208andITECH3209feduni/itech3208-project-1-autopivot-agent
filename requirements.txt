@@ -10,3 +10,4 @@ pillow
 opencv-python-headless
 ultralytics
 numpy
+kornia timm
