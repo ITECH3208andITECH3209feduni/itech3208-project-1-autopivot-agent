@@ -2,15 +2,6 @@
 
 AutoPivot Agent is a local demo web application for vehicle image processing. It allows a user to upload a vehicle photo, remove the background, hide the number plate, and optionally place a custom image/logo on the covered plate area.
 
-## What the app does
-
-- Upload one vehicle image from the browser
-- Remove the image background using RMBG-2.0
-- Detect and cover the number plate using the YOLOS small plate detection model
-- Show the final processed image in the preview area
-- Allow the user to drag and drop a small image/logo onto the covered plate area
-- Download the final PNG result
-
 ## Project files
 
 ```text
