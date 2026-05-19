@@ -95,7 +95,7 @@ export default function Home() {
               <div>
 
                 <div className="text-3xl font-black text-yellow-500">
-                  ✂️
+                  Background removal
                 </div>
 
                 <p className="text-sm text-gray-500 mt-1">
@@ -107,23 +107,11 @@ export default function Home() {
               <div>
 
                 <div className="text-3xl font-black text-yellow-500">
-                  🔒
+                  Numberplate detection
                 </div>
 
                 <p className="text-sm text-gray-500 mt-1">
                   YOLOS AI
-                </p>
-
-              </div>
-
-              <div>
-
-                <div className="text-3xl font-black text-yellow-500">
-                  ⚡
-                </div>
-
-                <p className="text-sm text-gray-500 mt-1">
-                  Fast Export
                 </p>
 
               </div>

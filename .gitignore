@@ -1,0 +1,29 @@
+# FRONTEND
+
+frontend/node_modules
+frontend/.next
+
+# BACKEND
+
+backend/node_modules
+backend/outputs
+backend/uploads
+
+# TEMP FILES
+
+outputs
+uploads
+
+# PYTHON
+
+__pycache__
+*.pyc
+
+# ENVIRONMENT FILES
+
+.env
+
+# OS FILES
+
+.DS_Store
+Thumbs.db
