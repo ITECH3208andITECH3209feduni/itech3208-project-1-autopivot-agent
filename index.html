@@ -1,78 +1,229 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoPivot — Background Removal Demo</title>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoPivot — AI Vehicle Privacy Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav>
-    <span class="nav-logo"><span style="color:var(--gold)">AUTO</span>PIVOT<span class="nav-logo-dot"></span></span>
-    <ul class="nav-center">
-      <li><a onclick="scrollToSection('demo')">Demo</a></li>
-    </ul>
-  </nav>
 
-  <section class="hero">
-    <div>
-      <h1>Vehicle background removal,<br><em>simplified.</em></h1>
-      <p>Upload a photo and AutoPivot removes the background on the backend server. No sign-in, no extra screens — just a clean demo.</p>
-      <div class="hero-actions">
-        <button class="btn-primary" onclick="document.getElementById('fileIn').click()">Upload photo</button>
-        <a class="btn-ghost" onclick="scrollToSection('demo')">Try demo</a>
-      </div>
+<!-- ══ NAV ══ -->
+<nav>
+  <span class="nav-logo" onclick="goHome()">
+    <span style="color:var(--gold)">AUTO</span>PIVOT<span class="nav-logo-dot"></span>
+  </span>
+  <ul class="nav-center">
+    <li><a onclick="navTo('how')">How it works</a></li>
+    <li><a onclick="navTo('tool')">Try it free</a></li>
+  </ul>
+</nav>
+
+<!-- ══ HOME PAGE ══ -->
+<div id="home-page" class="page active">
+
+<!-- Hero -->
+<section class="hero">
+  <div>
+    <div class="hero-badge">RMBG-2.0 + YOLOS Small Model · AI Powered</div>
+    <h1>Vehicle imaging,<br><em>reimagined.</em></h1>
+    <p>Upload one vehicle photo and AutoPivot will remove the background, hide the number plate, and let you place your own image on the covered plate area.</p>
+    <div class="hero-actions">
+      <a class="btn-primary" onclick="navTo('tool')">Try it free →</a>
+      <a class="btn-ghost" onclick="navTo('how')">See how it works ↓</a>
     </div>
-
-    <div id="demo">
-      <div class="tool-card">
-        <div class="tool-card-top">
-          <h3>Background removal demo</h3>
-          <div class="ai-pill">RMBG-2.0</div>
-        </div>
-        <div class="tool-body">
-          <div class="upload-zone" id="uploadZone">
-            <input id="fileIn" type="file" accept="image/jpeg,image/png,image/webp">
-            <div class="upload-icon">🚗</div>
-            <h4>Drop a vehicle photo or click to browse</h4>
-            <p>Supports JPG, PNG, WEBP. Processing happens locally in your browser.</p>
-          </div>
-
-          <div class="progress-wrap" id="progressWrap">
-            <div class="progress-label">
-              <span id="progressText">Waiting for image…</span>
-              <span id="progressPct">0%</span>
+    <div class="hero-stats">
+      <div><div class="stat-num">✂️</div><div class="stat-label">RMBG-2.0</div></div>
+      <div><div class="stat-num">🔒</div><div class="stat-label">YOLOS small model</div></div>
+      <div><div class="stat-num">Fast</div><div class="stat-label">GPU powered</div></div>
+    </div>
+  </div>
+  <div>
+    <!-- Result Image Preview -->
+    <div class="result-preview-card">
+      <div class="result-card-bar">
+        <div class="result-dots"><span></span><span></span><span></span></div>
+        <span class="result-card-label">Result Preview</span>
+        <span class="result-card-badge">Final PNG</span>
+      </div>
+      
+      <div class="result-preview-area">
+        <div class="result-comparison">
+          <div class="result-image-box">
+            <div class="result-image-label">Original</div>
+            <div class="result-image-content" id="heroOriginalPreview">
+              <span class="result-placeholder">🚗</span>
             </div>
-            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
           </div>
-
-          <div class="proc-row">
-            <button class="proc-btn" id="procBtn" disabled>Remove Background</button>
-            <a class="dl-btn" id="dlBtn" download="autopivot-processed.png">Download</a>
-          </div>
-
-          <div class="err-bar" id="errBar"></div>
-
-          <div class="comp" id="comp">
-            <div class="img-pan">
-              <div class="img-pan-top"><span>Original</span></div>
-              <div class="img-pan-body"><img id="origImg" src="" alt="Original"></div>
-            </div>
-            <div class="img-pan">
-              <div class="img-pan-top"><span>Processed</span><span class="badge" id="procBadge">Awaiting</span></div>
-              <div class="img-pan-body">
-                <img id="procImg" src="" alt="Processed" style="display:none">
-                <span id="procHint" style="font-size:13px;color:var(--mid)">Upload an image and click remove background.</span>
-              </div>
+          <div class="result-image-box">
+            <div class="result-image-label">Processed</div>
+            <div class="result-image-content" id="heroProcessedPreview">
+              <span class="result-placeholder">✨</span>
             </div>
           </div>
         </div>
       </div>
+      
+      <div class="result-status-bar">
+        <div class="result-status-left">
+          <div class="result-status-dot"></div>
+          <span class="result-status-txt" id="heroStatusTxt">Upload a photo below to see results</span>
+        </div>
+      </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <canvas id="canvas" style="display:none"></canvas>
-  <script src="app.js"></script>
+<!-- Ticker -->
+<div class="ticker-wrap">
+  <div class="ticker-track">
+    <span class="ticker-item">✂️ RMBG-2.0 Background Removal<span class="tdot"></span></span>
+    <span class="ticker-item">🔒 YOLOS small model<span class="tdot"></span></span>
+    <span class="ticker-item">🧠 State-of-the-art AI<span class="tdot"></span></span>
+    <span class="ticker-item">✦ Professional Results<span class="tdot"></span></span>
+    <span class="ticker-item">⚡ GPU Accelerated<span class="tdot"></span></span>
+    <span class="ticker-item">🚗 Any Vehicle Type<span class="tdot"></span></span>
+    <span class="ticker-item">📸 Instant Download<span class="tdot"></span></span>
+    <span class="ticker-item">🌏 High Quality Output<span class="tdot"></span></span>
+    <span class="ticker-item">✂️ RMBG-2.0 Background Removal<span class="tdot"></span></span>
+    <span class="ticker-item">🔒 YOLOS small model<span class="tdot"></span></span>
+    <span class="ticker-item">🧠 State-of-the-art AI<span class="tdot"></span></span>
+    <span class="ticker-item">✦ Professional Results<span class="tdot"></span></span>
+    <span class="ticker-item">⚡ GPU Accelerated<span class="tdot"></span></span>
+    <span class="ticker-item">🚗 Any Vehicle Type<span class="tdot"></span></span>
+    <span class="ticker-item">📸 Instant Download<span class="tdot"></span></span>
+    <span class="ticker-item">🌏 High Quality Output<span class="tdot"></span></span>
+  </div>
+</div>
+
+<!-- How it works -->
+<div id="how"><div class="section">
+  <div class="eyebrow">How it works</div>
+  <div class="sec-title">One upload, <em>complete result.</em></div>
+  <div class="how-grid">
+    <div class="how-card">
+      <div class="how-num">01 —</div>
+      <div class="how-icon">📤</div>
+      <h3>Upload your vehicle photo</h3>
+      <p>Drop one JPG, PNG, or WEBP image into the tool. AutoPivot sends it to the local AI backend for processing.</p>
+    </div>
+    <div class="how-card">
+      <div class="how-num">02 —</div>
+      <div class="how-icon">🔒</div>
+      <h3>Remove background and plate</h3>
+      <p>RMBG-2.0 removes the background first, then the YOLOS small model detects the number plate and hides it while keeping the transparent PNG output.</p>
+    </div>
+    <div class="how-card">
+      <div class="how-num">03 —</div>
+      <div class="how-icon">⬇️</div>
+      <h3>Preview and download</h3>
+      <p>The final result appears in the preview at the top and inside the tool. You can then drag and drop a small image beside the final result to place it on the white plate area before downloading.</p>
+    </div>
+  </div>
+</div></div>
+
+<!-- Tool -->
+<div class="tool-band" id="tool"><div class="tool-inner">
+  <div class="tool-head">
+    <div class="eyebrow">AI Studio · One-Step Processing</div>
+    <div class="sec-title">Upload once, <em>get the final photo.</em></div>
+    <p style="margin-top:14px">The backend removes the background and hides detected number plates in one process. After that, drag and drop your own image beside the final result to place it on the covered plate area.</p>
+  </div>
+
+  <div class="tool-grid single-tool-grid">
+    <div class="tool-card one-step-card">
+      <div class="tool-card-top">
+        <h3>Process Vehicle Photo</h3>
+        <div class="ai-pill">✂️ RMBG-2.0 + 🔒 YOLOS small model</div>
+      </div>
+      <div class="tool-body">
+
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" id="fileIn" accept="image/jpeg,image/png,image/webp" onchange="handleFile(event)">
+          <div class="upload-icon">🚗</div>
+          <h4>Drop your vehicle photo here</h4>
+          <p>JPG · PNG · WEBP — max 10MB</p>
+        </div>
+
+        <div class="progress-wrap" id="progressWrap">
+          <div class="progress-label">
+            <span id="progressText">Processing…</span>
+            <span id="progressPct">0%</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+
+        <div class="comp" id="comp">
+          <div class="img-pan">
+            <div class="img-pan-top"><span>Original</span><span class="badge">Input</span></div>
+            <div class="img-pan-body"><img id="origImg" src="" alt="Original"></div>
+          </div>
+          <div class="img-pan">
+            <div class="img-pan-top"><span>Final Result</span><span class="badge" id="procBadge">Awaiting</span></div>
+            <div class="img-pan-body">
+              <img id="procImg" src="" alt="Final processed result" style="display:none">
+              <span id="procHint" style="font-size:13px;color:var(--mid)">Upload an image, then press process</span>
+            </div>
+          </div>
+
+          <div class="img-pan plate-drop-panel" id="plateDropPanel">
+            <div class="img-pan-top"><span>Plate Image</span><span class="badge" id="plateDropBadge">Upload</span></div>
+            <div class="img-pan-body plate-drop-body">
+              <label class="plate-drop-zone" id="plateDropZone" for="plateOverlayIn">
+                <input type="file" id="plateOverlayIn" accept="image/jpeg,image/png,image/webp" onchange="handlePlateOverlay(event)">
+                <span class="plate-drop-icon">🖼️</span>
+                <strong>Drag & drop plate image</strong>
+                <small>Logo, sticker, or PNG/JPG/WEBP</small>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="plate-customizer-note" id="plateCanvasStatus">
+          Process the vehicle first, then drop an image here to place it on the white plate area.
+        </div>
+
+        <div class="proc-row">
+          <button class="proc-btn" id="procBtn" onclick="processVehiclePhoto()" disabled>
+            <div class="proc-spin" id="spin"></div>
+            <span id="procLabel">Upload an image first</span>
+          </button>
+          <button class="plate-reset-btn" id="resetPlateBtn" onclick="resetPlateCanvas()" type="button" style="display:none;">Reset white plate</button>
+          <a class="dl-btn" id="dlBtn1" download="autopivot-final.png" style="display:none;">⬇ Download</a>
+        </div>
+
+        <div class="err-bar" id="errBar"></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- CTA -->
+<div class="cta-band">
+  <div>
+    <h2>Ready to elevate<br><em>your listings?</em></h2>
+    <p>Two AI models. Professional results. Powered by RMBG-2.0 and YOLOS small model.</p>
+  </div>
+  <button class="btn-gold" onclick="navTo('tool')">Try it free →</button>
+</div>
+
+<!-- Footer -->
+<footer>
+  <a class="foot-logo"><span style="color:var(--gold)">AUTO</span>PIVOT</a>
+  <ul class="foot-links">
+    <li><a onclick="navTo('how')">How it works</a></li>
+    <li><a onclick="navTo('tool')">Tools</a></li>
+  </ul>
+  <span class="foot-copy">RMBG-2.0 · YOLOS small model · © 2026 AutoPivot</span>
+</footer>
+
+</div><!-- /home-page -->
+
+<canvas id="canvas" style="display:none"></canvas>
+
+
+<script src="app.js"></script>
+
 </body>
 </html>

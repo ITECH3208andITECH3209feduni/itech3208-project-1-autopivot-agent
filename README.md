@@ -1,47 +1,104 @@
 # AutoPivot Agent
 
-AutoPivot Agent is a demo application that performs server-side vehicle image processing with background removal, vehicle detection, license plate detection, and optional plate overlay.
+AutoPivot Agent is a local demo web application for vehicle image processing. It allows a user to upload a vehicle photo, remove the background, hide the number plate, and optionally place a custom image/logo on the covered plate area.
+
+## What the app does
+
+- Upload one vehicle image from the browser
+- Remove the image background using RMBG-2.0
+- Detect and cover the number plate using the YOLOS small plate detection model
+- Show the final processed image in the preview area
+- Allow the user to drag and drop a small image/logo onto the covered plate area
+- Download the final PNG result
+
+## Project files
+
+```text
+autopivot_backend.py   
+index.html             
+style.css              
+app.js                 
+requirements.txt      
+README.md              
+```
 
 ## Backend
 
-The backend is implemented in `autopivot_backend.py` using FastAPI. It hosts endpoints for:
+The backend is written in Python using FastAPI. It loads the AI models and provides API endpoints for image processing.
 
-- `POST /remove-background` — remove image background with RMBG-2.0
-- `POST /detect-vehicles` — detect vehicles with YOLOv8
-- `POST /detect-plates` — detect license plates with YOLOS
-- `POST /overlay-plate` — cover detected plates with a solid color or uploaded overlay image
+Main endpoint used by the frontend:
+
+```text
+POST /process-vehicle
+```
+
+This endpoint performs the full one-step process:
+
+1. Receives the uploaded vehicle image
+2. Removes the background using RMBG-2.0
+3. Detects the number plate using the YOLOS small plate detection model
+4. Covers the detected plate with a white rectangle
+5. Returns the processed PNG image to the frontend
+
+
+## Frontend
+
+The frontend is built with HTML, CSS, and JavaScript. It runs in the browser using Live Server.
+
+The user can:
+
+1. Upload a vehicle image
+2. Click **Process Photo**
+3. View the original and final result
+4. Drag and drop a custom plate image/logo
+5. Download the final PNG
+
+The frontend connects to the backend through:
+
+```javascript
+const BACKEND_URL = 'http://127.0.0.1:8000';
+```
 
 ## Requirements
 
-- Python 3.10+
-- `torch`, `transformers`, `ultralytics`, `fastapi`, `uvicorn`, `pillow`, `numpy`, `pyngrok`
+- Python 3.10 or newer
+- VS Code or another code editor
+- Live Server extension for running the frontend
+- Enough RAM/CPU to run the models locally
 
-Install dependencies with:
+Install the Python packages with:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Run
+## How to run the project
 
-Start the backend locally:
+### 1. Start the backend
+
+Open a terminal in the project folder and run:
 
 ```bash
 python autopivot_backend.py
 ```
 
-The server listens on `http://127.0.0.1:8000` by default.
+### 2. Start the frontend
 
-To expose the service with ngrok:
+Open `index.html` with Live Server in VS Code.
 
-```bash
-python autopivot_backend.py --ngrok
-```
+Then upload an image and click **Process Photo**.
 
-## Frontend
+## Current status
 
-Open `index.html` in a browser and set `BACKEND_URL` in `app.js` if needed. The frontend uploads images to the backend and displays processed results.
+This version is working as a local prototype. The main completed features are:
 
-## Notes
+- One-step vehicle image processing
+- Background removal
+- Number plate hiding
+- Final result preview
+- Drag-and-drop custom plate overlay
+- PNG download
+
+## Team/project note
 
 This repository is a demo implementation and is intended for local testing and prototyping.
