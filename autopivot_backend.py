@@ -6,14 +6,16 @@ from transformers import AutoModelForImageSegmentation, pipeline
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import io, base64, numpy as np, cv2, logging, uvicorn
+import os
 
-HF_TOKEN = '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'
+HF_TOKEN = os.getenv("HF_TOKEN")
 PORT = 8000
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-login(token=HF_TOKEN)
+if HF_TOKEN:
+    login(token=HF_TOKEN)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -182,10 +184,5 @@ async def detect_and_hide(file: UploadFile = File(...)):
 
 
 if __name__ == '__main__':
-    print('=' * 70)
-    print(f'Backend running locally on port {PORT}')
-    print(f'In a SECOND terminal, run:')
-    print(f'   ngrok http --url=unchanged-making-delicious.ngrok-free.dev {PORT}')
-    print(f'Your public URL: https://unchanged-making-delicious.ngrok-free.dev')
-    print('=' * 70)
+    print(f'Backend running locally on http://127.0.0.1:{PORT}')
     uvicorn.run(app, host='0.0.0.0', port=PORT, log_level='info')
