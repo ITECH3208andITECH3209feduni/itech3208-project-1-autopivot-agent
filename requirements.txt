@@ -1,13 +1,13 @@
-fastapi
-uvicorn
-pyngrok
-python-multipart
-nest-asyncio
-transformers
 torch
 torchvision
 pillow
-opencv-python-headless
-ultralytics
+kornia
+timm
+transformers
+accelerate
+fastapi
+uvicorn
+python-multipart
+opencv-python
 numpy
-kornia timm
+huggingface-hub
