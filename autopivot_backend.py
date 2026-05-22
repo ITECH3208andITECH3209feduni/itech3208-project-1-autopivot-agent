@@ -6,11 +6,14 @@ from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import io, base64, numpy as np, cv2, logging, uvicorn
 import os
+from pathlib import Path
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 PORT = 8000
+BASE_DIR = Path(__file__).resolve().parent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,11 +22,8 @@ if HF_TOKEN:
     login(token=HF_TOKEN)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
-logger.info('Loading YOLO26 vehicle detector: yolo26n.pt')
-vehicle_detector = YOLO('yolo26n.pt')
-
+vehicle_detector = None
+plate_detector = None
 
 logger.info('Loading BiRefNet background removal model: ZhengPeng7/BiRefNet')
 birefnet_model = AutoModelForImageSegmentation.from_pretrained(
@@ -39,12 +39,6 @@ transform_image = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-logger.info('Loading YOLOS plate detector: nickmuchi/yolos-small-finetuned-license-plate-detection')
-plate_detector = pipeline(
-    'object-detection',
-    model='nickmuchi/yolos-small-finetuned-license-plate-detection'
-)
-
 app = FastAPI(title='AutoPivot - YOLO26 + BiRefNet + YOLOS')
 
 app.add_middleware(
@@ -56,11 +50,33 @@ app.add_middleware(
 )
 
 
+def get_vehicle_detector():
+    """Load the vehicle detector only when a vehicle-processing endpoint needs it."""
+    global vehicle_detector
+    if vehicle_detector is None:
+        logger.info('Loading YOLO26 vehicle detector: yolo26n.pt')
+        vehicle_detector = YOLO('yolo26n.pt')
+    return vehicle_detector
+
+
+def get_plate_detector():
+    """Load the plate detector only when a plate-processing endpoint needs it."""
+    global plate_detector
+    if plate_detector is None:
+        logger.info('Loading YOLOS plate detector: nickmuchi/yolos-small-finetuned-license-plate-detection')
+        plate_detector = pipeline(
+            'object-detection',
+            model='nickmuchi/yolos-small-finetuned-license-plate-detection'
+        )
+    return plate_detector
+
+
 def detect_vehicle_yolo26(image, conf_threshold=0.35):
     """Detect the largest vehicle in the uploaded image using YOLO26."""
     image_rgb = image.convert('RGB')
 
-    results = vehicle_detector(image_rgb, conf=conf_threshold, verbose=False)
+    detector = get_vehicle_detector()
+    results = detector(image_rgb, conf=conf_threshold, verbose=False)
 
     # COCO vehicle classes commonly detected by YOLO models.
     vehicle_classes = {'car', 'truck', 'bus', 'motorcycle'}
@@ -148,7 +164,8 @@ def hide_number_plates_rgba(img):
 
     arr = np.array(img)
     rgb = img.convert('RGB')
-    detections = plate_detector(rgb)
+    detector = get_plate_detector()
+    detections = detector(rgb)
     plates = [d for d in detections if d['score'] > 0.3]
 
     for p in plates:
@@ -164,6 +181,21 @@ def hide_number_plates_rgba(img):
 
 @app.get('/')
 async def root():
+    return FileResponse(BASE_DIR / 'index.html')
+
+
+@app.get('/style.css')
+async def stylesheet():
+    return FileResponse(BASE_DIR / 'style.css', media_type='text/css')
+
+
+@app.get('/app.js')
+async def javascript():
+    return FileResponse(BASE_DIR / 'app.js', media_type='application/javascript')
+
+
+@app.get('/api/status')
+async def api_status():
     return {
         'status': 'online',
         'models': {
@@ -277,7 +309,8 @@ async def detect_and_hide(file: UploadFile = File(...)):
             img = img.convert('RGBA')
         arr = np.array(img)
         rgb = img.convert('RGB')
-        detections = plate_detector(rgb)
+        detector = get_plate_detector()
+        detections = detector(rgb)
         plates = [d for d in detections if d['score'] > 0.3]
         if not plates:
             return {'success': False, 'message': 'No plates', 'plates_detected': 0}

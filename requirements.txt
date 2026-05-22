@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pyngrok
+python-multipart
+nest-asyncio
+huggingface_hub
+transformers
+torch
+torchvision
+pillow
+opencv-python-headless
+ultralytics
+numpy
+kornia
+timm
