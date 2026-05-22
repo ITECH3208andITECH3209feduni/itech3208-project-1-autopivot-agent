@@ -12,61 +12,59 @@
 </head>
 <body>
   <nav>
-    <span class="nav-logo"><span style="color:var(--gold)">AUTO</span>PIVOT<span class="nav-logo-dot"></span></span>
-    <ul class="nav-center">
-      <li><a onclick="scrollToSection('demo')">Demo</a></li>
+    <span class="navigation-logo"><span style="color:var(--gold)">AUTO</span>PIVOT<span class="navigation-logo-dot"></span></span>
+    <ul class="navigation-links">
+      <li><a onclick="scrollToSection('demo-section')">Demo</a></li>
     </ul>
   </nav>
 
-  <section class="hero">
-    <div>
+  <section class="hero-section">
+    <div class="hero-introduction">
       <h1>Vehicle background removal,<br><em>simplified.</em></h1>
-      <p>Upload a photo and AutoPivot removes the background on the backend server. No sign-in, no extra screens — just a clean demo.</p>
-      <div class="hero-actions">
-        <button class="btn-primary" onclick="document.getElementById('fileIn').click()">Upload photo</button>
-        <a class="btn-ghost" onclick="scrollToSection('demo')">Try demo</a>
+      <p>Upload a photo and AutoPivot removes the background on the backend server.</p>
+      <div class="hero-action-buttons">
+        <button class="primary-upload-button" onclick="document.getElementById('image-file-input').click()">Upload photo</button>
+        <a class="secondary-demo-link" onclick="scrollToSection('demo-section')">Try demo</a>
       </div>
     </div>
 
-    <div id="demo">
-      <div class="tool-card">
-        <div class="tool-card-top">
+    <div class="demo-panel" id="demo-section">
+      <div class="background-removal-card">
+        <div class="background-removal-card-header">
           <h3>Background removal demo</h3>
-          <div class="ai-pill">RMBG-2.0</div>
         </div>
-        <div class="tool-body">
-          <div class="upload-zone" id="uploadZone">
-            <input id="fileIn" type="file" accept="image/jpeg,image/png,image/webp">
-            <div class="upload-icon">🚗</div>
+        <div class="background-removal-card-body">
+          <div class="image-upload-zone" id="image-upload-zone">
+            <input id="image-file-input" type="file" accept="image/jpeg,image/png,image/webp">
             <h4>Drop a vehicle photo or click to browse</h4>
-            <p>Supports JPG, PNG, WEBP. Processing happens locally in your browser.</p>
+            <p>Supports JPG, PNG, WEBP.</p>
           </div>
 
-          <div class="progress-wrap" id="progressWrap">
-            <div class="progress-label">
-              <span id="progressText">Waiting for image…</span>
-              <span id="progressPct">0%</span>
+          <div class="progress-container" id="progress-container">
+            <div class="progress-status-row">
+              <span id="progress-status-text">Waiting for image…</span>
+              <span id="progress-percentage">0%</span>
             </div>
-            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <div class="progress-track"><div class="progress-indicator" id="progress-indicator"></div></div>
           </div>
 
-          <div class="proc-row">
-            <button class="proc-btn" id="procBtn" disabled>Remove Background</button>
-            <a class="dl-btn" id="dlBtn" download="autopivot-processed.png">Download</a>
+          <div class="processing-actions">
+            <button class="remove-background-button" id="remove-background-button" disabled>Remove Background</button>
+            <a class="download-button" id="download-button" download="autopivot-processed.png">Download</a>
           </div>
 
-          <div class="err-bar" id="errBar"></div>
+          <div class="error-message-bar" id="error-message-bar"></div>
 
-          <div class="comp" id="comp">
-            <div class="img-pan">
-              <div class="img-pan-top"><span>Original</span></div>
-              <div class="img-pan-body"><img id="origImg" src="" alt="Original"></div>
+          <div class="image-comparison-grid" id="image-comparison-grid">
+            <div class="image-preview-panel">
+              <div class="image-preview-header"><span>Original</span></div>
+              <div class="image-preview-body"><img id="original-image-preview" src="" alt="Original"></div>
             </div>
-            <div class="img-pan">
-              <div class="img-pan-top"><span>Processed</span><span class="badge" id="procBadge">Awaiting</span></div>
-              <div class="img-pan-body">
-                <img id="procImg" src="" alt="Processed" style="display:none">
-                <span id="procHint" style="font-size:13px;color:var(--mid)">Upload an image and click remove background.</span>
+            <div class="image-preview-panel">
+              <div class="image-preview-header"><span>Processed</span><span class="status-badge" id="processed-status-badge">Awaiting</span></div>
+              <div class="image-preview-body">
+                <img id="processed-image-preview" src="" alt="Processed" style="display:none">
+                <span id="processed-image-placeholder" style="font-size:13px;color:var(--mid)">Upload an image and click remove background.</span>
               </div>
             </div>
           </div>
@@ -75,7 +73,7 @@
     </div>
   </section>
 
-  <canvas id="canvas" style="display:none"></canvas>
+  <canvas id="processing-canvas" style="display:none"></canvas>
   <script src="app.js"></script>
 </body>
 </html>

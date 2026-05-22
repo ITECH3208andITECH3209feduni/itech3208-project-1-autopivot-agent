@@ -1,46 +1,46 @@
 // Main JavaScript Logic for Image Background Removal Interface
 // Developed by Vadim Rudoi
 
-const BACKEND_URL = 'http://127.0.0.1:8000';
+const BACKEND_URL = window.location.origin;
 
 let currentFile = null;
-const fileInput = document.getElementById('fileIn');
-const uploadZone = document.getElementById('uploadZone');
-const procBtn = document.getElementById('procBtn');
-const progWrap = document.getElementById('progressWrap');
-const progText = document.getElementById('progressText');
-const progPct = document.getElementById('progressPct');
-const progFill = document.getElementById('progressFill');
-const errBar = document.getElementById('errBar');
-const comp = document.getElementById('comp');
-const origImg = document.getElementById('origImg');
-const procImg = document.getElementById('procImg');
-const procHint = document.getElementById('procHint');
-const procBadge = document.getElementById('procBadge');
-const dlBtn = document.getElementById('dlBtn');
+const imageFileInput = document.getElementById('image-file-input');
+const imageUploadZone = document.getElementById('image-upload-zone');
+const removeBackgroundButton = document.getElementById('remove-background-button');
+const progressContainer = document.getElementById('progress-container');
+const progressStatusText = document.getElementById('progress-status-text');
+const progressPercentage = document.getElementById('progress-percentage');
+const progressIndicator = document.getElementById('progress-indicator');
+const errorMessageBar = document.getElementById('error-message-bar');
+const imageComparisonGrid = document.getElementById('image-comparison-grid');
+const originalImagePreview = document.getElementById('original-image-preview');
+const processedImagePreview = document.getElementById('processed-image-preview');
+const processedImagePlaceholder = document.getElementById('processed-image-placeholder');
+const processedStatusBadge = document.getElementById('processed-status-badge');
+const downloadButton = document.getElementById('download-button');
 
-fileInput.addEventListener('change', event => {
+imageFileInput.addEventListener('change', event => {
   const file = event.target.files[0];
   if (file) loadFile(file);
 });
 
-uploadZone.addEventListener('dragover', event => {
+imageUploadZone.addEventListener('dragover', event => {
   event.preventDefault();
-  uploadZone.classList.add('drag');
+  imageUploadZone.classList.add('is-drag-active');
 });
 
-uploadZone.addEventListener('dragleave', () => {
-  uploadZone.classList.remove('drag');
+imageUploadZone.addEventListener('dragleave', () => {
+  imageUploadZone.classList.remove('is-drag-active');
 });
 
-uploadZone.addEventListener('drop', event => {
+imageUploadZone.addEventListener('drop', event => {
   event.preventDefault();
-  uploadZone.classList.remove('drag');
+  imageUploadZone.classList.remove('is-drag-active');
   const file = event.dataTransfer.files[0];
   if (file) loadFile(file);
 });
 
-procBtn.addEventListener('click', processImage);
+removeBackgroundButton.addEventListener('click', processImage);
 
 window.scrollToSection = function(id) {
   const el = document.getElementById(id);
@@ -60,16 +60,16 @@ function loadFile(file) {
   const reader = new FileReader();
   reader.onload = event => {
     const url = event.target.result;
-    origImg.src = url;
-    procImg.style.display = 'none';
-    procHint.style.display = 'block';
-    procBadge.textContent = 'Awaiting';
-    procBadge.className = 'badge';
-    dlBtn.classList.remove('show');
-    comp.classList.add('show');
-    procBtn.disabled = false;
-    progWrap.classList.remove('show');
-    errBar.classList.remove('show');
+    originalImagePreview.src = url;
+    processedImagePreview.style.display = 'none';
+    processedImagePlaceholder.style.display = 'block';
+    processedStatusBadge.textContent = 'Awaiting';
+    processedStatusBadge.className = 'status-badge';
+    downloadButton.classList.remove('is-visible');
+    imageComparisonGrid.classList.add('is-visible');
+    removeBackgroundButton.disabled = false;
+    progressContainer.classList.remove('is-visible');
+    errorMessageBar.classList.remove('is-visible');
   };
   reader.readAsDataURL(file);
 }
@@ -80,7 +80,7 @@ async function processImage() {
     return showErr('Backend URL is not configured. Set BACKEND_URL in app.js.');
   }
 
-  errBar.classList.remove('show');
+  errorMessageBar.classList.remove('is-visible');
   setLoading(true);
 
   try {
@@ -117,28 +117,28 @@ async function processBackground() {
 
   setProgress(100, 'Done!');
   const dataUrl = `data:image/png;base64,${json.processed_image}`;
-  procImg.src = dataUrl;
-  procImg.style.display = 'block';
-  procHint.style.display = 'none';
-  procBadge.textContent = '✓ Done';
-  procBadge.className = 'badge done';
-  dlBtn.href = dataUrl;
-  dlBtn.classList.add('show');
+  processedImagePreview.src = dataUrl;
+  processedImagePreview.style.display = 'block';
+  processedImagePlaceholder.style.display = 'none';
+  processedStatusBadge.textContent = '✓ Done';
+  processedStatusBadge.className = 'status-badge is-complete';
+  downloadButton.href = dataUrl;
+  downloadButton.classList.add('is-visible');
 }
 
 function setLoading(on) {
-  procBtn.disabled = on || !currentFile;
-  procBtn.textContent = on ? 'Processing…' : 'Remove Background';
+  removeBackgroundButton.disabled = on || !currentFile;
+  removeBackgroundButton.textContent = on ? 'Processing…' : 'Remove Background';
 }
 
 function setProgress(percent, label) {
-  progWrap.classList.add('show');
-  progFill.style.width = percent + '%';
-  progText.textContent = label;
-  progPct.textContent = percent + '%';
+  progressContainer.classList.add('is-visible');
+  progressIndicator.style.width = percent + '%';
+  progressStatusText.textContent = label;
+  progressPercentage.textContent = percent + '%';
 }
 
 function showErr(message) {
-  errBar.textContent = '⚠ ' + message;
-  errBar.classList.add('show');
+  errorMessageBar.textContent = '⚠ ' + message;
+  errorMessageBar.classList.add('is-visible');
 }
