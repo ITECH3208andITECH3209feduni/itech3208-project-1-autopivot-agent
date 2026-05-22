@@ -1,0 +1,81 @@
+<!-- Main Interface -->
+<!-- Developed by Vadim Rudoi -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoPivot — Background Removal Demo</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav>
+    <span class="nav-logo"><span style="color:var(--gold)">AUTO</span>PIVOT<span class="nav-logo-dot"></span></span>
+    <ul class="nav-center">
+      <li><a onclick="scrollToSection('demo')">Demo</a></li>
+    </ul>
+  </nav>
+
+  <section class="hero">
+    <div>
+      <h1>Vehicle background removal,<br><em>simplified.</em></h1>
+      <p>Upload a photo and AutoPivot removes the background on the backend server. No sign-in, no extra screens — just a clean demo.</p>
+      <div class="hero-actions">
+        <button class="btn-primary" onclick="document.getElementById('fileIn').click()">Upload photo</button>
+        <a class="btn-ghost" onclick="scrollToSection('demo')">Try demo</a>
+      </div>
+    </div>
+
+    <div id="demo">
+      <div class="tool-card">
+        <div class="tool-card-top">
+          <h3>Background removal demo</h3>
+          <div class="ai-pill">RMBG-2.0</div>
+        </div>
+        <div class="tool-body">
+          <div class="upload-zone" id="uploadZone">
+            <input id="fileIn" type="file" accept="image/jpeg,image/png,image/webp">
+            <div class="upload-icon">🚗</div>
+            <h4>Drop a vehicle photo or click to browse</h4>
+            <p>Supports JPG, PNG, WEBP. Processing happens locally in your browser.</p>
+          </div>
+
+          <div class="progress-wrap" id="progressWrap">
+            <div class="progress-label">
+              <span id="progressText">Waiting for image…</span>
+              <span id="progressPct">0%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          </div>
+
+          <div class="proc-row">
+            <button class="proc-btn" id="procBtn" disabled>Remove Background</button>
+            <a class="dl-btn" id="dlBtn" download="autopivot-processed.png">Download</a>
+          </div>
+
+          <div class="err-bar" id="errBar"></div>
+
+          <div class="comp" id="comp">
+            <div class="img-pan">
+              <div class="img-pan-top"><span>Original</span></div>
+              <div class="img-pan-body"><img id="origImg" src="" alt="Original"></div>
+            </div>
+            <div class="img-pan">
+              <div class="img-pan-top"><span>Processed</span><span class="badge" id="procBadge">Awaiting</span></div>
+              <div class="img-pan-body">
+                <img id="procImg" src="" alt="Processed" style="display:none">
+                <span id="procHint" style="font-size:13px;color:var(--mid)">Upload an image and click remove background.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <canvas id="canvas" style="display:none"></canvas>
+  <script src="app.js"></script>
+</body>
+</html>
