@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from huggingface_hub import get_token, login
+from huggingface_hub import get_token, hf_hub_download, login
 from PIL import Image, UnidentifiedImageError
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
@@ -38,7 +38,8 @@ MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 
 # Fixed by Vadim Rudoi — YOLO model path is now configurable via environment
 # variable instead of being hardcoded to a non-existent filename.
-YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "yolov26n.pt")
+YOLO_HF_REPO: str    = os.getenv("YOLO_HF_REPO", "Ultralytics/YOLO26")
+YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "yolo26n.pt")
 
 # Fixed by Vadim Rudoi — wildcard "*" + allow_credentials=True is an invalid
 # CORS combo rejected by all modern browsers. Origins are now explicit and
@@ -60,6 +61,21 @@ VEHICLE_CLASSES: frozenset[str] = frozenset(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
+
+YOLO26_HF_FILES: frozenset[str] = frozenset({
+    "yolo26n.pt",
+    "yolo26s.pt",
+    "yolo26m.pt",
+    "yolo26l.pt",
+    "yolo26x.pt",
+})
+YOLO26_FILENAME_ALIASES: dict[str, str] = {
+    "yolov26n.pt": "yolo26n.pt",
+    "yolov26s.pt": "yolo26s.pt",
+    "yolov26m.pt": "yolo26m.pt",
+    "yolov26l.pt": "yolo26l.pt",
+    "yolov26x.pt": "yolo26x.pt",
+}
 
 # ── Structured Logging ─────────────────────────────────────────────────────────
 # Developed by Vadim Rudoi
@@ -203,16 +219,18 @@ class ModelRegistry:
         """
         logger.info("Loading YOLO vehicle detector — %s", YOLO_MODEL_PATH)
         try:
-            self._vehicle = YOLO(YOLO_MODEL_PATH)
+            model_path = _resolve_yolo_model_path(YOLO_MODEL_PATH)
+            self._vehicle = YOLO(model_path)
             self._vehicle_ok = True
-            logger.info("YOLO loaded: %s", YOLO_MODEL_PATH)
+            self.active_yolo = str(model_path)
+            logger.info("YOLO loaded: %s", model_path)
         except Exception as exc:
             logger.critical(
                 "YOLO model '%s' failed to load: %s",
                 YOLO_MODEL_PATH, exc, exc_info=True,
             )
             raise RuntimeError(
-                f"YOLO model unavailable (path={YOLO_MODEL_PATH}): {exc}"
+                f"YOLO model unavailable (configured={YOLO_MODEL_PATH}): {exc}"
             ) from exc
 
     def _load_plates(self) -> None:
@@ -254,6 +272,7 @@ class ModelRegistry:
             "active_bg_model": active_bg,
             "rmbg_loaded": self._rmbg_ok,
             "birefnet_loaded": self._birefnet_ok,
+            "active_yolo_model": self.active_yolo,
             "vehicle_detector_loaded": self._vehicle_ok,
             "plate_detector_loaded": self._plates_ok,
         }
@@ -303,7 +322,7 @@ async def lifespan(app: FastAPI):
         "AutoPivot ready — device=%s  active_bg_model=%s  yolo=%s",
         registry.device,
         registry.health()["active_bg_model"],
-        YOLO_MODEL_PATH,
+        registry.active_yolo,
     )
     yield
     logger.info("AutoPivot shutting down")
@@ -402,6 +421,33 @@ def _encode_png(image: Image.Image) -> str:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
+
+
+def _resolve_yolo_model_path(model_ref: str) -> str:
+    """
+    Resolve a YOLO model reference to a local file path that Ultralytics can load.
+
+    Plain YOLO26 filenames are downloaded from Hugging Face into the local cache;
+    explicit local paths are used as-is.
+    """
+    resolved_ref = YOLO26_FILENAME_ALIASES.get(model_ref, model_ref)
+    candidate = Path(resolved_ref).expanduser()
+    if candidate.exists():
+        return str(candidate)
+
+    if resolved_ref in YOLO26_HF_FILES:
+        logger.info(
+            "Downloading YOLO vehicle detector from Hugging Face — repo=%s file=%s",
+            YOLO_HF_REPO,
+            resolved_ref,
+        )
+        return hf_hub_download(
+            repo_id=YOLO_HF_REPO,
+            filename=resolved_ref,
+            token=HF_AUTH_TOKEN or None,
+        )
+
+    return resolved_ref
 
 
 # ── Core Processing Logic ──────────────────────────────────────────────────────
@@ -638,7 +684,7 @@ async def api_status() -> dict:
     return {
         "status": "online",
         "models": {
-            "vehicle": f"YOLO ({YOLO_MODEL_PATH})",
+            "vehicle": f"YOLO ({registry.active_yolo})",
             "background_primary": "briaai/RMBG-2.0",
             "background_fallback": "ZhengPeng7/BiRefNet",
             "plate": "nickmuchi/yolos-small-finetuned-license-plate-detection",
