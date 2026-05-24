@@ -1,8 +1,12 @@
+# AutoPivot — Python Dependencies
+# Developed by Vadim Rudoi
+ 
+# Server
 fastapi
-uvicorn
-pyngrok
+uvicorn[standard]
 python-multipart
-nest-asyncio
+ 
+# ML / Vision
 huggingface_hub
 transformers
 torch
@@ -13,3 +17,4 @@ ultralytics
 numpy
 kornia
 timm
+eionops

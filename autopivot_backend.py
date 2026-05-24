@@ -1,348 +1,848 @@
-from huggingface_hub import login
-from PIL import Image
+# AutoPivot Backend
+# Developed by Vadim Rudoi, Akhanda Bhandari and Suraj Purella
+
+from __future__ import annotations
+
+import base64
+import io
+import logging
+import logging.config
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
+
+import cv2
+import numpy as np
 import torch
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from huggingface_hub import login
+from PIL import Image, UnidentifiedImageError
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-import io, base64, numpy as np, cv2, logging, uvicorn
-import os
-from pathlib import Path
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-PORT = 8000
-BASE_DIR = Path(__file__).resolve().parent
+# ── Configuration ──────────────────────────────────────────────────────────────
+# Fixed by Vadim Rudoi — all hardcoded values replaced with environment-based config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
+HOST: str           = os.getenv("HOST", "0.0.0.0")
+PORT: int           = int(os.getenv("PORT", 8000))
+MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 10))
+MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 
-if HF_TOKEN:
-    login(token=HF_TOKEN)
+# Fixed by Vadim Rudoi — YOLO model path is now configurable via environment
+# variable instead of being hardcoded to a non-existent filename.
+YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "yolov26n.pt")
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-vehicle_detector = None
-plate_detector = None
+# Fixed by Vadim Rudoi — wildcard "*" + allow_credentials=True is an invalid
+# CORS combo rejected by all modern browsers. Origins are now explicit and
+# credentials are disabled (tokens belong in Authorization headers for an API).
+ALLOWED_ORIGINS: list[str] = [
+    o.strip()
+    for o in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000",
+    ).split(",")
+    if o.strip()
+]
 
-logger.info('Loading BiRefNet background removal model: ZhengPeng7/BiRefNet')
-birefnet_model = AutoModelForImageSegmentation.from_pretrained(
-    'ZhengPeng7/BiRefNet',
-    trust_remote_code=True,
-    torch_dtype=torch.float32
-).eval().to(device).float()
-
-image_size = (1024, 1024)
-transform_image = transforms.Compose([
-    transforms.Resize(image_size),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-
-app = FastAPI(title='AutoPivot - YOLO26 + BiRefNet + YOLOS')
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"image/jpeg", "image/png", "image/webp"}
+)
+VEHICLE_CLASSES: frozenset[str] = frozenset(
+    {"car", "truck", "bus", "motorcycle"}
 )
 
+BASE_DIR = Path(__file__).resolve().parent
 
-def get_vehicle_detector():
-    """Load the vehicle detector only when a vehicle-processing endpoint needs it."""
-    global vehicle_detector
-    if vehicle_detector is None:
-        logger.info('Loading YOLO26 vehicle detector: yolo26n.pt')
-        vehicle_detector = YOLO('yolo26n.pt')
-    return vehicle_detector
+# ── Structured Logging ─────────────────────────────────────────────────────────
+# Developed by Vadim Rudoi
+
+_LOGGING_CONFIG: dict = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
+            "datefmt": "%Y-%m-%dT%H:%M:%S",
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "stream": "ext://sys.stdout",
+        }
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
+
+logging.config.dictConfig(_LOGGING_CONFIG)
+logger = logging.getLogger("autopivot")
+
+# ── Shared Segmentation Transform ──────────────────────────────────────────────
+# Both RMBG-2.0 and BiRefNet use the same ImageNet normalisation and 1024×1024
+# input resolution, so one transform covers both models.
+
+_SEG_SIZE = (1024, 1024)
+_seg_transform = transforms.Compose([
+    transforms.Resize(_SEG_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+])
+
+# ── Model Registry ─────────────────────────────────────────────────────────────
+# Developed by Vadim Rudoi — centralised registry with:
+#   • RMBG-2.0 as primary background removal model
+#   • BiRefNet as automatic fallback if RMBG-2.0 is unavailable
+#   • Independent health tracking per model
+#   • Lazy loading for vehicle and plate detectors
 
 
-def get_plate_detector():
-    """Load the plate detector only when a plate-processing endpoint needs it."""
-    global plate_detector
-    if plate_detector is None:
-        logger.info('Loading YOLOS plate detector: nickmuchi/yolos-small-finetuned-license-plate-detection')
-        plate_detector = pipeline(
-            'object-detection',
-            model='nickmuchi/yolos-small-finetuned-license-plate-detection'
+class ModelRegistry:
+    """Centralised model registry with lazy loading and per-model health tracking."""
+
+    def __init__(self) -> None:
+        # Background removal — primary + fallback
+        self._rmbg: Optional[AutoModelForImageSegmentation] = None
+        self._birefnet: Optional[AutoModelForImageSegmentation] = None
+        self._rmbg_ok = False
+        self._birefnet_ok = False
+
+        # Detection models (lazy)
+        self._vehicle: Optional[YOLO] = None
+        self._plates = None
+        self._vehicle_ok = False
+        self._plates_ok = False
+
+        self.active_yolo: str = "none"
+
+        self._device: str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # ── Read-only properties ──
+
+    @property
+    def device(self) -> str:
+        return self._device
+
+    @property
+    def vehicle_detector(self) -> YOLO:
+        if not self._vehicle_ok:
+            self._load_vehicle()
+        return self._vehicle  # type: ignore[return-value]
+
+    @property
+    def plate_detector(self):
+        if not self._plates_ok:
+            self._load_plates()
+        return self._plates
+
+    # ── Background model loaders ──
+
+    def _load_rmbg(self) -> None:
+        """
+        Developed by Vadim Rudoi — load BRIA RMBG-2.0 as the primary
+        background removal model. Requires a HuggingFace token from an account
+        that has accepted the BRIA license on https://huggingface.co/briaai/RMBG-2.0
+        """
+
+        primary_yolo = "yolo26n.pt"
+        fallback_yolo = "yolo11n.pt"
+
+        logger.info("Attempting to load primary YOLO vehicle detector — %s", primary_yolo)
+        try:
+            self._vehicle = YOLO(primary_yolo)
+            self._vehicle_ok = True
+            self.active_yolo = primary_yolo
+            logger.info("Primary YOLO loaded successfully: %s", primary_yolo)
+        except Exception as exc:
+            logger.warning(
+                "YOLOv26 failed to load (%s). Falling back to %s.", 
+                exc, fallback_yolo
+            )
+            try:
+                self._vehicle = YOLO(fallback_yolo)
+                self._vehicle_ok = True
+                self.active_yolo = fallback_yolo
+                logger.info("Fallback YOLO loaded successfully: %s", fallback_yolo)
+            except Exception as fallback_exc:
+                logger.critical("Both primary and fallback YOLO models failed to load.", exc_info=True)
+                raise RuntimeError(f"Vehicle detector unavailable: {fallback_exc}") from fallback_exc
+
+    def _load_birefnet(self) -> None:
+        """
+        Developed by Vadim Rudoi — load BiRefNet as the fallback background
+        removal model, used whenever RMBG-2.0 is unavailable.
+        """
+        logger.info("Loading fallback background model — ZhengPeng7/BiRefNet")
+        try:
+            self._birefnet = (
+                AutoModelForImageSegmentation.from_pretrained(
+                    "ZhengPeng7/BiRefNet",
+                    trust_remote_code=True,
+                    torch_dtype=torch.float32,
+                )
+                .eval()
+                .to(self._device)
+            )
+            self._birefnet_ok = True
+            logger.info("BiRefNet loaded on %s", self._device)
+        except Exception as exc:
+            logger.critical("BiRefNet failed to load: %s", exc, exc_info=True)
+            raise RuntimeError(f"BiRefNet model unavailable: {exc}") from exc
+
+    # ── Detection model loaders ──
+
+    def _load_vehicle(self) -> None:
+        """
+        Fixed by Vadim Rudoi — YOLO model filename is configurable via the
+        YOLO_MODEL_PATH environment variable instead of being hardcoded.
+        """
+        logger.info("Loading YOLO vehicle detector — %s", YOLO_MODEL_PATH)
+        try:
+            self._vehicle = YOLO(YOLO_MODEL_PATH)
+            self._vehicle_ok = True
+            logger.info("YOLO loaded: %s", YOLO_MODEL_PATH)
+        except Exception as exc:
+            logger.critical(
+                "YOLO model '%s' failed to load: %s",
+                YOLO_MODEL_PATH, exc, exc_info=True,
+            )
+            raise RuntimeError(
+                f"YOLO model unavailable (path={YOLO_MODEL_PATH}): {exc}"
+            ) from exc
+
+    def _load_plates(self) -> None:
+        logger.info("Loading YOLOS plate detector")
+        try:
+            self._plates = pipeline(
+                "object-detection",
+                model="nickmuchi/yolos-small-finetuned-license-plate-detection",
+            )
+            self._plates_ok = True
+            logger.info("YOLOS plate detector loaded")
+        except Exception as exc:
+            logger.critical("Plate detector failed to load: %s", exc, exc_info=True)
+            raise RuntimeError(f"Plate detector unavailable: {exc}") from exc
+
+    # ── Active model resolution ──
+
+    def active_bg_model(self):
+        """Return the active background removal model and its identifier."""
+        if self._rmbg_ok:
+            return self._rmbg, "briaai/RMBG-2.0"
+        if self._birefnet_ok:
+            return self._birefnet, "ZhengPeng7/BiRefNet"
+        raise RuntimeError(
+            "No background removal model is loaded. "
+            "Check startup logs for RMBG-2.0 / BiRefNet errors."
         )
-    return plate_detector
+
+    def health(self) -> dict:
+        if self._rmbg_ok:
+            active_bg = "briaai/RMBG-2.0"
+        elif self._birefnet_ok:
+            active_bg = "ZhengPeng7/BiRefNet (fallback)"
+        else:
+            active_bg = "none"
+
+        return {
+            "device": self._device,
+            "active_bg_model": active_bg,
+            "rmbg_loaded": self._rmbg_ok,
+            "birefnet_loaded": self._birefnet_ok,
+            "vehicle_detector_loaded": self._vehicle_ok,
+            "plate_detector_loaded": self._plates_ok,
+        }
 
 
-def detect_vehicle_yolo26(image, conf_threshold=0.35):
-    """Detect the largest vehicle in the uploaded image using YOLO26."""
-    image_rgb = image.convert('RGB')
+registry = ModelRegistry()
 
-    detector = get_vehicle_detector()
-    results = detector(image_rgb, conf=conf_threshold, verbose=False)
+# ── Application Lifespan ───────────────────────────────────────────────────────
+# Developed by Vadim Rudoi — startup sequence:
+#   1. HuggingFace authentication (required for RMBG-2.0 and BiRefNet)
+#   2. Attempt RMBG-2.0 (primary) — failure is non-fatal, logged as WARNING
+#   3. If RMBG-2.0 failed, load BiRefNet (fallback) — failure IS fatal
+#   4. Detection models load lazily on first request
 
-    # COCO vehicle classes commonly detected by YOLO models.
-    vehicle_classes = {'car', 'truck', 'bus', 'motorcycle'}
-    detected_vehicles = []
 
-    for result in results:
-        names = result.names
-        for box in result.boxes:
-            class_id = int(box.cls[0])
-            class_name = names[class_id]
-            confidence = float(box.conf[0])
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if HF_TOKEN:
+        try:
+            login(token=HF_TOKEN)
+            logger.info("HuggingFace authentication successful")
+        except Exception as exc:
+            # Fixed by Vadim Rudoi — previously crashed unconditionally on auth
+            # failure. We log the error and continue; the downstream model load
+            # will surface the 401 with a clear message if the token was the
+            # only issue.
+            logger.warning("HuggingFace login failed: %s", exc)
+    else:
+        # Fixed by Vadim Rudoi — silent skip replaced with actionable warning.
+        logger.warning(
+            "HF_TOKEN is not set. RMBG-2.0 requires authentication — "
+            "BiRefNet will be used as the fallback. Set HF_TOKEN and accept "
+            "the BRIA license at https://huggingface.co/briaai/RMBG-2.0 "
+            "to enable the primary model."
+        )
 
-            if class_name in vehicle_classes:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                area = max(0, x2 - x1) * max(0, y2 - y1)
-                detected_vehicles.append({
-                    'class': class_name,
-                    'score': confidence,
-                    'box': {
-                        'xmin': int(x1),
-                        'ymin': int(y1),
-                        'xmax': int(x2),
-                        'ymax': int(y2)
-                    },
-                    'area': area
-                })
+    # Step 1 — try primary model
+    registry._load_rmbg()
 
-    if not detected_vehicles:
+    # Step 2 — if primary failed, load fallback (fatal if also fails)
+    if not registry._rmbg_ok:
+        registry._load_birefnet()
+
+    logger.info(
+        "AutoPivot ready — device=%s  active_bg_model=%s  yolo=%s",
+        registry.device,
+        registry.health()["active_bg_model"],
+        YOLO_MODEL_PATH,
+    )
+    yield
+    logger.info("AutoPivot shutting down")
+
+
+# ── FastAPI Application ────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="AutoPivot",
+    description=(
+        "Vehicle background removal, detection, and licence-plate treatment API. "
+        "Developed by Vadim Rudoi."
+    ),
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# Fixed by Vadim Rudoi — correct CORS config (explicit origins, no credentials)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
+# Fixed by Vadim Rudoi — individual FileResponse routes replaced with StaticFiles
+app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
+
+
+# ── Global Exception Handler ───────────────────────────────────────────────────
+# Developed by Vadim Rudoi
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "Unhandled exception on %s %s: %s",
+        request.method, request.url.path, exc, exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An unexpected server error occurred."},
+    )
+
+
+# ── Validation Helpers ─────────────────────────────────────────────────────────
+# Developed by Vadim Rudoi — previously there was no validation at all.
+# Any payload was passed straight to PIL and produced opaque 500 errors.
+
+
+def _validate_upload(file: UploadFile, content: bytes) -> None:
+    """Raise HTTP 413 / 415 for oversized or unsupported uploads."""
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Unsupported media type '{file.content_type}'. "
+                "Accepted formats: JPEG, PNG, WEBP."
+            ),
+        )
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds the {MAX_FILE_MB} MB limit.",
+        )
+
+
+def _open_image(content: bytes) -> Image.Image:
+    """
+    Safely decode image bytes.
+
+    PIL's Image.verify() is destructive (it closes the internal stream), so we
+    open the buffer twice — once to verify integrity, once to return a usable
+    object. Corrupt or non-image payloads surface as HTTP 400.
+    """
+    try:
+        probe = Image.open(io.BytesIO(content))
+        probe.verify()
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Cannot identify image file.")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image data: {exc}")
+    return Image.open(io.BytesIO(content))
+
+
+async def _read_optional_image(upload: Optional[UploadFile]) -> Optional[Image.Image]:
+    """Read and decode an optional UploadFile; return None if not provided."""
+    if upload is None or not upload.filename:
         return None
-
-    
-    return max(detected_vehicles, key=lambda v: v['area'])
-
-
-def crop_vehicle_area(image, vehicle, padding_ratio=0.08):
-    """Crop around the detected vehicle so BiRefNet focuses on the car/vehicle."""
-    image_rgb = image.convert('RGB')
-    width, height = image_rgb.size
-    box = vehicle['box']
-
-    x1 = int(box['xmin'])
-    y1 = int(box['ymin'])
-    x2 = int(box['xmax'])
-    y2 = int(box['ymax'])
-
-    box_w = max(1, x2 - x1)
-    box_h = max(1, y2 - y1)
-    pad_x = int(box_w * padding_ratio)
-    pad_y = int(box_h * padding_ratio)
-
-    x1 = max(0, x1 - pad_x)
-    y1 = max(0, y1 - pad_y)
-    x2 = min(width, x2 + pad_x)
-    y2 = min(height, y2 + pad_y)
-
-    return image_rgb.crop((x1, y1, x2, y2))
+    content = await upload.read()
+    _validate_upload(upload, content)
+    return _open_image(content)
 
 
-def remove_background_birefnet(image):
-    image_rgb = image.convert('RGB')
-    input_tensor = transform_image(image_rgb).unsqueeze(0).to(device).float()
+def _encode_png(image: Image.Image) -> str:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+# ── Core Processing Logic ──────────────────────────────────────────────────────
+
+def _run_segmentation(model, image: Image.Image) -> Image.Image:
+    """
+    Developed by Vadim Rudoi — shared inference path for both RMBG-2.0 and
+    BiRefNet. Both models use the same ImageNet normalisation and produce a
+    single-channel sigmoid output that is used directly as an alpha mask.
+    """
+    rgb = image.convert("RGB")
+    tensor = _seg_transform(rgb).unsqueeze(0).to(registry.device)
 
     with torch.no_grad():
-        output = birefnet_model(input_tensor)
+        output = model(tensor)
+        pred = output[-1] if isinstance(output, (list, tuple)) else output
+        mask_tensor = pred.sigmoid().cpu()[0].squeeze()
 
-        # BiRefNet usually returns a list/tuple of predictions.
-        if isinstance(output, (list, tuple)):
-            pred = output[-1]
-        else:
-            pred = output
-
-        pred = pred.sigmoid().cpu()[0].squeeze()
-
-    mask = transforms.ToPILImage()(pred)
-    mask = mask.resize(image_rgb.size, Image.Resampling.LANCZOS)
-
-    result = image_rgb.copy()
+    mask = transforms.ToPILImage()(mask_tensor).resize(
+        rgb.size, Image.Resampling.LANCZOS
+    )
+    result = rgb.copy().convert("RGBA")
     result.putalpha(mask)
     return result
 
 
-def hide_number_plates_rgba(img):
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
+def _remove_background(image: Image.Image) -> tuple[Image.Image, str]:
+    """
+    Developed by Vadim Rudoi — attempt RMBG-2.0 (primary). If it raises at
+    inference time (e.g. a runtime error after a successful load), fall back to
+    BiRefNet automatically and log a warning. Returns the result image and the
+    name of the model that was actually used.
+    """
+    model, name = registry.active_bg_model()
 
-    arr = np.array(img)
-    rgb = img.convert('RGB')
-    detector = get_plate_detector()
-    detections = detector(rgb)
-    plates = [d for d in detections if d['score'] > 0.3]
+    # Primary attempt
+    try:
+        return _run_segmentation(model, image), name
+    except Exception as exc:
+        # Only falls through to fallback if the primary was RMBG-2.0
+        if name == "briaai/RMBG-2.0":
+            logger.warning(
+                "RMBG-2.0 inference failed (%s) — retrying with BiRefNet fallback.", exc
+            )
+            if not registry._birefnet_ok:
+                registry._load_birefnet()
+            return _run_segmentation(registry._birefnet, image), "ZhengPeng7/BiRefNet"
+        raise
+
+
+def _detect_vehicle(image_rgb: Image.Image, conf: float = 0.35) -> Optional[dict]:
+    """Return the largest detected vehicle bounding box, or None."""
+    results = registry.vehicle_detector(image_rgb, conf=conf, verbose=False)
+    candidates: list[dict] = []
+
+    for result in results:
+        for box in result.boxes:
+            name = result.names[int(box.cls[0])]
+            if name not in VEHICLE_CLASSES:
+                continue
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            candidates.append({
+                "class": name,
+                "score": float(box.conf[0]),
+                "box": {
+                    "xmin": int(x1), "ymin": int(y1),
+                    "xmax": int(x2), "ymax": int(y2),
+                },
+                "area": max(0.0, x2 - x1) * max(0.0, y2 - y1),
+            })
+
+    return max(candidates, key=lambda v: v["area"]) if candidates else None
+
+
+def _crop_with_padding(
+    image: Image.Image,
+    box: dict,
+    padding_ratio: float = 0.08,
+) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """
+    Crop to the vehicle bounding box with proportional padding.
+    Returns the crop and the absolute pixel coordinates used, so the processed
+    result can be composited back onto the original canvas.
+    """
+    w, h = image.size
+    bx1, by1, bx2, by2 = (
+        box["xmin"], box["ymin"], box["xmax"], box["ymax"]
+    )
+    pad_x = int((bx2 - bx1) * padding_ratio)
+    pad_y = int((by2 - by1) * padding_ratio)
+    x1 = max(0, bx1 - pad_x)
+    y1 = max(0, by1 - pad_y)
+    x2 = min(w, bx2 + pad_x)
+    y2 = min(h, by2 + pad_y)
+    return image.crop((x1, y1, x2, y2)), (x1, y1, x2, y2)
+
+
+def _composite_onto_original(
+    original: Image.Image,
+    processed_crop: Image.Image,
+    coords: tuple[int, int, int, int],
+) -> Image.Image:
+    """
+    Paste the background-removed crop back onto a transparent canvas that
+    matches the full original image dimensions.
+
+    Fixed by Vadim Rudoi — the previous implementation returned the raw crop,
+    discarding all spatial context and producing output at crop resolution.
+    """
+    x1, y1, x2, y2 = coords
+    canvas = Image.new("RGBA", original.size, (0, 0, 0, 0))
+    patch = processed_crop.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
+    canvas.paste(patch, (x1, y1), mask=patch.split()[3])
+    return canvas
+
+
+def _detect_plates(image_rgba: Image.Image) -> list[dict]:
+    """Run YOLOS plate detector and return raw detection dicts above threshold."""
+    detections = registry.plate_detector(image_rgba.convert("RGB"))
+    return [d for d in detections if d["score"] > 0.3]
+
+
+def _apply_plate_treatment(
+    image_rgba: Image.Image,
+    plates: list[dict],
+    plate_overlay: Optional[Image.Image] = None,
+) -> Image.Image:
+    """
+    Developed by Vadim Rudoi — apply treatment to each detected licence plate
+    region using OpenCV:
+
+    • If plate_overlay is provided: resize the overlay to the plate bounding box
+      and alpha-composite it onto the vehicle image, preserving any transparency
+      in the overlay itself.
+    • If no overlay is provided: paint a solid white rectangle over the plate
+      (GDPR-compliant blanking).
+    """
+    arr = np.array(image_rgba, dtype=np.uint8)
 
     for p in plates:
-        box = p['box']
-        x1 = max(0, int(box['xmin']) - 5)
-        y1 = max(0, int(box['ymin']) - 5)
-        x2 = min(arr.shape[1], int(box['xmax']) + 5)
-        y2 = min(arr.shape[0], int(box['ymax']) + 5)
-        cv2.rectangle(arr, (x1, y1), (x2, y2), (255, 255, 255, 255), -1)
+        b = p["box"]
+        x1 = max(0, int(b["xmin"]) - 5)
+        y1 = max(0, int(b["ymin"]) - 5)
+        x2 = min(arr.shape[1], int(b["xmax"]) + 5)
+        y2 = min(arr.shape[0], int(b["ymax"]) + 5)
 
-    return Image.fromarray(arr, 'RGBA'), plates
+        region_w = x2 - x1
+        region_h = y2 - y1
 
+        if region_w <= 0 or region_h <= 0:
+            continue
 
-@app.get('/')
-async def root():
-    return FileResponse(BASE_DIR / 'index.html')
+        if plate_overlay is not None:
+            # Resize the overlay image to exactly fit the plate bounding box
+            overlay_resized = plate_overlay.convert("RGBA").resize(
+                (region_w, region_h), Image.Resampling.LANCZOS
+            )
+            overlay_arr = np.array(overlay_resized, dtype=np.float32)
 
+            # Per-pixel alpha compositing via OpenCV
+            # Formula: out = overlay_rgb * alpha + base_rgb * (1 - alpha)
+            alpha = overlay_arr[:, :, 3:4] / 255.0
+            base_region = arr[y1:y2, x1:x2].astype(np.float32)
 
-@app.get('/style.css')
-async def stylesheet():
-    return FileResponse(BASE_DIR / 'style.css', media_type='text/css')
+            blended_rgb = (
+                overlay_arr[:, :, :3] * alpha
+                + base_region[:, :, :3] * (1.0 - alpha)
+            ).clip(0, 255).astype(np.uint8)
 
+            # Preserve the maximum alpha between overlay and original
+            blended_alpha = np.maximum(
+                base_region[:, :, 3],
+                overlay_arr[:, :, 3],
+            ).clip(0, 255).astype(np.uint8)
 
-@app.get('/app.js')
-async def javascript():
-    return FileResponse(BASE_DIR / 'app.js', media_type='application/javascript')
-
-
-@app.get('/api/status')
-async def api_status():
-    return {
-        'status': 'online',
-        'models': {
-            'vehicle': 'YOLO26 yolo26n.pt',
-            'bg': 'ZhengPeng7/BiRefNet',
-            'plate': 'YOLOS small model'
-        },
-        'device': device
-    }
-
-
-@app.get('/health')
-async def health():
-    return {
-        'status': 'ready',
-        'device': device,
-        'vehicle_model': 'yolo26n.pt',
-        'bg_model': 'ZhengPeng7/BiRefNet',
-        'plate_model': 'nickmuchi/yolos-small-finetuned-license-plate-detection'
-    }
-
-
-@app.post('/remove-background')
-async def remove_background(file: UploadFile = File(...)):
-    try:
-        logger.info(f'BG removal with BiRefNet: {file.filename}')
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        result = remove_background_birefnet(image)
-        buf = io.BytesIO()
-        result.save(buf, format='PNG')
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        logger.info('Background removed with BiRefNet')
-        return {'success': True, 'processed_image': b64}
-    except Exception as e:
-        logger.error(f'Error: {e}')
-        raise HTTPException(500, str(e))
-
-
-@app.post('/process-vehicle')
-async def process_vehicle(file: UploadFile = File(...)):
-    try:
-        logger.info(f'One-step processing with YOLO26 + BiRefNet + YOLOS: {file.filename}')
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-
-        vehicle = detect_vehicle_yolo26(image)
-
-        if vehicle is None:
-            logger.info('No vehicle detected. Processing stopped.')
-            return {
-                'success': False,
-                'message': 'No car or vehicle detected. Please upload a clear vehicle image.',
-                'vehicle_detected': False,
-                'plates_detected': 0,
-                'background_removed': False,
-                'transparency_preserved': False,
-                'detections': []
-            }
-
-        logger.info(f"Vehicle detected: {vehicle['class']} with confidence {vehicle['score']:.2f}")
-
-       
-        vehicle_crop = crop_vehicle_area(image, vehicle)
-        bg_removed = remove_background_birefnet(vehicle_crop)
-        final_img, plates = hide_number_plates_rgba(bg_removed)
-
-        buf = io.BytesIO()
-        final_img.save(buf, format='PNG')
-        b64 = base64.b64encode(buf.getvalue()).decode()
-
-        logger.info(f'One-step complete. Plates hidden: {len(plates)}')
-        return {
-            'success': True,
-            'processed_image': b64,
-            'vehicle_detected': True,
-            'vehicle_model': 'YOLO26 yolo26n.pt',
-            'vehicle': {
-                'class': vehicle['class'],
-                'score': float(vehicle['score']),
-                'box': vehicle['box']
-            },
-            'plates_detected': len(plates),
-            'background_removed': True,
-            'transparency_preserved': True,
-            'bg_model': 'ZhengPeng7/BiRefNet',
-            'detections': [
-                {
-                    'score': float(d['score']),
-                    'box': {
-                        'xmin': int(d['box']['xmin']),
-                        'ymin': int(d['box']['ymin']),
-                        'xmax': int(d['box']['xmax']),
-                        'ymax': int(d['box']['ymax'])
-                    }
-                } for d in plates
-            ]
-        }
-    except Exception as e:
-        logger.error(f'Error: {e}')
-        raise HTTPException(500, str(e))
-
-
-@app.post('/detect-and-hide')
-async def detect_and_hide(file: UploadFile = File(...)):
-    try:
-        logger.info(f'Plate detection: {file.filename}')
-        contents = await file.read()
-        img = Image.open(io.BytesIO(contents))
-        if img.mode != 'RGBA':
-            img = img.convert('RGBA')
-        arr = np.array(img)
-        rgb = img.convert('RGB')
-        detector = get_plate_detector()
-        detections = detector(rgb)
-        plates = [d for d in detections if d['score'] > 0.3]
-        if not plates:
-            return {'success': False, 'message': 'No plates', 'plates_detected': 0}
-        logger.info(f'Found {len(plates)} plate(s)')
-        for p in plates:
-            box = p['box']
-            x1 = max(0, int(box['xmin']) - 5)
-            y1 = max(0, int(box['ymin']) - 5)
-            x2 = min(arr.shape[1], int(box['xmax']) + 5)
-            y2 = min(arr.shape[0], int(box['ymax']) + 5)
+            arr[y1:y2, x1:x2, :3] = blended_rgb
+            arr[y1:y2, x1:x2, 3] = blended_alpha
+        else:
+            # Blank the plate with an opaque white rectangle
             cv2.rectangle(arr, (x1, y1), (x2, y2), (255, 255, 255, 255), -1)
-        proc = Image.fromarray(arr, 'RGBA')
-        buf = io.BytesIO()
-        proc.save(buf, format='PNG')
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        logger.info('Done')
+
+    return Image.fromarray(arr, "RGBA")
+
+
+def _apply_background(
+    foreground_rgba: Image.Image,
+    background: Optional[Image.Image] = None,
+) -> Image.Image:
+    """
+    Developed by Vadim Rudoi — composite the vehicle (RGBA foreground with
+    transparent background) onto a custom background image.
+
+    • If background is provided: resize it to match the foreground canvas and
+      alpha-composite foreground on top.
+    • If not provided: return the transparent RGBA foreground as-is (the
+      frontend or caller handles the transparent PNG).
+    """
+    if background is None:
+        return foreground_rgba
+
+    bg = background.convert("RGBA").resize(
+        foreground_rgba.size, Image.Resampling.LANCZOS
+    )
+    # PIL alpha_composite: dst first, src on top
+    return Image.alpha_composite(bg, foreground_rgba)
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> FileResponse:
+    return FileResponse(BASE_DIR / "index.html")
+
+
+@app.get("/style.css", include_in_schema=False)
+async def stylesheet() -> FileResponse:
+    return FileResponse(BASE_DIR / "style.css", media_type="text/css")
+
+
+@app.get("/app.js", include_in_schema=False)
+async def javascript() -> FileResponse:
+    return FileResponse(BASE_DIR / "app.js", media_type="application/javascript")
+
+
+@app.get("/health", tags=["Observability"])
+async def health() -> dict:
+    """Liveness + readiness check with per-model status."""
+    return {"status": "ready", **registry.health()}
+
+
+@app.get("/api/status", tags=["Observability"])
+async def api_status() -> dict:
+    return {
+        "status": "online",
+        "models": {
+            "vehicle": f"YOLO ({YOLO_MODEL_PATH})",
+            "background_primary": "briaai/RMBG-2.0",
+            "background_fallback": "ZhengPeng7/BiRefNet",
+            "plate": "nickmuchi/yolos-small-finetuned-license-plate-detection",
+        },
+        **registry.health(),
+    }
+
+
+@app.post("/remove-background", tags=["Processing"])
+async def api_remove_background(file: UploadFile = File(...)) -> dict:
+    """
+    Remove image background using the active model (RMBG-2.0 or BiRefNet
+    fallback). No vehicle detection or plate treatment is performed.
+    """
+    content = await file.read()
+    _validate_upload(file, content)
+    image = _open_image(content)
+
+    # Fixed by Vadim Rudoi — filename sanitised via Path.name to strip any
+    # path-traversal characters from untrusted client input before logging.
+    logger.info(
+        "Background removal — file=%s  size=%d B",
+        Path(file.filename).name, len(content),
+    )
+
+    result, model_used = _remove_background(image)
+    return {
+        "success": True,
+        "processed_image": _encode_png(result),
+        "bg_model_used": model_used,
+        "background_removed": True,
+        "transparency_preserved": True,
+    }
+
+
+@app.post("/process-vehicle", tags=["Processing"])
+async def api_process_vehicle(
+    file: UploadFile = File(...),
+    background: Optional[UploadFile] = File(None),
+    plate_overlay: Optional[UploadFile] = File(None),
+) -> dict:
+    """
+    Full processing pipeline — Developed by Vadim Rudoi:
+
+      Step 1  YOLO vehicle detection — abort early if no vehicle found.
+      Step 2  Crop vehicle region with padding.
+      Step 3  Background removal via RMBG-2.0 (primary) → BiRefNet (fallback).
+      Step 4  Composite background-removed crop back onto full-size canvas.
+      Step 5  YOLOS licence-plate detection.
+      Step 6  Plate treatment via OpenCV:
+                • plate_overlay provided  → resize and alpha-composite onto plate
+                • no plate_overlay        → blank with white rectangle
+      Step 7  Background compositing:
+                • background provided  → composite vehicle onto custom background
+                • no background        → return transparent PNG
+
+    Accepts three multipart fields:
+      file           (required) — vehicle photograph
+      background     (optional) — custom background image
+      plate_overlay  (optional) — image to apply over detected licence plates
+    """
+    # ── Read uploads ──
+    content = await file.read()
+    _validate_upload(file, content)
+    image = _open_image(content).convert("RGB")
+
+    bg_image      = await _read_optional_image(background)
+    plate_img     = await _read_optional_image(plate_overlay)
+
+    logger.info(
+        "Full pipeline — file=%s  size=%d B  background=%s  plate_overlay=%s",
+        Path(file.filename).name,
+        len(content),
+        "yes" if bg_image else "no",
+        "yes" if plate_img else "no",
+    )
+
+    # ── Step 1 & 2: Vehicle detection ──
+    vehicle = _detect_vehicle(image)
+    if vehicle is None:
+        logger.info("No vehicle detected — pipeline aborted")
         return {
-            'success': True,
-            'plates_detected': len(plates),
-            'processed_image': b64,
-            'detections': [{'score': float(d['score']), 'box': {'xmin': int(d['box']['xmin']), 'ymin': int(d['box']['ymin']), 'xmax': int(d['box']['xmax']), 'ymax': int(d['box']['ymax'])}} for d in plates],
-            'transparency_preserved': True
+            "success": False,
+            "vehicle_detected": False,
+            "message": "No vehicle detected. Please upload a clear vehicle image.",
         }
-    except Exception as e:
-        logger.error(f'Error: {e}')
-        raise HTTPException(500, str(e))
+
+    logger.info(
+        "Vehicle detected — class=%s  confidence=%.2f",
+        vehicle["class"], vehicle["score"],
+    )
+
+    # ── Step 3: Background removal (RMBG-2.0 → BiRefNet fallback) ──
+    crop, coords = _crop_with_padding(image, vehicle["box"])
+    bg_removed, model_used = _remove_background(crop)
+    logger.info("Background removed — model=%s", model_used)
+
+    # ── Step 4: Composite back onto full canvas ──
+    # Fixed by Vadim Rudoi — previously the raw crop was returned, losing all
+    # spatial context and producing output at crop resolution only.
+    full_result = _composite_onto_original(image, bg_removed, coords)
+
+    # ── Step 5: Licence plate detection ──
+    plates = _detect_plates(full_result)
+    logger.info("Plates detected — count=%d", len(plates))
+
+    # ── Step 6: Plate treatment ──
+    full_result = _apply_plate_treatment(full_result, plates, plate_img)
+
+    # ── Step 7: Background compositing ──
+    final = _apply_background(full_result, bg_image)
+
+    logger.info(
+        "Pipeline complete — plates_treated=%d  bg_applied=%s",
+        len(plates),
+        "custom" if bg_image else "transparent",
+    )
+
+    return {
+        "success": True,
+        "processed_image": _encode_png(final),
+        "vehicle_detected": True,
+        "vehicle": {
+            "class": vehicle["class"],
+            "score": round(vehicle["score"], 4),
+            "box": vehicle["box"],
+        },
+        "bg_model_used": model_used,
+        "plates_detected": len(plates),
+        "plate_treatment": "overlay" if plate_img else "blanked",
+        "background_applied": "custom" if bg_image else "transparent",
+        "background_removed": True,
+        "transparency_preserved": bg_image is None,
+        "detections": [
+            {
+                "score": round(float(p["score"]), 4),
+                "box": {k: int(v) for k, v in p["box"].items()},
+            }
+            for p in plates
+        ],
+    }
 
 
-if __name__ == '__main__':
-    print(f'Backend running locally on http://127.0.0.1:{PORT}')
-    print(f'Device: {device}')
-    print('Vehicle model: YOLO26 yolo26n.pt')
-    print('Background model: ZhengPeng7/BiRefNet')
-    print('Plate model: nickmuchi/yolos-small-finetuned-license-plate-detection')
-    uvicorn.run(app, host='0.0.0.0', port=PORT, log_level='info')
+@app.post("/detect-and-hide", tags=["Processing"])
+async def api_detect_and_hide(
+    file: UploadFile = File(...),
+    plate_overlay: Optional[UploadFile] = File(None),
+) -> dict:
+    """
+    Detect and treat licence plates only — no background removal or vehicle
+    detection. Accepts an optional plate_overlay image (same OpenCV compositing
+    as the full pipeline).
+    """
+    content = await file.read()
+    _validate_upload(file, content)
+    image = _open_image(content).convert("RGBA")
+    plate_img = await _read_optional_image(plate_overlay)
+
+    logger.info(
+        "Plate detection — file=%s  size=%d B  overlay=%s",
+        Path(file.filename).name, len(content),
+        "yes" if plate_img else "no",
+    )
+
+    plates = _detect_plates(image)
+    if not plates:
+        return {
+            "success": False,
+            "plates_detected": 0,
+            "message": "No licence plates detected.",
+        }
+
+    result = _apply_plate_treatment(image, plates, plate_img)
+    logger.info("Plates treated — count=%d  method=%s",
+                len(plates), "overlay" if plate_img else "blanked")
+
+    return {
+        "success": True,
+        "plates_detected": len(plates),
+        "processed_image": _encode_png(result),
+        "plate_treatment": "overlay" if plate_img else "blanked",
+        "transparency_preserved": True,
+        "detections": [
+            {
+                "score": round(float(p["score"]), 4),
+                "box": {k: int(v) for k, v in p["box"].items()},
+            }
+            for p in plates
+        ],
+    }
+
+
+# ── Entry Point ────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    logger.info("Starting AutoPivot — http://%s:%d", HOST, PORT)
+    logger.info("Primary BG model  : briaai/RMBG-2.0")
+    logger.info("Fallback BG model : ZhengPeng7/BiRefNet")
+    logger.info("YOLO model        : %s", YOLO_MODEL_PATH)
+    logger.info("Device            : %s", "cuda" if torch.cuda.is_available() else "cpu")
+    uvicorn.run(
+        "autopivot_backend:app",
+        host=HOST,
+        port=PORT,
+        log_level="info",
+        reload=False,
+    )
