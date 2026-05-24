@@ -17,4 +17,4 @@ ultralytics
 numpy
 kornia
 timm
-eionops
+einops
