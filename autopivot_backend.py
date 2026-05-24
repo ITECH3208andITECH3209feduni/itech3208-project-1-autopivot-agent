@@ -32,7 +32,7 @@ from ultralytics import YOLO
 HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
 HOST: str           = os.getenv("HOST", "0.0.0.0")
 PORT: int           = int(os.getenv("PORT", 8000))
-MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 10))
+MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 20))
 MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 
 # Fixed by Vadim Rudoi — YOLO model path is now configurable via environment
