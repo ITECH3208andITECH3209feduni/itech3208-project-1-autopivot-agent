@@ -40,7 +40,8 @@ HF_TOKEN=your_huggingface_token        # required for RMBG-2.0
 HOST=0.0.0.0                           # default
 PORT=8000                              # default
 MAX_FILE_MB=20                         # default upload limit
-YOLO_MODEL_PATH=yolov26n.pt            # default vehicle detector path
+YOLO_HF_REPO=Ultralytics/YOLO26        # default YOLO26 Hugging Face repo
+YOLO_MODEL_PATH=yolo26n.pt             # default YOLO26 detector file
 ALLOWED_ORIGINS=http://localhost:8000  # comma-separated CORS origins
 ```
 
