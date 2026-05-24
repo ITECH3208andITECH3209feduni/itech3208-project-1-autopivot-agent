@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from huggingface_hub import login
+from huggingface_hub import get_token, login
 from PIL import Image, UnidentifiedImageError
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
@@ -30,6 +30,7 @@ from ultralytics import YOLO
 # Fixed by Vadim Rudoi — all hardcoded values replaced with environment-based config
 
 HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
+HF_AUTH_TOKEN: str  = HF_TOKEN or (get_token() or "")
 HOST: str           = os.getenv("HOST", "0.0.0.0")
 PORT: int           = int(os.getenv("PORT", 8000))
 MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 20))
@@ -150,29 +151,26 @@ class ModelRegistry:
         background removal model. Requires a HuggingFace token from an account
         that has accepted the BRIA license on https://huggingface.co/briaai/RMBG-2.0
         """
-
-        primary_yolo = "yolo26n.pt"
-        fallback_yolo = "yolo11n.pt"
-
-        logger.info("Attempting to load primary YOLO vehicle detector — %s", primary_yolo)
+        logger.info("Loading primary background model — briaai/RMBG-2.0")
         try:
-            self._vehicle = YOLO(primary_yolo)
-            self._vehicle_ok = True
-            self.active_yolo = primary_yolo
-            logger.info("Primary YOLO loaded successfully: %s", primary_yolo)
+            self._rmbg = (
+                AutoModelForImageSegmentation.from_pretrained(
+                    "briaai/RMBG-2.0",
+                    trust_remote_code=True,
+                    torch_dtype=torch.float32,
+                    token=HF_AUTH_TOKEN or True,
+                )
+                .eval()
+                .to(self._device)
+            )
+            self._rmbg_ok = True
+            logger.info("RMBG-2.0 loaded on %s", self._device)
         except Exception as exc:
             logger.warning(
-                "YOLOv26 failed to load (%s). Falling back to %s.", 
-                exc, fallback_yolo
+                "RMBG-2.0 failed to load: %s. Falling back to BiRefNet.",
+                exc,
+                exc_info=True,
             )
-            try:
-                self._vehicle = YOLO(fallback_yolo)
-                self._vehicle_ok = True
-                self.active_yolo = fallback_yolo
-                logger.info("Fallback YOLO loaded successfully: %s", fallback_yolo)
-            except Exception as fallback_exc:
-                logger.critical("Both primary and fallback YOLO models failed to load.", exc_info=True)
-                raise RuntimeError(f"Vehicle detector unavailable: {fallback_exc}") from fallback_exc
 
     def _load_birefnet(self) -> None:
         """
@@ -283,6 +281,8 @@ async def lifespan(app: FastAPI):
             # will surface the 401 with a clear message if the token was the
             # only issue.
             logger.warning("HuggingFace login failed: %s", exc)
+    elif HF_AUTH_TOKEN:
+        logger.info("Using HuggingFace token from local hf auth login cache")
     else:
         # Fixed by Vadim Rudoi — silent skip replaced with actionable warning.
         logger.warning(
