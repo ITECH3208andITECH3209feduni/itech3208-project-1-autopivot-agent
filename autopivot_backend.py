@@ -617,6 +617,16 @@ async def root() -> FileResponse:
     return FileResponse(BASE_DIR / "index.html")
 
 
+@app.get("/style.css", include_in_schema=False)
+async def stylesheet() -> FileResponse:
+    return FileResponse(BASE_DIR / "style.css", media_type="text/css")
+
+
+@app.get("/app.js", include_in_schema=False)
+async def javascript() -> FileResponse:
+    return FileResponse(BASE_DIR / "app.js", media_type="application/javascript")
+
+
 @app.get("/health", tags=["Observability"])
 async def health() -> dict:
     """Liveness + readiness check with per-model status."""

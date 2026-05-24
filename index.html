@@ -11,17 +11,17 @@
   <nav>
     <span class="navigation-logo"><span style="color:var(--gold)">AUTO</span>PIVOT<span class="navigation-logo-dot"></span></span>
     <ul class="navigation-links">
-      <li><a onclick="scrollToSection('demo-section')">Demo</a></li>
+      <li><a href="#demo-section" id="demo-nav-link">Demo</a></li>
     </ul>
   </nav>
 
   <section class="hero-section">
     <div class="hero-introduction">
       <h1>Vehicle processing,<br><em>simplified.</em></h1>
-      <p>Upload a photo and AutoPivot removes backgrounds, detects vehicles, and hides license plates automatically.</p>
+      <p>Upload a photo and AutoPivot removes backgrounds, detects vehicles and hides license plates automatically.</p>
       <div class="hero-action-buttons">
-        <button class="primary-upload-button" onclick="document.getElementById('image-file-input').click()">Upload photo</button>
-        <a class="secondary-demo-link" onclick="scrollToSection('demo-section')">Try demo</a>
+        <button class="primary-upload-button" id="manual-upload-button">Upload photo</button>
+        <a href="#demo-section" class="secondary-demo-link" id="try-demo-link">Try demo</a>
       </div>
     </div>
 
@@ -37,6 +37,9 @@
             <h4>Drop a vehicle photo or click to browse</h4>
             <p>Supports JPG, PNG, WEBP.</p>
           </div>
+          <div class="upload-reset-row">
+            <button type="button" class="reset-step-button" id="reset-car-button" disabled>Reset Car Upload</button>
+          </div>
 
           <div class="pipeline-options" id="pipeline-options" style="display: none;">
             <div class="option-group">
@@ -51,11 +54,17 @@
             <div class="optional-uploads" id="optional-uploads">
               <div class="option-group" id="bg-upload-group">
                 <label>Custom Background (Optional)</label>
-                <input type="file" id="bg-file-input" accept="image/jpeg,image/png,image/webp" class="file-input-small">
+                <div class="inline-upload-control">
+                  <input type="file" id="bg-file-input" accept="image/jpeg,image/png,image/webp" class="file-input-small">
+                  <button type="button" class="reset-step-button" id="reset-bg-button" disabled>Reset Background</button>
+                </div>
               </div>
               <div class="option-group" id="plate-upload-group">
                 <label>Plate Overlay (Optional)</label>
-                <input type="file" id="plate-file-input" accept="image/jpeg,image/png,image/webp" class="file-input-small">
+                <div class="inline-upload-control">
+                  <input type="file" id="plate-file-input" accept="image/jpeg,image/png,image/webp" class="file-input-small">
+                  <button type="button" class="reset-step-button" id="reset-plate-button" disabled>Reset Numberplate</button>
+                </div>
               </div>
             </div>
           </div>
@@ -70,6 +79,7 @@
 
           <div class="processing-actions">
             <button class="remove-background-button" id="process-button" disabled>Process Image</button>
+            <button type="button" class="reset-all-button" id="reset-all-button" disabled>Reset Everything</button>
             <a class="download-button" id="download-button" download="autopivot-processed.png">Download</a>
           </div>
 

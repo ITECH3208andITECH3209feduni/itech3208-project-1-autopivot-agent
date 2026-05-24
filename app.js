@@ -2,10 +2,17 @@
 // Developed by Vadim Rudoi, Akhanda Bhandari and Suraj Purella
 
 const BACKEND_URL = window.location.origin;
+const DEMO_IMAGE_URLS = ['/static/assets/demo-car.jpg', 'assets/demo-car.jpg'];
+const FULL_PIPELINE_ENDPOINT = '/process-vehicle';
 
 let currentFile = null;
+let isProcessing = false;
+let isDemoStarting = false;
 const imageFileInput = document.getElementById('image-file-input');
 const imageUploadZone = document.getElementById('image-upload-zone');
+const manualUploadButton = document.getElementById('manual-upload-button');
+const demoNavLink = document.getElementById('demo-nav-link');
+const tryDemoLink = document.getElementById('try-demo-link');
 const processButton = document.getElementById('process-button');
 const progressContainer = document.getElementById('progress-container');
 const progressStatusText = document.getElementById('progress-status-text');
@@ -27,33 +34,60 @@ const bgUploadGroup = document.getElementById('bg-upload-group');
 const plateUploadGroup = document.getElementById('plate-upload-group');
 const bgFileInput = document.getElementById('bg-file-input');
 const plateFileInput = document.getElementById('plate-file-input');
+const resetCarButton = document.getElementById('reset-car-button');
+const resetBgButton = document.getElementById('reset-bg-button');
+const resetPlateButton = document.getElementById('reset-plate-button');
+const resetAllButton = document.getElementById('reset-all-button');
 
 // Toggle visible options based on selected mode
 processingModeSelect.addEventListener('change', (e) => 
 {
-  const mode = e.target.value;
-  if (mode === '/process-vehicle') 
-  {
-    bgUploadGroup.style.display = 'block';
-    plateUploadGroup.style.display = 'block';
-  } 
-  else if (mode === '/remove-background') 
-  {
-    bgUploadGroup.style.display = 'none';
-    plateUploadGroup.style.display = 'none';
-  } 
-  else if (mode === '/detect-and-hide') 
-  {
-    bgUploadGroup.style.display = 'none';
-    plateUploadGroup.style.display = 'block';
-  }
+  updateModeUploads(e.target.value);
+});
+
+manualUploadButton.addEventListener('click', () => 
+{
+  if (isProcessing) return;
+  imageFileInput.click();
+});
+
+demoNavLink.addEventListener('click', event => 
+{
+  event.preventDefault();
+  runDemo();
+});
+
+tryDemoLink.addEventListener('click', event => 
+{
+  event.preventDefault();
+  runDemo();
 });
 
 imageFileInput.addEventListener('change', event => 
 {
   const file = event.target.files[0];
-  if (file) loadFile(file);
+  if (file) 
+  {
+    loadFile(file).catch(err => showErr(err.message || 'Could not load the selected image.'));
+  }
 });
+
+bgFileInput.addEventListener('change', () => 
+{
+  resetProcessedResult();
+  updateResetButtons();
+});
+
+plateFileInput.addEventListener('change', () => 
+{
+  resetProcessedResult();
+  updateResetButtons();
+});
+
+resetCarButton.addEventListener('click', resetCarUpload);
+resetBgButton.addEventListener('click', resetBackgroundUpload);
+resetPlateButton.addEventListener('click', resetPlateUpload);
+resetAllButton.addEventListener('click', resetEverything);
 
 imageUploadZone.addEventListener('dragover', event => 
 {
@@ -71,7 +105,10 @@ imageUploadZone.addEventListener('drop', event =>
   event.preventDefault();
   imageUploadZone.classList.remove('is-drag-active');
   const file = event.dataTransfer.files[0];
-  if (file) loadFile(file);
+  if (file) 
+  {
+    loadFile(file).catch(err => showErr(err.message || 'Could not load the dropped image.'));
+  }
 });
 
 processButton.addEventListener('click', processImage);
@@ -95,24 +132,160 @@ function loadFile(file)
   }
 
   currentFile = file;
-  const reader = new FileReader();
-  reader.onload = event => 
+  return new Promise((resolve, reject) => 
   {
-    const url = event.target.result;
-    originalImagePreview.src = url;
-    processedImagePreview.style.display = 'none';
-    processedImagePlaceholder.style.display = 'block';
-    processedStatusBadge.textContent = 'Awaiting';
-    processedStatusBadge.className = 'status-badge';
-    downloadButton.classList.remove('is-visible');
-    imageComparisonGrid.classList.add('is-visible');
-    pipelineOptions.style.display = 'block'; // Show options once image is loaded
-    processingStats.style.display = 'none';
-    processButton.disabled = false;
-    progressContainer.classList.remove('is-visible');
-    errorMessageBar.classList.remove('is-visible');
-  };
-  reader.readAsDataURL(file);
+    const reader = new FileReader();
+    reader.onload = event => 
+    {
+      const url = event.target.result;
+      originalImagePreview.src = url;
+      processedImagePreview.style.display = 'none';
+      processedImagePlaceholder.style.display = 'block';
+      processedStatusBadge.textContent = 'Awaiting';
+      processedStatusBadge.className = 'status-badge';
+      downloadButton.classList.remove('is-visible');
+      imageComparisonGrid.classList.add('is-visible');
+      pipelineOptions.style.display = 'block'; // Show options once image is loaded
+      processingStats.style.display = 'none';
+      processButton.disabled = false;
+      progressContainer.classList.remove('is-visible');
+      errorMessageBar.classList.remove('is-visible');
+      updateResetButtons();
+      resolve();
+    };
+    reader.onerror = () => reject(new Error('Could not read the selected image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function runDemo() 
+{
+  if (isProcessing || isDemoStarting) return;
+
+  isDemoStarting = true;
+  window.scrollToSection('demo-section');
+  resetEverything();
+  setDemoControlsDisabled(true);
+
+  try 
+  {
+    setProgress(5, 'Loading demo image...');
+    const blob = await fetchDemoImageBlob();
+    const demoFile = new File([blob], 'demo-car.jpg', { type: blob.type || 'image/jpeg' });
+
+    processingModeSelect.value = FULL_PIPELINE_ENDPOINT;
+    updateModeUploads(FULL_PIPELINE_ENDPOINT);
+    await loadFile(demoFile);
+    await processImage();
+  } 
+  catch (err) 
+  {
+    showErr(err.message || 'Could not start the demo. Please try uploading a photo manually.');
+  } 
+  finally 
+  {
+    isDemoStarting = false;
+    setDemoControlsDisabled(false);
+  }
+}
+
+window.runDemo = runDemo;
+
+async function fetchDemoImageBlob() 
+{
+  let lastError = null;
+
+  for (const url of DEMO_IMAGE_URLS) 
+  {
+    try 
+    {
+      const response = await fetch(url);
+      if (response.ok) 
+      {
+        return response.blob();
+      }
+      lastError = new Error(`Demo image could not be loaded from ${url} (${response.status}).`);
+    } 
+    catch (err) 
+    {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Demo image could not be loaded.');
+}
+
+function resetCarUpload() 
+{
+  currentFile = null;
+  imageFileInput.value = '';
+  originalImagePreview.src = '';
+  processedImagePreview.src = '';
+  processedImagePreview.style.display = 'none';
+  processedImagePlaceholder.style.display = 'block';
+  processedStatusBadge.textContent = 'Awaiting';
+  processedStatusBadge.className = 'status-badge';
+  downloadButton.removeAttribute('href');
+  downloadButton.classList.remove('is-visible');
+  imageComparisonGrid.classList.remove('is-visible');
+  pipelineOptions.style.display = 'none';
+  processingStats.innerHTML = '';
+  processingStats.style.display = 'none';
+  progressContainer.classList.remove('is-visible');
+  progressIndicator.style.width = '0%';
+  progressStatusText.textContent = 'Waiting for image…';
+  progressPercentage.textContent = '0%';
+  errorMessageBar.classList.remove('is-visible');
+  processButton.disabled = true;
+  updateResetButtons();
+}
+
+function resetBackgroundUpload() 
+{
+  bgFileInput.value = '';
+  resetProcessedResult();
+  updateResetButtons();
+}
+
+function resetPlateUpload() 
+{
+  plateFileInput.value = '';
+  resetProcessedResult();
+  updateResetButtons();
+}
+
+function resetEverything() 
+{
+  currentFile = null;
+  imageFileInput.value = '';
+  bgFileInput.value = '';
+  plateFileInput.value = '';
+  originalImagePreview.src = '';
+  processingModeSelect.value = FULL_PIPELINE_ENDPOINT;
+  updateModeUploads(FULL_PIPELINE_ENDPOINT);
+  imageComparisonGrid.classList.remove('is-visible');
+  pipelineOptions.style.display = 'none';
+  processButton.disabled = true;
+  resetProcessedResult();
+  updateResetButtons();
+}
+
+function resetProcessedResult() 
+{
+  processedImagePreview.src = '';
+  processedImagePreview.style.display = 'none';
+  processedImagePlaceholder.style.display = 'block';
+  processedStatusBadge.textContent = 'Awaiting';
+  processedStatusBadge.className = 'status-badge';
+  downloadButton.removeAttribute('href');
+  downloadButton.classList.remove('is-visible');
+  processingStats.innerHTML = '';
+  processingStats.style.display = 'none';
+  progressContainer.classList.remove('is-visible');
+  progressIndicator.style.width = '0%';
+  progressStatusText.textContent = 'Waiting for image…';
+  progressPercentage.textContent = '0%';
+  errorMessageBar.classList.remove('is-visible');
 }
 
 async function processImage() 
@@ -226,11 +399,50 @@ function renderStats(json, endpoint)
 
 function setLoading(on) 
 {
+  isProcessing = on;
   processButton.disabled = on || !currentFile;
   processButton.textContent = on ? 'Processing…' : 'Process Image';
   processingModeSelect.disabled = on;
   bgFileInput.disabled = on;
   plateFileInput.disabled = on;
+  setDemoControlsDisabled(on);
+  updateResetButtons(on);
+}
+
+function setDemoControlsDisabled(on) 
+{
+  manualUploadButton.disabled = on;
+  demoNavLink.classList.toggle('is-disabled', on);
+  demoNavLink.setAttribute('aria-disabled', String(on));
+  tryDemoLink.classList.toggle('is-disabled', on);
+  tryDemoLink.setAttribute('aria-disabled', String(on));
+}
+
+function updateModeUploads(mode) 
+{
+  if (mode === FULL_PIPELINE_ENDPOINT) 
+  {
+    bgUploadGroup.style.display = 'block';
+    plateUploadGroup.style.display = 'block';
+  } 
+  else if (mode === '/remove-background') 
+  {
+    bgUploadGroup.style.display = 'none';
+    plateUploadGroup.style.display = 'none';
+  } 
+  else if (mode === '/detect-and-hide') 
+  {
+    bgUploadGroup.style.display = 'none';
+    plateUploadGroup.style.display = 'block';
+  }
+}
+
+function updateResetButtons(isLoading = false) 
+{
+  resetCarButton.disabled = isLoading || !currentFile;
+  resetBgButton.disabled = isLoading || !bgFileInput.files.length;
+  resetPlateButton.disabled = isLoading || !plateFileInput.files.length;
+  resetAllButton.disabled = isLoading || (!currentFile && !bgFileInput.files.length && !plateFileInput.files.length);
 }
 
 function setProgress(percent, label) 
