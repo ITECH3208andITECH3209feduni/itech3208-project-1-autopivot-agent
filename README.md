@@ -5,9 +5,9 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 ## Features
 
 - Upload a vehicle image and process it through the full pipeline.
-- Remove image backgrounds with an RMBG-2.0 primary model and BiRefNet fallback.
-- Detect vehicles with YOLO.
-- Detect and hide license plates with YOLOS.
+- Remove image backgrounds with an RMBG-2.0 primary model and BiRefNet version 11 fallback.
+- Detect vehicles with YOLO26.
+- Detect and hide license plates with nickmuchi/yolos-small-finetuned-license-plate-detection.
 - Upload optional custom backgrounds and numberplate overlays.
 
 ## Project Structure
