@@ -1,17 +1,19 @@
-// Main JavaScript Logic for AutoPivot Full Pipeline Interface
+// Main JavaScript Logic for AutoPivot Full Pipeline Interface — multi-image version
 // Developed by Vadim Rudoi, Akhanda Bhandari and Suraj Purella
 
 const BACKEND_URL = window.location.origin;
 const DEMO_IMAGE_URLS = ['/static/assets/demo-car.jpg', 'assets/demo-car.jpg'];
 const FULL_PIPELINE_ENDPOINT = '/process-vehicle';
+const IMPORT_URL_ENDPOINT = '/extract-images-from-url';
 const MAX_FILES = 20;
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-// items: array of { id, file, originalUrl, status: 'idle'|'processing'|'done'|'error', processedDataUrl, statsHTML, errorMessage, cardEl }
+// items: array of { id, file, originalUrl, status: 'idle'|'processing'|'done'|'error', processedDataUrl, statsHTML, errorMessage, cardEl, els }
 let items = [];
 let nextItemId = 1;
 let isProcessing = false;
 let isDemoStarting = false;
+let isImportingUrl = false;
 
 const imageFileInput = document.getElementById('image-file-input');
 const imageUploadZone = document.getElementById('image-upload-zone');
@@ -38,6 +40,10 @@ const batchSummaryRow = document.getElementById('batch-summary-row');
 const batchSummaryText = document.getElementById('batch-summary-text');
 const batchProgressText = document.getElementById('batch-progress-text');
 const downloadAllButton = document.getElementById('download-all-button');
+
+const pageUrlInput = document.getElementById('page-url-input');
+const fetchUrlImagesButton = document.getElementById('fetch-url-images-button');
+const urlImportStatus = document.getElementById('url-import-status');
 
 processingModeSelect.addEventListener('change', e => {
   updateModeUploads(e.target.value);
@@ -95,6 +101,14 @@ resetPlateButton.addEventListener('click', () => {
 });
 
 resetAllButton.addEventListener('click', resetEverything);
+
+fetchUrlImagesButton.addEventListener('click', importImagesFromUrl);
+pageUrlInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    importImagesFromUrl();
+  }
+});
 
 imageUploadZone.addEventListener('dragover', event => {
   event.preventDefault();
@@ -174,6 +188,109 @@ function readFileAsDataUrl(file) {
     reader.onerror = () => reject(new Error(`Could not read "${file.name}".`));
     reader.readAsDataURL(file);
   });
+}
+
+// ---------- Import images from a page URL ----------
+
+async function importImagesFromUrl() {
+  if (isProcessing || isImportingUrl) return;
+
+  const rawUrl = pageUrlInput.value.trim();
+  if (!rawUrl) {
+    setUrlImportStatus('Paste a page URL first.', true);
+    return;
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+    if (!/^https?:$/.test(parsedUrl.protocol)) throw new Error('bad protocol');
+  } catch {
+    setUrlImportStatus('Enter a valid http:// or https:// URL.', true);
+    return;
+  }
+
+  if (items.length >= MAX_FILES) {
+    setUrlImportStatus(`You already have ${MAX_FILES} images loaded — remove some first.`, true);
+    return;
+  }
+
+  isImportingUrl = true;
+  fetchUrlImagesButton.disabled = true;
+  fetchUrlImagesButton.textContent = 'Fetching…';
+  setUrlImportStatus('Scanning page for images…', false);
+
+  try {
+    const response = await fetch(`${BACKEND_URL.replace(/\/$/, '')}${IMPORT_URL_ENDPOINT}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: parsedUrl.href }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Server error ${response.status}: ${body}`);
+    }
+
+    const json = await response.json();
+    if (!json.success) {
+      throw new Error(json.message || 'Could not extract images from that page.');
+    }
+
+    const found = Array.isArray(json.images) ? json.images : [];
+    if (!found.length) {
+      setUrlImportStatus('No usable images were found on that page.', true);
+      return;
+    }
+
+    const files = found
+      .map((entry, index) => {
+        try {
+          return base64EntryToFile(entry, index);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+
+    if (!files.length) {
+      setUrlImportStatus('Found images, but none could be loaded.', true);
+      return;
+    }
+
+    await addFiles(files);
+    setUrlImportStatus(
+      `Imported ${files.length} image${files.length === 1 ? '' : 's'} from the page.`,
+      false
+    );
+    pageUrlInput.value = '';
+  } catch (err) {
+    setUrlImportStatus(err.message || 'Could not fetch images from that URL.', true);
+  } finally {
+    isImportingUrl = false;
+    fetchUrlImagesButton.disabled = false;
+    fetchUrlImagesButton.textContent = 'Fetch Images';
+  }
+}
+
+function base64EntryToFile(entry, index) {
+  const contentType = entry.content_type || entry.contentType || 'image/jpeg';
+  const filename = entry.filename || entry.name || `url-image-${index + 1}.jpg`;
+  const base64Data = entry.data || entry.base64 || '';
+  if (!base64Data) throw new Error('missing image data');
+
+  const byteChars = atob(base64Data);
+  const byteNumbers = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) {
+    byteNumbers[i] = byteChars.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  return new File([byteArray], filename, { type: contentType });
+}
+
+function setUrlImportStatus(message, isError) {
+  urlImportStatus.textContent = message;
+  urlImportStatus.classList.toggle('is-error', !!isError);
 }
 
 // ---------- Gallery rendering ----------
@@ -352,6 +469,8 @@ function resetEverything() {
   imageGallery.classList.remove('is-visible');
   bgFileInput.value = '';
   plateFileInput.value = '';
+  pageUrlInput.value = '';
+  setUrlImportStatus('', false);
   processingModeSelect.value = FULL_PIPELINE_ENDPOINT;
   updateModeUploads(FULL_PIPELINE_ENDPOINT);
   pipelineOptions.style.display = 'none';
@@ -457,6 +576,8 @@ function setLoading(on) {
   bgFileInput.disabled = on;
   plateFileInput.disabled = on;
   addMoreButton.disabled = on;
+  fetchUrlImagesButton.disabled = on || isImportingUrl;
+  pageUrlInput.disabled = on;
   setDemoControlsDisabled(on);
   updateResetButtons(on);
 }

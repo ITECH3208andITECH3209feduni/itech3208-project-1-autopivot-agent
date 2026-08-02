@@ -38,6 +38,17 @@
             <p>Supports JPG, PNG, WEBP. You can select multiple images at once.</p>
           </div>
 
+          <div class="url-import-divider">or</div>
+
+          <div class="url-import-row" id="url-import-row">
+            <label for="page-url-input">Import all images from a page URL</label>
+            <div class="inline-upload-control">
+              <input type="url" id="page-url-input" placeholder="https://example.com/car-listing" class="url-import-input">
+              <button type="button" class="reset-step-button" id="fetch-url-images-button">Fetch Images</button>
+            </div>
+            <p class="url-import-status" id="url-import-status"></p>
+          </div>
+
           <div class="pipeline-options" id="pipeline-options" style="display: none;">
             <div class="option-group">
               <label for="processing-mode">Processing Mode</label>

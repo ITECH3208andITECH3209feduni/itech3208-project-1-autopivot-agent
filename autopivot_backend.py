@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import torch
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +25,17 @@ from PIL import Image, UnidentifiedImageError
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
+
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+import socket
+import httpx
+import asyncio
+import base64
+import ipaddress
+import mimetypes
+import re
+
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 # Fixed by Vadim Rudoi — all hardcoded values replaced with environment-based config
@@ -75,6 +86,29 @@ YOLO26_FILENAME_ALIASES: dict[str, str] = {
     "yolov26m.pt": "yolo26m.pt",
     "yolov26l.pt": "yolo26l.pt",
     "yolov26x.pt": "yolo26x.pt",
+}
+
+# ---------------------------------------------------------------------------
+# Config image extraction from URL
+# ---------------------------------------------------------------------------
+
+MAX_IMAGES = 20                    # matches the frontend's MAX_FILES
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # matches the frontend's MAX_FILE_SIZE (10MB)
+MIN_IMAGE_BYTES = 2 * 1024          # skip tiny tracking pixels / spacer gifs
+MAX_PAGE_BYTES = 5 * 1024 * 1024    # don't try to parse enormous HTML pages
+FETCH_TIMEOUT = 10.0                # seconds, per HTTP request
+CONCURRENT_DOWNLOADS = 6
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; AutoPivotImageImporter/1.0)",
+    "Accept": "text/html,application/xhtml+xml,image/*;q=0.8,*/*;q=0.5",
 }
 
 # ── Structured Logging ─────────────────────────────────────────────────────────
@@ -876,6 +910,99 @@ async def api_detect_and_hide(
         ],
     }
 
+@app.post("/extract-images-from-url", tags=["Extract Images from URL"])
+async def api_extract_images_from_url(url: str = Body(..., embed=True)) -> dict:
+    """
+    Extract images from a URL. Accepts JSON body: {"url": "https://..."}
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return {"success": False, "message": "Please provide a valid http:// or https:// URL."}
+
+    if not _is_safe_host(parsed.hostname):
+        return {"success": False, "message": "That URL can't be fetched."}
+
+    try:
+        async with httpx.AsyncClient(
+            headers=REQUEST_HEADERS,
+            timeout=FETCH_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=CONCURRENT_DOWNLOADS),
+        ) as client:
+            try:
+                response = await client.get(url)
+            except httpx.HTTPError as exc:
+                return {"success": False, "message": f"Could not reach that URL: {exc}"}
+
+            if response.status_code >= 400:
+                return {
+                    "success": False,
+                    "message": f"The page responded with status {response.status_code}.",
+                }
+
+            # A redirect could have taken us somewhere unsafe — re-check the final host.
+            final_host = urlparse(str(response.url)).hostname
+            if not _is_safe_host(final_host):
+                return {"success": False, "message": "That URL can't be fetched."}
+
+            content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+
+            # Case 1: the URL is itself a direct image.
+            if content_type in ALLOWED_IMAGE_TYPES:
+                entry = _build_image_entry(str(response.url), response.content, content_type, index=0)
+                return {"success": True, "images": [entry] if entry else []}
+
+            # Case 2: treat it as an HTML page and scan for images.
+            if "html" not in content_type:
+                return {
+                    "success": False,
+                    "message": "That URL doesn't look like a webpage or a supported image.",
+                }
+
+            if len(response.content) > MAX_PAGE_BYTES:
+                return {"success": False, "message": "That page is too large to scan."}
+
+            candidate_urls = _extract_image_urls(response.text, base_url=str(response.url))
+            if not candidate_urls:
+                return {"success": True, "images": []}
+
+            # Fetch a few extra beyond MAX_IMAGES since some will fail/be too small.
+            candidate_urls = candidate_urls[: MAX_IMAGES * 2]
+            semaphore = asyncio.Semaphore(CONCURRENT_DOWNLOADS)
+
+            async def fetch_one(img_url: str, index: int):
+                img_host = urlparse(img_url).hostname
+                if not _is_safe_host(img_host):
+                    return None
+                async with semaphore:
+                    try:
+                        img_resp = await client.get(img_url)
+                    except httpx.HTTPError:
+                        return None
+                    if img_resp.status_code >= 400:
+                        return None
+                    img_ctype = img_resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                    if img_ctype not in ALLOWED_IMAGE_TYPES:
+                        return None
+                    if not (MIN_IMAGE_BYTES <= len(img_resp.content) <= MAX_IMAGE_BYTES):
+                        return None
+                    return _build_image_entry(img_url, img_resp.content, img_ctype, index)
+
+            results = await asyncio.gather(*[fetch_one(u, i) for i, u in enumerate(candidate_urls)])
+            images = [entry for entry in results if entry][:MAX_IMAGES]
+
+            return {"success": True, "images": images}
+
+    except Exception as exc:  # surface a clean message instead of a raw 500
+        return {"success": False, "message": f"Unexpected error while fetching images: {exc}"}
+
+
+
+
+
+
+
+
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
@@ -892,3 +1019,88 @@ if __name__ == "__main__":
         log_level="info",
         reload=False,
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Helpers image extraction from URL
+# ---------------------------------------------------------------------------
+
+def _is_safe_host(hostname: str | None) -> bool:
+    """Reject hostnames that resolve to private/loopback/link-local/reserved IPs (SSRF guard)."""
+    if not hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            return False
+    return True
+
+
+def _extract_image_urls(html: str, base_url: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
+    urls: list[str] = []
+
+    def add(candidate: str | None):
+        if not candidate:
+            return
+        candidate = candidate.strip()
+        if not candidate or candidate.startswith("data:"):
+            return
+        absolute = urljoin(base_url, candidate)
+        p = urlparse(absolute)
+        if p.scheme not in ("http", "https") or absolute in seen:
+            return
+        seen.add(absolute)
+        urls.append(absolute)
+
+    for img in soup.find_all("img"):
+        add(img.get("src"))
+        add(img.get("data-src"))       # common lazy-load attributes
+        add(img.get("data-lazy-src"))
+        srcset = img.get("srcset")
+        if srcset:
+            add(srcset.split(",")[0].strip().split(" ")[0])
+
+    for source in soup.find_all("source"):
+        srcset = source.get("srcset")
+        if srcset:
+            add(srcset.split(",")[0].strip().split(" ")[0])
+
+    if not urls:
+        og_image = soup.find("meta", property="og:image")
+        if og_image and og_image.get("content"):
+            add(og_image["content"])
+
+    return urls
+
+
+def _build_image_entry(source_url: str, content: bytes, content_type: str, index: int) -> dict | None:
+    if not content:
+        return None
+    ext = ALLOWED_IMAGE_TYPES.get(content_type) or mimetypes.guess_extension(content_type) or ".jpg"
+    filename = _filename_from_url(source_url, fallback_index=index, ext=ext)
+    return {
+        "filename": filename,
+        "content_type": content_type,
+        "data": base64.b64encode(content).decode("ascii"),
+    }
+
+
+def _filename_from_url(url: str, fallback_index: int, ext: str) -> str:
+    path = urlparse(url).path
+    name = path.rsplit("/", 1)[-1] if path else ""
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:80]
+    if not name or "." not in name:
+        name = f"url-image-{fallback_index + 1}{ext}"
+    return name

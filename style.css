@@ -906,3 +906,49 @@ select#processing-mode:focus
 .add-more-row {
   margin-top: 10px;
 }
+
+.url-import-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  font-size: 12px;
+  color: var(--mid, #999);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.url-import-divider::before,
+.url-import-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border, rgba(0,0,0,0.1));
+}
+
+.url-import-row label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.url-import-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+}
+
+.url-import-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mid, #666);
+  min-height: 16px;
+}
+.url-import-status.is-error { color: #c0392b; }
