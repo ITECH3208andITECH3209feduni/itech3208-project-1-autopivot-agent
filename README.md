@@ -17,6 +17,9 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 - `style.css` - frontend styling.
 - `app.js` - upload, demo, reset, progress, and processing UI logic.
 - `assets/demo-car.jpg` - bundled demo image used by the one-click demo.
+- `database/base.py` - shared SQLAlchemy model base and constraint naming rules.
+- `database/connection.py` - PostgreSQL engine and database-session setup.
+- `database/models.py` - permanent dealership, user, listing, image and job models.
 - `requirements.txt` - Python dependencies.
 
 ## Requirements
@@ -43,7 +46,11 @@ MAX_FILE_MB=20                         # default upload limit
 YOLO_HF_REPO=Ultralytics/YOLO26        # default YOLO26 Hugging Face repo
 YOLO_MODEL_PATH=yolo26n.pt             # default YOLO26 detector file
 ALLOWED_ORIGINS=http://localhost:8000  # comma-separated CORS origins
+DATABASE_URL=postgresql+psycopg://autopivot_user:password@localhost:5432/autopivot
 ```
+
+Use `.env.example` as the template for setting `DATABASE_URL` in the local shell
+or deployment environment. Real database credentials must not be committed.
 
 For larger demo uploads, raise `MAX_FILE_MB`, for example:
 
