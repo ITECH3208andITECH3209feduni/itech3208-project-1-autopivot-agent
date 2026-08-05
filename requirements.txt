@@ -5,6 +5,11 @@
 fastapi
 uvicorn[standard]
 python-multipart
+
+# Database
+SQLAlchemy>=2.0,<3.0
+alembic>=1.13,<2.0
+psycopg[binary]>=3.1,<4.0
  
 # ML / Vision
 huggingface_hub
@@ -18,6 +23,3 @@ numpy
 kornia
 timm
 einops
-
-# HTML Parsing
-beautifulsoup4

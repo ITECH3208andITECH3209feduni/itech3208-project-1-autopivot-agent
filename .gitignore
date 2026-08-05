@@ -1,27 +1,6 @@
-# Virtual environment
-venv/
-.venv/
-env/
-
-# Python
+.env
 __pycache__/
 *.py[cod]
-*.pyo
+.venv/
+venv/
 
-# Environment variables
-.env
-.env.*
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-
-# Logs
-*.log
-
-# FastAPI
-.pytest_cache/
-.mypy_cache/
