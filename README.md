@@ -1,127 +1,75 @@
-# AutoPivot Agent
+# AutoPivot
 
-AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a web interface and API endpoints for vehicle detection, background removal, license plate detection, optional custom backgrounds and optional plate overlays.
+AutoPivot processes vehicle images using three modes:
 
-## Features
+- Full vehicle processing
+- Background removal
+- Numberplate detection and hiding
 
-- Upload a vehicle image and process it through the full pipeline.
-- Remove image backgrounds with an RMBG-2.0 primary model and BiRefNet version 11 fallback.
-- Detect vehicles with YOLO26.
-- Detect and hide license plates with nickmuchi/yolos-small-finetuned-license-plate-detection.
-- Upload optional custom backgrounds and numberplate overlays.
+## Project files
 
-## Project Structure
+- `autopivot_backend.py` starts the server.
+- `api.py` receives website and app requests.
+- `pipeline_service.py` contains the image-processing workflow.
+- `model_registry.py` loads each AI model once and reuses it.
+- `config.py` reads settings from `.env`.
+- `errors.py` keeps API errors consistent.
+- `index.html`, `style.css` and `app.js` are the frontend.
+- `assets/` contains `demo-car.jpg` and `demo-showroom.jpg`.
+- `tests/test_autopivot.py` contains the regression tests.
 
-- `autopivot_backend.py` - FastAPI backend, static frontend hosting, and image processing endpoints.
-- `index.html` - frontend page.
-- `style.css` - frontend styling.
-- `app.js` - upload, demo, reset, progress, and processing UI logic.
-- `assets/demo-car.jpg` - bundled demo image used by the one-click demo.
-- `database/base.py` - shared SQLAlchemy model base and constraint naming rules.
-- `database/connection.py` - PostgreSQL engine and database-session setup.
-- `database/models.py` - permanent dealership, user, listing, image and job models.
-- `requirements.txt` - Python dependencies.
+## Run the project
 
-## Requirements
-
-- Python 3.10+
-- A machine with enough RAM/VRAM for the selected vision models.
-- **Required**: `HF_TOKEN` for Hugging Face authentication. RMBG-2.0 requires access to the BRIA model license; BiRefNet is used as fallback when the primary model is unavailable.
-
-Install dependencies:
+1. Install the packages:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Configuration
+2. Copy `.env.example` and rename the copy to `.env`. Add your Hugging Face token:
 
-The backend uses environment variables:
-
-```bash
-HF_TOKEN=your_huggingface_token        # required for RMBG-2.0
-HOST=0.0.0.0                           # default
-PORT=8000                              # default
-MAX_FILE_MB=20                         # default upload limit
-YOLO_HF_REPO=Ultralytics/YOLO26        # default YOLO26 Hugging Face repo
-YOLO_MODEL_PATH=yolo26n.pt             # default YOLO26 detector file
-ALLOWED_ORIGINS=http://localhost:8000  # comma-separated CORS origins
-DATABASE_URL=postgresql+psycopg://autopivot_user:password@localhost:5432/autopivot
+```env
+HF_TOKEN=your_token_here
 ```
 
-Use `.env.example` as the template for setting `DATABASE_URL` in the local shell
-or deployment environment. Real database credentials must not be committed.
+3. Keep both demo images inside the `assets` folder.
 
-For larger demo uploads, raise `MAX_FILE_MB`, for example:
-
-```bash
-MAX_FILE_MB=50 python autopivot_backend.py
-```
-
-## Run Locally
-
-Start the backend:
+4. Start the server:
 
 ```bash
 python autopivot_backend.py
 ```
 
-Open:
+5. Open this address in your browser:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-The backend serves the frontend and static assets. These paths are available:
+Do not open `index.html` directly. The frontend should be opened through the running FastAPI server.
 
-- `/` — frontend
-- `/style.css` and `/static/style.css`
-- `/app.js` and `/static/app.js`
-- `/static/assets/demo-car.jpg`
+## API routes
 
-## Runpod / ngrok / remote access setup
+Website routes:
 
-Run the app on Runpod / server as normal, then expose port `8000` with ngrok or your chosen tunnel.  
-
-Note: Ngrok requires auth token and this can be accessed via [official website](https://dashboard.ngrok.com/signup)
-
-Then open Terminal and prompt this:
-```bash
-pip install pyngrok
-
-ngrok config add-authtoken [YOUR TOKEN FROM NGROK GOES HERE]
+```text
+POST /process-vehicle
+POST /remove-background
+POST /detect-and-hide
 ```
 
-Example:
+Future Capacitor routes:
 
-```bash
-HOST=0.0.0.0 PORT=8000 MAX_FILE_MB=20 python autopivot_backend.py
+```text
+POST /api/v1/process-vehicle
+POST /api/v1/remove-background
+POST /api/v1/detect-and-hide
 ```
 
-Then open the ngrok URL in your browser. If using browser requests from another origin, set `ALLOWED_ORIGINS` to include that URL.
+## Run tests
 
-## API Endpoints
+```bash
+python -m pytest
+```
 
-- `GET /health` — health and model readiness status.
-- `GET /api/status` — API status and configured model names.
-- `POST /remove-background` — remove background only.
-- `POST /process-vehicle` — full pipeline: vehicle detection, background removal, plate detection, plate treatment, optional custom background.
-- `POST /detect-and-hide` — detect and hide license plates only.
-
-Upload fields:
-
-- `file` — required vehicle/image upload.
-- `background` — optional custom background for `/process-vehicle`.
-- `plate_overlay` — optional numberplate overlay for `/process-vehicle` and `/detect-and-hide`.
-
-## Frontend Flow
-
-- `Upload photo` opens the manual file picker.
-- `Demo` and `Try demo` load `assets/demo-car.jpg`, select the full pipeline, preview the image, and start processing automatically.
-- `Process Image` runs the selected processing mode.
-- `Reset Car Upload`, `Reset Background`, and `Reset Numberplate` clear individual inputs.
-- `Reset Everything` clears all selected files, progress, errors, preview output, and resets the mode to full pipeline.
-
-## Notes
-
-This is a demo/prototype application. Keep the upload limit and model selection appropriate for the GPU and memory available in your instance.
+The tests use fake models, so they do not download the large AI models.

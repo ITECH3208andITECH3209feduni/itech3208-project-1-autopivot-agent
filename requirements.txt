@@ -1,17 +1,7 @@
-# AutoPivot — Python Dependencies
-# Developed by Vadim Rudoi
- 
-# Server
 fastapi
 uvicorn[standard]
 python-multipart
-
-# Database
-SQLAlchemy>=2.0,<3.0
-alembic>=1.13,<2.0
-psycopg[binary]>=3.1,<4.0
- 
-# ML / Vision
+python-dotenv
 huggingface_hub
 transformers
 torch
@@ -23,3 +13,5 @@ numpy
 kornia
 timm
 einops
+pytest
+httpx
