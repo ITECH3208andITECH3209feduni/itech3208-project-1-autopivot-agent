@@ -4,3 +4,7 @@ __pycache__/
 .venv/
 venv/
 
+
+# Uploaded files (local storage backend)
+storage/
+.DS_Store
