@@ -16,15 +16,18 @@ import cv2
 import numpy as np
 import torch
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Body
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, HTTPException, UploadFile, Body
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from huggingface_hub import get_token, hf_hub_download, login
 from PIL import Image, UnidentifiedImageError
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
+
+from api import processing
+from api.app import create_app
+from api.config import BASE_DIR, HOST, PORT
 
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
@@ -40,10 +43,11 @@ import re
 # ── Configuration ──────────────────────────────────────────────────────────────
 # Fixed by Vadim Rudoi — all hardcoded values replaced with environment-based config
 
+# HOST, PORT, ALLOWED_ORIGINS, BASE_DIR and .env loading now live in
+# api/config.py so the light API can be served without importing this module.
+
 HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
 HF_AUTH_TOKEN: str  = HF_TOKEN or (get_token() or "")
-HOST: str           = os.getenv("HOST", "0.0.0.0")
-PORT: int           = int(os.getenv("PORT", 8000))
 MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 20))
 MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 
@@ -52,26 +56,12 @@ MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 YOLO_HF_REPO: str    = os.getenv("YOLO_HF_REPO", "Ultralytics/YOLO26")
 YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "yolo26n.pt")
 
-# Fixed by Vadim Rudoi — wildcard "*" + allow_credentials=True is an invalid
-# CORS combo rejected by all modern browsers. Origins are now explicit and
-# credentials are disabled (tokens belong in Authorization headers for an API).
-ALLOWED_ORIGINS: list[str] = [
-    o.strip()
-    for o in os.getenv(
-        "ALLOWED_ORIGINS",
-        "http://localhost:8000,http://127.0.0.1:8000",
-    ).split(",")
-    if o.strip()
-]
-
 ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset(
     {"image/jpeg", "image/png", "image/webp"}
 )
 VEHICLE_CLASSES: frozenset[str] = frozenset(
     {"car", "truck", "bus", "motorcycle"}
 )
-
-BASE_DIR = Path(__file__).resolve().parent
 
 YOLO26_HF_FILES: frozenset[str] = frozenset({
     "yolo26n.pt",
@@ -314,6 +304,56 @@ class ModelRegistry:
 
 registry = ModelRegistry()
 
+# ── Pipeline Adapter ───────────────────────────────────────────────────────────
+# Wraps the seven-step pipeline in the interface api/processing.py expects, so
+# job orchestration, storage and status tracking stay free of any ML import.
+
+
+class PipelineProcessor:
+    """Runs the full pipeline over raw bytes and reports what it found."""
+
+    def process(
+        self, image: bytes, background: Optional[bytes]
+    ) -> processing.ProcessOutcome:
+        source = _open_image(image).convert("RGB")
+
+        vehicle = _detect_vehicle(source)
+        if vehicle is None:
+            # A correct run that produced nothing usable — recorded as needing
+            # review rather than as a failure.
+            return processing.ProcessOutcome(
+                image_png=None,
+                vehicle_detected=False,
+                message="No vehicle detected in this photograph.",
+            )
+
+        crop, coords = _crop_with_padding(source, vehicle["box"])
+        bg_removed, model_used = _remove_background(crop)
+        full_result = _composite_onto_original(source, bg_removed, coords)
+
+        plates = _detect_plates(full_result)
+        full_result = _apply_plate_treatment(full_result, plates, None)
+
+        background_image = _open_image(background) if background else None
+        final = _apply_background(full_result, background_image)
+
+        buffer = io.BytesIO()
+        final.save(buffer, format="PNG")
+
+        return processing.ProcessOutcome(
+            image_png=buffer.getvalue(),
+            vehicle_detected=True,
+            plates_detected=len(plates),
+            # No overlay is offered through the listings flow yet, so detected
+            # plates are masked.
+            plate_treatment="masked" if plates else "none",
+            model_used=model_used,
+            # detected_angle and angle_confidence stay unset: nothing computes a
+            # shot angle yet, and inventing one would put a number on screen
+            # that no measurement supports.
+        )
+
+
 # ── Application Lifespan ───────────────────────────────────────────────────────
 # Developed by Vadim Rudoi — startup sequence:
 #   1. HuggingFace authentication (required for RMBG-2.0 and BiRefNet)
@@ -352,6 +392,11 @@ async def lifespan(app: FastAPI):
     if not registry._rmbg_ok:
         registry._load_birefnet()
 
+    # Hands the pipeline to the job orchestrator in api/processing.py. Until
+    # this runs, POST /api/listings/{id}/process answers 503 rather than
+    # queueing work no model can execute.
+    processing.set_processor(PipelineProcessor())
+
     logger.info(
         "AutoPivot ready — device=%s  active_bg_model=%s  yolo=%s",
         registry.device,
@@ -364,42 +409,23 @@ async def lifespan(app: FastAPI):
 
 # ── FastAPI Application ────────────────────────────────────────────────────────
 
-app = FastAPI(
-    title="AutoPivot",
+# CORS, the global exception handler and the auth routes are configured by the
+# factory, so the light API (uvicorn api.app:app) and this full application
+# behave identically on everything that is not vehicle processing.
+app = create_app(
+    lifespan=lifespan,
     description=(
         "Vehicle background removal, detection, and licence-plate treatment API. "
         "Developed by Vadim Rudoi."
     ),
-    version="2.0.0",
-    lifespan=lifespan,
 )
 
-# Fixed by Vadim Rudoi — correct CORS config (explicit origins, no credentials)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
-)
-
-# Fixed by Vadim Rudoi — individual FileResponse routes replaced with StaticFiles
-app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
-
-
-# ── Global Exception Handler ───────────────────────────────────────────────────
-# Developed by Vadim Rudoi
-
-@app.exception_handler(Exception)
-async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-    logger.error(
-        "Unhandled exception on %s %s: %s",
-        request.method, request.url.path, exc, exc_info=True,
-    )
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An unexpected server error occurred."},
-    )
+# The /static mount is gone with the vanilla page that needed it. It originally
+# published the entire project root — serving .env, the backend source and the
+# database models to any caller — and was then narrowed to assets/ for the demo
+# image. Nothing serves that image now, so the whole mount goes: files under
+# assets/ stay in the repository but are no longer exposed over HTTP. Everything
+# a signed-in user needs is served through /api/files, which checks ownership.
 
 
 # ── Validation Helpers ─────────────────────────────────────────────────────────
@@ -692,19 +718,31 @@ def _apply_background(
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 
+# The React client is the only interface. The original single-page demo — its
+# index.html, style.css and app.js, plus the routes that served them — has been
+# removed: the product is a platform with accounts, listings and a backdrop
+# library, and keeping a second, unauthenticated interface alongside it meant two
+# front doors to maintain and one of them bypassing every access control.
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+SERVE_REACT_CLIENT = FRONTEND_DIST.is_dir()
+
+
 @app.get("/", include_in_schema=False)
-async def root() -> FileResponse:
-    return FileResponse(BASE_DIR / "index.html")
-
-
-@app.get("/style.css", include_in_schema=False)
-async def stylesheet() -> FileResponse:
-    return FileResponse(BASE_DIR / "style.css", media_type="text/css")
-
-
-@app.get("/app.js", include_in_schema=False)
-async def javascript() -> FileResponse:
-    return FileResponse(BASE_DIR / "app.js", media_type="application/javascript")
+async def root() -> Response:
+    if SERVE_REACT_CLIENT:
+        return FileResponse(FRONTEND_DIST / "index.html")
+    # Said plainly rather than as a 500 from a missing file: this is the first
+    # thing anyone sees after forgetting the build step.
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": (
+                "The client has not been built. Run "
+                "'npm ci --prefix frontend && npm run build --prefix frontend', "
+                "then restart. The API itself is available at /docs."
+            )
+        },
+    )
 
 
 @app.get("/health", tags=["Observability"])
@@ -1002,6 +1040,41 @@ async def api_extract_images_from_url(url: str = Body(..., embed=True)) -> dict:
 
 
 
+
+
+# ── React client (single-page fallback) ────────────────────────────────────────
+# Registered last on purpose. Starlette matches routes in registration order, so
+# every API route above wins; this only sees what nothing else claimed.
+#
+# The fallback is what makes a deep link work: /app/vehicles/12 is a client-side
+# route with no file behind it, so a refresh has to return index.html and let
+# the router sort it out. Without this, reloading any page but "/" 404s.
+
+if SERVE_REACT_CLIENT:
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_DIST / "assets")),
+        name="frontend-assets",
+    )
+
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def spa_fallback(spa_path: str) -> FileResponse:
+        candidate = (FRONTEND_DIST / spa_path).resolve()
+        # A path from the URL must not be able to reach outside the build.
+        if (
+            spa_path
+            and candidate.is_relative_to(FRONTEND_DIST.resolve())
+            and candidate.is_file()
+        ):
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+    logger.info("Serving the React client from %s", FRONTEND_DIST)
+else:
+    logger.info(
+        "frontend/dist not found — serving the original demo page at /. "
+        "Run 'npm run build --prefix frontend' to serve the React client."
+    )
 
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
