@@ -182,6 +182,9 @@ Worth having ready if someone asks a sharp question.
 - Listing-URL import is limited to sites that serve their images in the initial
   HTML. Others return an error naming the reason rather than silently importing
   nothing.
-- Compositing is a straight paste: no contact shadow, no ground reflection and
-  no colour matching between the vehicle and the backdrop. The cars read as
-  placed on the scene rather than photographed in it. Work in progress.
+- A dealership's own backdrop has no measured geometry, so the vehicle is stood
+  on a ground line assumed to be 84% of the way down the canvas. If their
+  backdrop's horizon is elsewhere, the car floats or sinks. The two built-in
+  studio scenes are measured properly and do not have this problem.
+- There is still no ground *reflection* — shadows only. On a glossy floor a real
+  car would reflect.

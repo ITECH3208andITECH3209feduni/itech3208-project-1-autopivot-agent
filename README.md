@@ -26,6 +26,9 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 - `api/storage.py` - content-addressed file storage, scoped per dealership.
 - `api/url_import.py` - fetching and parsing listing pages, shared by the light
   API and the processing backend.
+- `compositing.py` - placing a cut-out vehicle into a scene: alpha refinement,
+  ground alignment, shadows and colour matching.
+- `assets/backgrounds/` - the two measured studio scenes.
 - `api/routes_backdrops.py` - backdrop library and authenticated file serving.
 - `scripts/runpod_setup.sh` - one-shot setup for a GPU test pod.
 - `frontend/` - React client. `src/design.ts` is the single source of truth for
@@ -230,6 +233,54 @@ the only data any account can reach.
 A photograph the pipeline finds no vehicle in completes and is marked as needing
 review rather than being recorded as a failure: the run was correct, the result
 needs a person.
+
+## Compositing
+
+`compositing.py` places the cut-out vehicle into a scene. The geometry, shadow
+construction and colour matching are Suraj Purella's, from his
+`Auto_pivot_Scaling` branch; they were lifted out rather than merged, because
+that branch replaces the whole application with a standalone processing service.
+
+A straight paste fails for three reasons, and each is addressed:
+
+- **Edges.** The segmentation mask is computed at 1024×1024 and stretched over a
+  photograph several times that wide, leaving a fringe of background clinging to
+  the silhouette — invisible against white, obvious against a studio floor.
+  `refine_alpha_mask` closes pinholes, pulls the edge in one pixel and feathers it.
+- **Contact.** Nothing anchored the vehicle to the floor, so it floated.
+  Two shadows are laid down — a wide ambient pool and a tighter contact
+  shadow — both derived from the vehicle's own silhouette rather than a generic
+  ellipse, so they narrow at the bonnet and widen at the wheel arches.
+- **Light.** `match_colour` moves the vehicle towards the scene's LAB mean at 12%
+  of the difference for lightness and 15% for the colour axes, clamped to ±18
+  and ±5. Deliberately weak: a listing photograph has to stay the colour the car
+  actually is.
+
+The contact line is the 0.97 quantile of each column's lowest solid pixel, not
+the lowest opaque pixel — one stray row of leftover mask would otherwise lift
+the whole car off the floor.
+
+### Backdrops and the ground line
+
+Two built-in scenes are measured by hand and carry full geometry, including an
+ellipse over the display base that shadows are clipped to:
+
+| Preset | Placement | Canvas |
+|---|---|---|
+| `studio_full` | On the raised platform | 1280×960 |
+| `studio_closeup` | Centred, no contact shadow | 1280×960 |
+
+A **dealership's own backdrop** has no measured geometry, so the vehicle is
+centred horizontally and stood on a ground line at **84% of the canvas height**,
+and the output keeps the backdrop's own resolution (capped at 2400px wide).
+
+**That 84% is a guess.** If a dealer's backdrop has its horizon somewhere else,
+the vehicle will float above it or sink below it. Giving each backdrop its own
+ground-line setting is the fix, and is not built yet.
+
+With no backdrop at all, the cutout returns to its place on a transparent canvas
+the size of the original photograph — there is no scene to sit in, so scaling to
+a fixed canvas would only discard resolution.
 
 ## Licence plates
 
