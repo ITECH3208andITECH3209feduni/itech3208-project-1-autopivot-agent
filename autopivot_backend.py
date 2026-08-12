@@ -26,6 +26,7 @@ from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
 
+import compositing
 from api import processing, url_import
 from api.app import create_app
 from api.config import BASE_DIR, HOST, PORT
@@ -401,12 +402,12 @@ class PipelineProcessor:
         # cutout floating on transparency is not.
         plates = _detect_plates(crop)
         plates = _filter_plates(plates, _box_area(vehicle["box"]), bg_removed)
+        # Treated here, before the compositor rescales the cutout to fit the
+        # scene: after that, coordinates taken from the crop no longer apply.
         bg_removed = _apply_plate_treatment(bg_removed, plates, None)
 
-        full_result = _composite_onto_original(source, bg_removed, coords)
-
         background_image = _open_image(background) if background else None
-        final = _apply_background(full_result, background_image)
+        final, _ = _place_on_backdrop(bg_removed, background_image, source.size, coords)
 
         buffer = io.BytesIO()
         final.save(buffer, format="PNG")
@@ -600,8 +601,12 @@ def _run_segmentation(model, image: Image.Image) -> Image.Image:
     mask = transforms.ToPILImage()(mask_tensor).resize(
         rgb.size, Image.Resampling.LANCZOS
     )
+    # Mask cleanup contributed by Suraj Purella (Auto_pivot_Scaling). The mask
+    # is produced at 1024x1024 and stretched over a photograph several times
+    # that wide, which leaves a soft fringe of background clinging to the
+    # silhouette — invisible against white, obvious against a studio floor.
     result = rgb.copy().convert("RGBA")
-    result.putalpha(mask)
+    result.putalpha(compositing.refine_alpha_mask(mask))
     return result
 
 
@@ -700,25 +705,6 @@ def _crop_with_padding(
     x2 = min(w, bx2 + pad_x)
     y2 = min(h, by2 + pad_y)
     return image.crop((x1, y1, x2, y2)), (x1, y1, x2, y2)
-
-
-def _composite_onto_original(
-    original: Image.Image,
-    processed_crop: Image.Image,
-    coords: tuple[int, int, int, int],
-) -> Image.Image:
-    """
-    Paste the background-removed crop back onto a transparent canvas that
-    matches the full original image dimensions.
-
-    Fixed by Vadim Rudoi — the previous implementation returned the raw crop,
-    discarding all spatial context and producing output at crop resolution.
-    """
-    x1, y1, x2, y2 = coords
-    canvas = Image.new("RGBA", original.size, (0, 0, 0, 0))
-    patch = processed_crop.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
-    canvas.paste(patch, (x1, y1), mask=patch.split()[3])
-    return canvas
 
 
 def _detect_plates(image_rgba: Image.Image) -> list[dict]:
@@ -897,27 +883,31 @@ def _obscure_region(region: np.ndarray) -> np.ndarray:
     return cv2.GaussianBlur(blown_up, (kernel, kernel), 0)
 
 
-def _apply_background(
-    foreground_rgba: Image.Image,
-    background: Optional[Image.Image] = None,
-) -> Image.Image:
+def _place_on_backdrop(
+    cutout: Image.Image,
+    background: Optional[Image.Image],
+    original_size: tuple[int, int],
+    coords: tuple[int, int, int, int],
+) -> tuple[Image.Image, dict]:
     """
-    Developed by Vadim Rudoi — composite the vehicle (RGBA foreground with
-    transparent background) onto a custom background image.
+    Produce the finished image from a treated cutout.
 
-    • If background is provided: resize it to match the foreground canvas and
-      alpha-composite foreground on top.
-    • If not provided: return the transparent RGBA foreground as-is (the
-      frontend or caller handles the transparent PNG).
+    With a backdrop, hand off to the compositor: the vehicle is scaled to the
+    scene, stood on its ground line, given shadows and colour-matched.
+
+    Without one, fall back to the old behaviour — the cutout returns to its
+    place on a transparent canvas the size of the original photograph. There is
+    no scene to sit in, so scaling to a fixed canvas would only throw away
+    resolution.
     """
     if background is None:
-        return foreground_rgba
+        canvas = Image.new("RGBA", original_size, (0, 0, 0, 0))
+        x1, y1, x2, y2 = coords
+        patch = cutout.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
+        canvas.paste(patch, (x1, y1), patch.getchannel("A"))
+        return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
 
-    bg = background.convert("RGBA").resize(
-        foreground_rgba.size, Image.Resampling.LANCZOS
-    )
-    # PIL alpha_composite: dst first, src on top
-    return Image.alpha_composite(bg, foreground_rgba)
+    return compositing.compose(cutout, background, compositing.DEALER_BACKDROP)
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -1070,15 +1060,17 @@ async def api_process_vehicle(
     logger.info("Plates detected — count=%d", len(plates))
 
     # ── Step 5: Plate treatment ──
+    # Before compositing: the cutout is rescaled to fit the scene, after which
+    # coordinates measured on the crop no longer apply.
     bg_removed = _apply_plate_treatment(bg_removed, plates, plate_img)
 
-    # ── Step 6: Composite back onto full canvas ──
-    # Fixed by Vadim Rudoi — previously the raw crop was returned, losing all
-    # spatial context and producing output at crop resolution only.
-    full_result = _composite_onto_original(image, bg_removed, coords)
-
-    # ── Step 7: Background compositing ──
-    final = _apply_background(full_result, bg_image)
+    # ── Steps 6 & 7: Placement ──
+    # With a backdrop this scales the vehicle to the scene, stands it on the
+    # ground line, lays down shadows and matches its colour to the light —
+    # compositing contributed by Suraj Purella (Auto_pivot_Scaling). Without
+    # one, the cutout returns to its place on a transparent canvas the size of
+    # the original photograph.
+    final, composite_meta = _place_on_backdrop(bg_removed, bg_image, image.size, coords)
 
     logger.info(
         "Pipeline complete — plates_treated=%d  bg_applied=%s",
@@ -1108,6 +1100,7 @@ async def api_process_vehicle(
             }
             for p in plates
         ],
+        **composite_meta,
     }
 
 
