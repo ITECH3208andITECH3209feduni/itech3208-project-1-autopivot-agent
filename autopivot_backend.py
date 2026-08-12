@@ -26,6 +26,7 @@ from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
 
+import classification
 import compositing
 from api import processing, url_import
 from api.app import create_app
@@ -96,6 +97,28 @@ if PLATE_TREATMENT not in PLATE_TREATMENTS:
 # The downsample is what destroys the characters; the upsample only decides
 # whether the result reads as a blur or as a mosaic.
 PLATE_MOSAIC_WIDTH: int = int(os.getenv("PLATE_MOSAIC_WIDTH", "8"))
+
+# ── Image classification ──
+# Whether to ask CLIP what each photograph is of before processing it. Set
+# false to fall back to the old behaviour, where anything a vehicle detector
+# finds a car in gets composited.
+CLASSIFY_IMAGES: bool = os.getenv(
+    "CLASSIFY_IMAGES", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# What to tell the dealer about a photograph that was left out. Written for
+# someone looking at their own listing, not at a log.
+_NOT_A_VEHICLE_PHOTO: dict[str, str] = {
+    "advertisement": (
+        "This looks like an advertisement or a dealer badge rather than a "
+        "photograph of the vehicle."
+    ),
+    "interior": "This is an interior shot, so there is no exterior to place on a backdrop.",
+    "detail": "This is a close-up of part of the vehicle rather than the whole car.",
+    "unknown": (
+        "This could not be identified as a photograph of the vehicle's exterior."
+    ),
+}
 
 ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset(
     {"image/jpeg", "image/png", "image/webp"}
@@ -390,6 +413,25 @@ class PipelineProcessor:
     ) -> processing.ProcessOutcome:
         source = _open_image(image).convert("RGB")
 
+        # Classified before anything else runs. Vehicle detection cannot answer
+        # this question: a finance advertisement contains a real car and passes
+        # detection, and compositing it puts a stranger's Mazda in a Nissan's
+        # gallery. A steering-wheel close-up passes for much the same reason and
+        # ends up standing on the turntable. Both were in the first real URL
+        # import. Judged on the whole photograph rather than a crop, because
+        # what makes a banner a banner is the text around the car.
+        classified = _classify(source)
+        if classified is not None and not classification.is_processable(classified):
+            return processing.ProcessOutcome(
+                image_png=None,
+                vehicle_detected=False,
+                image_kind=classified.kind,
+                kind_confidence=classified.kind_confidence,
+                message=_NOT_A_VEHICLE_PHOTO.get(
+                    classified.kind, "This photograph is not a vehicle exterior."
+                ),
+            )
+
         vehicle = _detect_vehicle(source)
         if vehicle is None:
             # A correct run that produced nothing usable — recorded as needing
@@ -397,6 +439,8 @@ class PipelineProcessor:
             return processing.ProcessOutcome(
                 image_png=None,
                 vehicle_detected=False,
+                image_kind=classified.kind if classified else None,
+                kind_confidence=classified.kind_confidence if classified else None,
                 message="No vehicle detected in this photograph.",
             )
 
@@ -416,7 +460,10 @@ class PipelineProcessor:
         bg_removed = _apply_plate_treatment(bg_removed, plates, None)
 
         background_image = _open_image(background) if background else None
-        final, _ = _place_on_backdrop(bg_removed, background_image, source.size, coords)
+        angle = classified.angle if classified else None
+        final, _ = _place_on_backdrop(
+            bg_removed, background_image, source.size, coords, angle=angle
+        )
 
         buffer = io.BytesIO()
         final.save(buffer, format="PNG")
@@ -429,9 +476,10 @@ class PipelineProcessor:
             # plates are obscured by whatever PLATE_TREATMENT selects.
             plate_treatment=PLATE_TREATMENT if plates else "none",
             model_used=model_used,
-            # detected_angle and angle_confidence stay unset: nothing computes a
-            # shot angle yet, and inventing one would put a number on screen
-            # that no measurement supports.
+            detected_angle=angle,
+            angle_confidence=classified.angle_confidence if classified else None,
+            image_kind=classified.kind if classified else None,
+            kind_confidence=classified.kind_confidence if classified else None,
         )
 
 
@@ -892,11 +940,41 @@ def _obscure_region(region: np.ndarray) -> np.ndarray:
     return cv2.GaussianBlur(blown_up, (kernel, kernel), 0)
 
 
+_classifier_warned = False
+
+
+def _classify(image: Image.Image) -> Optional[classification.Classification]:
+    """
+    What this photograph is of, or None if nothing could look at it.
+
+    A classifier that will not load must not fail every job. Returning None
+    leaves the pipeline behaving exactly as it did before classification
+    existed, and the image's kind stays null so the listing shows it as
+    unclassified rather than asserting something no model actually decided.
+    The warning is logged once; per-job it would bury the real output.
+    """
+    global _classifier_warned
+
+    if not CLASSIFY_IMAGES:
+        return None
+    try:
+        return classification.classify(image)
+    except Exception as exc:
+        if not _classifier_warned:
+            logger.warning(
+                "Image classification is unavailable, so photographs will be "
+                "processed without it: %s", exc, exc_info=True,
+            )
+            _classifier_warned = True
+        return None
+
+
 def _place_on_backdrop(
     cutout: Image.Image,
     background: Optional[Image.Image],
     original_size: tuple[int, int],
     coords: tuple[int, int, int, int],
+    angle: Optional[str] = None,
 ) -> tuple[Image.Image, dict]:
     """
     Produce the finished image from a treated cutout.
@@ -916,7 +994,9 @@ def _place_on_backdrop(
         canvas.paste(patch, (x1, y1), patch.getchannel("A"))
         return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
 
-    return compositing.compose(cutout, background, compositing.DEALER_BACKDROP)
+    return compositing.compose(
+        cutout, background, compositing.DEALER_BACKDROP, angle=angle
+    )
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
