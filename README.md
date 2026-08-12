@@ -24,6 +24,8 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
   light API stays free of ML imports.
 - `scripts/seed_dealership.py` - provisions a dealership and its administrator.
 - `api/storage.py` - content-addressed file storage, scoped per dealership.
+- `api/url_import.py` - fetching and parsing listing pages, shared by the light
+  API and the processing backend.
 - `api/routes_backdrops.py` - backdrop library and authenticated file serving.
 - `scripts/runpod_setup.sh` - one-shot setup for a GPU test pod.
 - `frontend/` - React client. `src/design.ts` is the single source of truth for
@@ -186,6 +188,9 @@ Then open the ngrok URL in your browser. If using browser requests from another 
 - `GET|PATCH|DELETE /api/listings/{id}` — a listing and its images.
 - `POST /api/listings/{id}/images` — attach photographs (multipart, repeated
   `files` field).
+- `POST /api/listings/{id}/images/from-url` — fetch photographs from a listing
+  page and attach them. Returns 422 with a message naming the reason when the
+  site cannot be imported from; see "Listing URL import" below.
 - `DELETE /api/listings/{id}/images/{image_id}` — remove one photograph.
 - `POST /api/listings/{id}/process` — queue every unprocessed photograph,
   optionally against a backdrop. Returns 503 on the light API, which has no
@@ -225,6 +230,57 @@ the only data any account can reach.
 A photograph the pipeline finds no vehicle in completes and is marked as needing
 review rather than being recorded as a failure: the run was correct, the result
 needs a person.
+
+## Licence plates
+
+Plates are found on the cropped vehicle region rather than the finished
+composite, so the plate occupies far more of the detector's input, and the
+pixels are photographic rather than a cutout on transparency.
+
+Every detection is then checked against three things before anything is painted
+over the photograph:
+
+- **Shape** — between `PLATE_MIN_ASPECT` and `PLATE_MAX_ASPECT` (1.2–6.5 by
+  default, wide enough for AU/NZ, European slimline and motorcycle plates).
+- **Size** — no more than `PLATE_MAX_AREA_RATIO` of the vehicle.
+- **Coverage** — at least `PLATE_MIN_COVERAGE` of the box must land on the
+  vehicle cutout rather than on transparent background. This is what rejects a
+  plate "detected" in empty sky beside the car.
+
+A rejected detection is logged with its reason. The reasoning is that a
+misplaced mask is worse than a missing one: an obscuration over empty
+background is visible damage to a photograph the dealer intends to publish,
+whereas an unmasked plate is simply a photograph that still needs a person.
+
+`PLATE_TREATMENT` selects what replaces the plate — `blur` (default),
+`pixelate` or `white`. Both `blur` and `pixelate` downsample to
+`PLATE_MOSAIC_WIDTH` first, which is what actually destroys the characters; a
+Gaussian blur alone is a convolution and can be partially inverted. Alpha is
+never modified, so a treatment can no longer punch an opaque block into the
+transparent background.
+
+## Listing URL import
+
+`api/url_import.py` fetches a listing page and attaches the photographs it
+finds. **It does not work on every site**, and that is not fixable from our
+side. Two patterns defeat it:
+
+- A WAF answers automated requests with 403 or 429 regardless of how the
+  request is shaped. `carsales.com.au` does this.
+- The page ships an empty shell and paints the gallery with JavaScript, so the
+  HTML we receive holds the site's own logos and nothing else.
+  `autotrader.com.au` does this.
+
+Both were confirmed by hand. Rather than returning "no images found" and
+letting a dealer conclude their listing is broken, known cases are named
+explicitly and unknown hosts get a message describing which pattern they hit.
+
+Set `URL_IMPORT_ALLOWED_HOSTS` to a comma-separated list to restrict imports to
+named hosts. Empty (the default) means any host that is not already known to be
+unsupported.
+
+The SSRF guard rejects hostnames resolving to private, loopback, link-local or
+reserved addresses, and re-checks after redirects.
 
 ## Notes
 
