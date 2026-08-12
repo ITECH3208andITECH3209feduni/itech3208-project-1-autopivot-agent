@@ -168,22 +168,8 @@ fi
 # a DATABASE_URL pointing somewhere unexpected would migrate one database while
 # the app reads another, and the first symptom is a login failing with
 # "relation users does not exist" long after this script said it was fine.
-python3 - <<'PY' || die "the schema is not queryable — see the error above"
-import sys
-from sqlalchemy import inspect
-from database.connection import engine
-
-expected = {"users", "dealerships", "vehicle_listings", "images", "processing_jobs", "backdrops"}
-try:
-    present = set(inspect(engine).get_table_names())
-except Exception as exc:
-    sys.exit(f"  could not read the schema: {exc}")
-
-missing = expected - present
-if missing:
-    sys.exit(f"  tables missing after migration: {', '.join(sorted(missing))}")
-print(f"  {len(expected)} expected tables present")
-PY
+python3 -m scripts.verify_schema 2>&1 | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || die "the schema is not queryable — see the output above"
 
 python3 -m scripts.seed_dealership 2>&1 | sed 's/^/  /'
 # Without this the exit status is sed's, so a failed seed reads as a success
