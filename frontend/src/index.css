@@ -1,0 +1,74 @@
+/* AutoPivot Agent — global styles.
+ *
+ * Tailwind has been removed: the export declared it as a dependency, a Vite
+ * plugin and ~60 lines of @theme config, but used exactly one utility class in
+ * 1,500 lines. Everything is drawn with inline styles from design.ts.
+ *
+ * The radius variables below now match the brand guidelines (§7: card 16px,
+ * control 10px). The export declared 12px and 6px here while its components
+ * used 16 and 10, so the variables were both wrong and unread.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --color-ink: #1a1a17;
+  --color-ink-soft: #4a4a44;
+  --color-bone: #f5f2ec;
+  --color-paper: #fbfaf8;
+  --color-line: #e2ded6;
+  --color-line-strong: #878580;
+  --color-forest: #1f4d3a;
+
+  --radius-card: 16px;
+  --radius-control: 10px;
+
+  --font-serif: 'Fraunces', Georgia, serif;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--color-ink);
+  background: var(--color-bone);
+}
+
+/* Guidelines §10: a 2px forest outline at 2px offset. Applied globally so no
+   component can quietly drop its focus ring. */
+:focus-visible {
+  outline: 2px solid var(--color-forest);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 2px;
+}
