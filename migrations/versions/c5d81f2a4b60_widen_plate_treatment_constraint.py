@@ -23,6 +23,13 @@ down_revision: Union[str, Sequence[str], None] = 'a92e0e36bda3'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# The name is passed through op.f() at each call site, never bare. Alembic runs
+# a plain string through the metadata naming convention — which is
+# "ck_%(table_name)s_%(constraint_name)s" — so a bare, already-prefixed name
+# comes back prefixed twice, as
+# ck_processing_jobs_ck_processing_jobs_plate_treatment_allowed.
+# op.f() marks it as final. It cannot be applied at module level: the
+# operations proxy does not exist until a migration is running.
 CONSTRAINT = 'ck_processing_jobs_plate_treatment_allowed'
 TABLE = 'processing_jobs'
 
@@ -38,8 +45,8 @@ NEW = (
 
 
 def upgrade() -> None:
-    op.drop_constraint(CONSTRAINT, TABLE, type_='check')
-    op.create_check_constraint(CONSTRAINT, TABLE, NEW)
+    op.drop_constraint(op.f(CONSTRAINT), TABLE, type_='check')
+    op.create_check_constraint(op.f(CONSTRAINT), TABLE, NEW)
 
 
 def downgrade() -> None:
@@ -49,5 +56,5 @@ def downgrade() -> None:
         "UPDATE processing_jobs SET plate_treatment = 'masked' "
         "WHERE plate_treatment IN ('blur', 'pixelate', 'white')"
     )
-    op.drop_constraint(CONSTRAINT, TABLE, type_='check')
-    op.create_check_constraint(CONSTRAINT, TABLE, OLD)
+    op.drop_constraint(op.f(CONSTRAINT), TABLE, type_='check')
+    op.create_check_constraint(op.f(CONSTRAINT), TABLE, OLD)
