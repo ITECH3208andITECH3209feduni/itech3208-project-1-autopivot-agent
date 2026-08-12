@@ -61,9 +61,14 @@ export type VehicleListing = {
   updated_at: string
 }
 
+/** What a photograph is of. Null until the classifier has seen it. */
+export type ImageKind = 'exterior' | 'interior' | 'detail' | 'advertisement' | 'unknown'
+
 export type ListingImage = {
   id: number
   image_type: 'original' | 'processed' | 'background' | 'plate_overlay'
+  image_kind: ImageKind | null
+  kind_confidence: number | null
   original_filename: string
   image_url: string
   width: number

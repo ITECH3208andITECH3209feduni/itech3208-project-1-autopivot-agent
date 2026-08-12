@@ -9,10 +9,10 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { api, type NavCounts } from '../api/client'
-import { useIsCompact } from '../useMediaQuery'
+import { useIsCompact, useIsWide } from '../useMediaQuery'
 import { useAuth } from '../auth/AuthContext'
 import {
-  C, CONTENT_MAX_WIDTH, MONO, RADIUS_CONTROL, SANS, SIDEBAR_WIDTH, serif,
+  C, CONTENT_MAX_WIDTH, CONTENT_MAX_WIDTH_WIDE, MONO, RADIUS_CONTROL, SANS, SIDEBAR_WIDTH, serif,
 } from '../design'
 
 type NavItem = { label: string; to: string; count?: keyof NavCounts }
@@ -114,6 +114,8 @@ export default function AppShell() {
   const navigate = useNavigate()
   const [counts, setCounts] = useState<NavCounts | null>(null)
   const compact = useIsCompact()
+  const wide = useIsWide()
+  const contentMaxWidth = wide ? CONTENT_MAX_WIDTH_WIDE : CONTENT_MAX_WIDTH
   const [menuOpen, setMenuOpen] = useState(false)
 
   // Refreshed on every navigation so a newly created vehicle is reflected
@@ -259,7 +261,11 @@ export default function AppShell() {
         paddingBottom: 32,
         minWidth: 0,
       }}>
-        <div style={{ maxWidth: CONTENT_MAX_WIDTH }}>
+        {/* margin auto, not just a max-width: without it the content block
+            sits hard against the sidebar and a wide monitor gets a metre of
+            dead space on the right, while a laptop — narrower than the cap —
+            looks correctly centred and hides the bug. */}
+        <div style={{ maxWidth: contentMaxWidth, margin: '0 auto' }}>
           <Outlet />
         </div>
       </main>

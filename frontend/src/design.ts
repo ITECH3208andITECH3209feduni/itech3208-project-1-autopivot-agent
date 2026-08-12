@@ -49,6 +49,10 @@ export const CARD_SHADOW =
 export const RADIUS_CARD = 16
 export const RADIUS_CONTROL = 10
 export const CONTENT_MAX_WIDTH = 1200
+// A gallery benefits from the extra room a large desktop monitor has, but
+// letting it run edge to edge makes lines too long to scan. This is the cap
+// above BREAKPOINTS.wide.
+export const CONTENT_MAX_WIDTH_WIDE = 1520
 export const SIDEBAR_WIDTH = 240
 
 /**

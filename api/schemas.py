@@ -106,6 +106,9 @@ class VehicleListingUpdate(BaseModel):
 class ImageOut(BaseModel):
     id: int
     image_type: str
+    # What the photograph is of. Null until the classifier has seen it.
+    image_kind: Optional[str] = None
+    kind_confidence: Optional[float] = None
     original_filename: str
     image_url: str
     width: int

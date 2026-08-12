@@ -8,6 +8,8 @@
 import { useEffect, useState } from 'react'
 
 export const BREAKPOINTS = {
+  /** Above this the content column is allowed to grow. */
+  wide: 1600,
   /** Below this the sidebar becomes a slide-over. */
   tablet: 900,
   mobile: 640,
@@ -33,6 +35,9 @@ export function useMediaQuery(query: string): boolean {
 
 export const useIsCompact = () =>
   useMediaQuery(`(max-width: ${BREAKPOINTS.tablet - 1}px)`)
+
+export const useIsWide = () =>
+  useMediaQuery(`(min-width: ${BREAKPOINTS.wide}px)`)
 
 export const useIsMobile = () =>
   useMediaQuery(`(max-width: ${BREAKPOINTS.mobile - 1}px)`)
