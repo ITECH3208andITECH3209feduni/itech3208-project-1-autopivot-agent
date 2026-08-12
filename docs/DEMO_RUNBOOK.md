@@ -48,6 +48,18 @@ It finishes with a box containing the **public URL, email and password**. Expect
 Add `HF_TOKEN` first if you want RMBG-2.0 rather than the BiRefNet fallback.
 BiRefNet works fine; it is simply second choice.
 
+**First run also downloads CLIP** (`openai/clip-vit-base-patch32`, around
+350 MB) for image classification. Its thresholds are reasoned rather than
+measured, so calibrate them against real photographs before the demo — this
+prints the full distribution per file and takes a minute:
+
+```bash
+python classification.py /path/to/imported/*.jpg
+```
+
+If the numbers look wrong on your images, adjust `CLIP_KIND_CONFIDENCE` and
+`CLIP_KIND_MARGIN`, or set `CLASSIFY_IMAGES=false` to turn it off entirely.
+
 ```bash
 export HF_TOKEN=hf_your_token_here
 ```
@@ -110,6 +122,14 @@ shows each job as it lands.
   unless it is plate-shaped, plate-sized and sitting on the car. Worth saying
   out loud: the system would rather miss a plate than obscure the wrong part of
   a photograph the dealer is about to publish.
+- **A URL import is sorted before it is processed.** Advertisement banners,
+  dealer badges, interior shots and part close-ups are identified and left out,
+  with the reason shown against each. This is worth demonstrating deliberately
+  — import a listing, then show the "left out" section. It is the difference
+  between a tool and a toy.
+- **The car is the same size at every angle.** Flick through the gallery. It
+  sounds trivial and it is the thing that makes a set of photographs look like
+  one car rather than several.
 
 ### Do not promise
 

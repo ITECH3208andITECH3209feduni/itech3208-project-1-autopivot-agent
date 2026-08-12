@@ -234,6 +234,49 @@ A photograph the pipeline finds no vehicle in completes and is marked as needing
 review rather than being recorded as a failure: the run was correct, the result
 needs a person.
 
+## What a photograph is of
+
+`classification.py` asks CLIP (`openai/clip-vit-base-patch32`) what each
+photograph shows before the pipeline touches it, and returns both a **kind**
+(`exterior`, `interior`, `detail`, `advertisement`, `unknown`) and, for
+exteriors, a **shot angle** (`front`, `front_quarter`, `side`, `rear_quarter`,
+`rear`).
+
+Vehicle detection cannot answer the first question. A finance advertisement
+contains a real car and passes detection — the first real URL import composited
+a Mazda2 out of a "FINANCE MADE EASY" banner into a Nissan Note's gallery, and
+put a steering-wheel close-up on the studio turntable. Both are photographs a
+detector is right about and a listing is wrong to include.
+
+The prompts describe the **photograph**, not the object: "a close-up photograph
+of one car wheel" rather than "a car wheel". A wheel close-up genuinely contains
+a car, so object-level wording cannot separate them.
+
+Two thresholds, both env-overridable:
+
+- `CLIP_KIND_CONFIDENCE` (0.55) — how sure the leading description must be.
+- `CLIP_KIND_MARGIN` (0.15) — how far clear of the runner-up. This is the
+  load-bearing one. A banner built around a car photo scores respectably as
+  *both* advertisement and exterior, so a threshold on the leader alone lets it
+  through on the strength of the photograph inside it. Two descriptions fitting
+  almost equally means the photograph is unidentified, whichever leads.
+
+Anything below either threshold is `unknown` and is not processed. The stated
+principle is the same as for plates: rather miss than damage. A wrong exclusion
+is one click for the dealer to undo; a wrong inclusion puts a stranger's car in
+their listing.
+
+**The defaults are reasoned, not measured.** Calibrate them against real
+photographs before trusting them — the module prints the full distribution per
+file:
+
+```bash
+python classification.py path/to/*.jpg
+```
+
+Set `CLASSIFY_IMAGES=false` to skip it entirely. If the model cannot load, the
+pipeline logs once and carries on unclassified rather than failing every job.
+
 ## Compositing
 
 `compositing.py` places the cut-out vehicle into a scene. The geometry, shadow
@@ -259,6 +302,35 @@ A straight paste fails for three reasons, and each is addressed:
 The contact line is the 0.97 quantile of each column's lowest solid pixel, not
 the lowest opaque pixel — one stray row of leftover mask would otherwise lift
 the whole car off the floor.
+
+### One car, one size
+
+A fourth problem appears only across a whole listing. Every shot used to be
+scaled to fill the available box, so a head-on shot — about as wide as it is
+tall — ran out of height first and was enlarged until it filled the frame,
+while a side-on shot of the same car ran out of width first and came out around
+half that size. Flicking through the gallery, the car grew and shrank.
+
+`_fit_vehicle` now scales to a target **height** instead, because height is the
+one dimension a turntable leaves alone: a car rotating on the spot barely
+changes apparent height, while its projected length collapses from about 4.7 m
+side-on to 1.8 m head-on. The target comes from `REFERENCE_VEHICLE_ASPECT`, so
+no cross-image state is needed — each photograph reaches the same size on its
+own.
+
+A cutout too long to be a car (a panorama, a badly cropped strip) clamps below
+`NORMALISE_CLAMP_FLOOR` of its target and falls back to the old rule. Clamping
+rather than abandoning matters: an earlier accept-or-reject version put a cliff
+exactly where cars are commonest — a real side-on silhouette runs about 3.5
+wide to 1 tall once wheels and mirrors are in frame, just past the 3.2
+reference, so it failed by a hair and rendered twelve per cent smaller than the
+same car at every other angle, which is the defect the whole function exists to
+remove.
+
+`reflection_strength` on a preset mirrors the vehicle below its contact line,
+fading and clipped to the platform. It is **off by default**: it is only correct
+on a surface we have measured and can see is polished, and a dealer's own
+backdrop may be carpet, gravel or a workshop floor.
 
 ### Backdrops and the ground line
 
