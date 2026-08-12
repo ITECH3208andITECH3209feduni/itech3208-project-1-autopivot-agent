@@ -489,11 +489,9 @@ def _serialise_job(job: ProcessingJob, output_path: str | None) -> ProcessingJob
 
 
 def _summarise(session: Session, listing: VehicleListing) -> ProcessingSummary:
-    jobs = session.scalars(
-        select(ProcessingJob)
-        .where(ProcessingJob.vehicle_listing_id == listing.id)
-        .order_by(ProcessingJob.id)
-    ).all()
+    # The latest attempt per photograph, so a listing reprocessed after a
+    # failure shows one row per photograph rather than one per attempt.
+    jobs = processing.latest_jobs(session, listing.id)
 
     # One lookup for every output path, rather than one query per job.
     output_ids = [j.output_image_id for j in jobs if j.output_image_id]

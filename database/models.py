@@ -407,8 +407,12 @@ class ProcessingJob(Base):
             name="review_state_allowed",
         ),
         CheckConstraint(
+            # 'blur', 'pixelate' and 'white' name the method actually applied.
+            # 'masked' predates them and is kept so rows written before the
+            # pipeline reported the specific method stay valid.
             "plate_treatment IS NULL OR "
-            "plate_treatment IN ('masked', 'overlay', 'none')",
+            "plate_treatment IN ('masked', 'overlay', 'none', "
+            "'blur', 'pixelate', 'white')",
             name="plate_treatment_allowed",
         ),
         CheckConstraint(

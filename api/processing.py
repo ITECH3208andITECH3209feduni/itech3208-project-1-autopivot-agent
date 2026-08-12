@@ -114,15 +114,33 @@ def create_jobs(
     return jobs
 
 
+def latest_jobs(session: Session, listing_id: int) -> list[ProcessingJob]:
+    """The most recent attempt for each photograph, oldest photograph first.
+
+    A failed job is kept rather than deleted, and reprocessing adds a new job
+    beside it. Anything reporting the state of a listing has to look at the
+    latest attempt only — otherwise one historical failure makes the listing
+    look permanently broken, and a successful reprocess appears to do nothing.
+    """
+    history = session.scalars(
+        select(ProcessingJob)
+        .where(ProcessingJob.vehicle_listing_id == listing_id)
+        .order_by(ProcessingJob.created_at, ProcessingJob.id)
+    ).all()
+
+    latest: dict[int, ProcessingJob] = {}
+    for job in history:
+        latest[job.input_image_id] = job
+    return list(latest.values())
+
+
 def _refresh_listing_status(session: Session, listing_id: int) -> None:
     """Roll each job's outcome up into the listing's processing status.
 
     The dashboard sorts and filters on this column, so it is maintained here
     rather than aggregated over every job on each read.
     """
-    jobs = session.scalars(
-        select(ProcessingJob).where(ProcessingJob.vehicle_listing_id == listing_id)
-    ).all()
+    jobs = latest_jobs(session, listing_id)
     listing = session.get(VehicleListing, listing_id)
     if listing is None:
         return

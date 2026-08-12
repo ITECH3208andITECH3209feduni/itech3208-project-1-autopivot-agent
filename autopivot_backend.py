@@ -80,8 +80,17 @@ PLATE_MAX_AREA_RATIO: float = float(os.getenv("PLATE_MAX_AREA_RATIO", "0.12"))
 # transparent background. This is what rejects a plate detected in empty space.
 PLATE_MIN_COVERAGE: float = float(os.getenv("PLATE_MIN_COVERAGE", "0.55"))
 
-# blur | pixelate | white
+# The value is written to processing_jobs.plate_treatment, which has a check
+# constraint, so an unrecognised setting here would fail every job at the
+# database rather than at startup. Normalise it instead.
+PLATE_TREATMENTS: frozenset[str] = frozenset({"blur", "pixelate", "white"})
 PLATE_TREATMENT: str = os.getenv("PLATE_TREATMENT", "blur").strip().lower()
+if PLATE_TREATMENT not in PLATE_TREATMENTS:
+    logging.getLogger("autopivot").warning(
+        "PLATE_TREATMENT=%r is not one of %s — using 'blur'.",
+        PLATE_TREATMENT, ", ".join(sorted(PLATE_TREATMENTS)),
+    )
+    PLATE_TREATMENT = "blur"
 
 # Width in pixels the plate is downsampled to before being scaled back up.
 # The downsample is what destroys the characters; the upsample only decides
