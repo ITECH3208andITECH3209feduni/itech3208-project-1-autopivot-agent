@@ -22,13 +22,15 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api import processing, storage
+from api import processing, storage, url_import
 from api.deps import CurrentUser, DbSession
 from api.schemas import (
     ImageOut,
     ProcessingJobOut,
     ProcessingSummary,
     ProcessRequest,
+    UrlImportRequest,
+    UrlImportResult,
     VehicleListingCreate,
     VehicleListingDetail,
     VehicleListingOut,
@@ -364,6 +366,105 @@ async def upload_images(
         session.refresh(image)
     logger.info("Images uploaded — listing=%s count=%d", listing.id, len(created))
     return [_serialise_image(i) for i in created]
+
+
+@router.post(
+    "/{listing_id}/images/from-url",
+    response_model=UrlImportResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_images_from_url(
+    listing_id: int,
+    body: UrlImportRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> UrlImportResult:
+    """
+    Attach photographs found on a listing page.
+
+    Fetching and parsing are Akhanda Bhandari's, in api/url_import.py. This
+    route adds authentication, dealership scoping and storage — the standalone
+    /extract-images-from-url endpoint has none of those and returns base64 to
+    the caller instead of saving anything.
+
+    Not every site works. url_import raises UrlImportError with a message that
+    names the reason, and that message is what the dealer sees.
+    """
+    listing = _owned_listing(session, user, listing_id)
+
+    try:
+        result = await url_import.fetch_images(body.url)
+    except url_import.UrlImportError as exc:
+        # 422: the request was well formed and the caller is entitled to make
+        # it; the page at the other end is what did not cooperate.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+    existing = session.scalar(
+        select(func.count(Image.id)).where(
+            Image.vehicle_listing_id == listing.id, Image.image_type == "original"
+        )
+    ) or 0
+    room = MAX_IMAGES_PER_LISTING - existing
+    if room <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This listing already holds {MAX_IMAGES_PER_LISTING} photographs.",
+        )
+
+    created: list[Image] = []
+    skipped = 0
+    for fetched in result.images[:room]:
+        try:
+            stored = storage.save_image(listing.dealership_id, "original", fetched.content)
+        except storage.StorageError:
+            # A page will serve SVG logos and tracking gifs alongside the
+            # vehicle. One unreadable file should not fail the whole import.
+            skipped += 1
+            continue
+
+        session.add(
+            image := Image(
+                vehicle_listing_id=listing.id,
+                image_type="original",
+                original_filename=fetched.filename[:255],
+                storage_path=stored.storage_path,
+                mime_type=stored.mime_type,
+                file_size_bytes=stored.size_bytes,
+                width=stored.width,
+                height=stored.height,
+            )
+        )
+        created.append(image)
+
+    if not created:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Nothing on that page could be read as a photograph.",
+        )
+
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Those photographs are already attached to a listing.",
+        )
+
+    for image in created:
+        session.refresh(image)
+
+    logger.info(
+        "URL import — listing=%s imported=%d skipped=%d",
+        listing.id, len(created), skipped,
+    )
+    return UrlImportResult(
+        images=[_serialise_image(i) for i in created],
+        note=result.note,
+    )
 
 
 def _serialise_job(job: ProcessingJob, output_path: str | None) -> ProcessingJobOut:

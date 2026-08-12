@@ -77,6 +77,12 @@ export type VehicleListingDetail = VehicleListing & {
   images: ListingImage[]
 }
 
+export type UrlImportResult = {
+  images: ListingImage[]
+  /** Set when the import worked but the result deserves a second look. */
+  note: string | null
+}
+
 export type VehicleListingCreate = {
   make: string
   model: string
@@ -216,6 +222,12 @@ export const api = {
       body,
     })
   },
+
+  importImagesFromUrl: (listingId: number, url: string) =>
+    request<UrlImportResult>(`/api/listings/${listingId}/images/from-url`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
 
   deleteImage: (listingId: number, imageId: number) =>
     request<void>(`/api/listings/${listingId}/images/${imageId}`, { method: 'DELETE' }),

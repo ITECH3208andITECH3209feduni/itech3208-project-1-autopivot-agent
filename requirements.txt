@@ -22,6 +22,12 @@ email-validator
 # Image handling — validating and measuring uploads needs no ML
 pillow
 
+# Listing-URL import (api/url_import.py). Core rather than ML: fetching a page
+# and reading its <img> tags needs neither torch nor a GPU, and both install
+# in seconds.
+beautifulsoup4
+httpx
+
 # Database
 SQLAlchemy>=2.0,<3.0
 alembic>=1.13,<2.0

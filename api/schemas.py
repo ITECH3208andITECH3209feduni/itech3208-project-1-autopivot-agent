@@ -142,6 +142,16 @@ class ProcessRequest(BaseModel):
     backdrop_id: Optional[int] = None
 
 
+class UrlImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class UrlImportResult(BaseModel):
+    images: list[ImageOut]
+    # Set when the import worked but the result is worth a second look.
+    note: Optional[str] = None
+
+
 class ProcessingJobOut(BaseModel):
     id: int
     status: str

@@ -34,6 +34,14 @@ export default function UploadView() {
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
+  // Listing URL import. Held separately from `error` so a site that refuses
+  // the import does not read as a problem with the vehicle details.
+  const [importUrl, setImportUrl] = useState('')
+  const [importError, setImportError] = useState<string | null>(null)
+  // Set when the vehicle saved but its URL import did not, so the page can
+  // offer a way through to the listing that already exists.
+  const [savedListingId, setSavedListingId] = useState<number | null>(null)
+
   function addFiles(incoming: FileList | File[]) {
     const rejected: string[] = []
     const accepted: Draft[] = []
@@ -71,6 +79,7 @@ export default function UploadView() {
   async function handleSubmit() {
     setBusy(true)
     setError(null)
+    setImportError(null)
     try {
       const listing = await api.createListing({
         make: make.trim(),
@@ -84,6 +93,20 @@ export default function UploadView() {
         // The listing exists before its photographs do, so a failed upload
         // leaves a listing to add them to rather than losing the details.
         await api.uploadImages(listing.id, drafts.map(d => d.file))
+      }
+
+      if (importUrl.trim()) {
+        // The import runs against the saved listing, so a site that refuses
+        // costs the URL and nothing else. The listing and any uploaded
+        // photographs are already safe.
+        try {
+          await api.importImagesFromUrl(listing.id, importUrl.trim())
+        } catch (err) {
+          drafts.forEach(d => URL.revokeObjectURL(d.previewUrl))
+          setImportError((err as Error).message)
+          setSavedListingId(listing.id)
+          return
+        }
       }
 
       drafts.forEach(d => URL.revokeObjectURL(d.previewUrl))
@@ -214,6 +237,51 @@ export default function UploadView() {
         )}
       </Card>
 
+      <Card style={{ padding: 24, marginBottom: 16 }}>
+        <p style={{ fontFamily: SANS, fontSize: 18, fontWeight: 500, color: C.ink, margin: '0 0 4px' }}>
+          Import from a listing URL
+        </p>
+        <p style={{ fontFamily: SANS, fontSize: 14, color: C.inkSoft, margin: '0 0 16px', lineHeight: 1.6 }}>
+          Optional. Paste a listing page and its photographs are fetched into
+          this vehicle. <strong style={{ fontWeight: 500, color: C.ink }}>This does not
+          work on every site</strong> — some block automated requests, and others
+          build their gallery in the browser, leaving nothing in the page to
+          read. When that happens you are told which, and the vehicle still saves.
+        </p>
+
+        <Field
+          label="Listing URL"
+          value={importUrl}
+          onChange={setImportUrl}
+          placeholder="https://… (optional)"
+          disabled={busy}
+        />
+
+        {importError && (
+          <div role="alert" style={{
+            fontFamily: SANS, fontSize: 14, color: C.rust, background: C.rustTint,
+            borderRadius: 8, padding: '12px 16px', marginTop: 16, lineHeight: 1.6,
+          }}>
+            {importError}
+            {savedListingId !== null && (
+              <>
+                {' '}The vehicle was saved.{' '}
+                <button
+                  onClick={() => navigate(`/app/vehicles/${savedListingId}`)}
+                  style={{
+                    fontFamily: SANS, fontSize: 14, color: C.rust, background: 'none',
+                    border: 'none', padding: 0, cursor: 'pointer',
+                    textDecoration: 'underline', fontWeight: 500,
+                  }}
+                >
+                  Open it and add photographs
+                </button>.
+              </>
+            )}
+          </div>
+        )}
+      </Card>
+
       <div style={{
         border: `1px dashed ${C.line}`, borderRadius: RADIUS_CARD,
         padding: '16px 20px', marginBottom: 24,
@@ -225,10 +293,8 @@ export default function UploadView() {
           Not wired yet
         </p>
         <p style={{ fontFamily: SANS, fontSize: 14, color: C.inkSoft, margin: 0, lineHeight: 1.6 }}>
-          Backdrop selection and processing come once the pipeline writes to the
-          database. Importing photos from a listing URL exists in the processing
-          backend but is not connected to listings yet. For now this saves the
-          vehicle and its originals.
+          Backdrop selection happens on the vehicle page, not here. For now this
+          saves the vehicle and its originals.
         </p>
       </div>
 
