@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import ipaddress
 import logging
 import mimetypes
@@ -36,12 +37,23 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from PIL import Image
 
 logger = logging.getLogger("autopivot.url_import")
 
 MAX_IMAGES = 20
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MIN_IMAGE_BYTES = 2 * 1024          # skips tracking pixels and spacer gifs
+
+# The byte floor alone lets page furniture through: a 2cheapcars import brought
+# in bluecorner.png at 105x81 and star-4.png at 210x71, both comfortably over
+# 2 KB and neither of them a photograph of anything. Measured on the shorter
+# side, because a badge is wide and short. 200 clears both of those by a wide
+# margin and is still below anything a gallery would publish as a photograph;
+# raise it through the environment if a site turns out to serve small
+# thumbnails in its HTML alongside the real images.
+MIN_IMAGE_PIXELS = int(os.getenv("URL_IMPORT_MIN_IMAGE_PIXELS", "200"))
+
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 FETCH_TIMEOUT = 10.0
 CONCURRENT_DOWNLOADS = 6
@@ -207,6 +219,27 @@ def filename_from_url(url: str, fallback_index: int, ext: str) -> str:
     return name
 
 
+def is_large_enough(content: bytes) -> bool:
+    """
+    True if both sides of the image reach MIN_IMAGE_PIXELS.
+
+    Only the header is read — Image.open is lazy, and the size is known before
+    any pixels are decoded, so this costs nothing on a 3 MB photograph.
+
+    Every failure to read is a rejection, and the except is broad on purpose:
+    this is a file fetched from a page nobody here controls, and whatever we
+    cannot measure is not something to hand to the pipeline. Pillow's own
+    failures for such input span UnidentifiedImageError, OSError and
+    DecompressionBombError, which share no useful base class.
+    """
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            width, height = image.size
+    except Exception:
+        return False
+    return min(width, height) >= MIN_IMAGE_PIXELS
+
+
 def _build(source_url: str, content: bytes, content_type: str, index: int) -> FetchedImage | None:
     if not content:
         return None
@@ -313,6 +346,12 @@ async def fetch_images(url: str) -> ImportResult:
             if ctype not in ALLOWED_IMAGE_TYPES:
                 return None
             if not MIN_IMAGE_BYTES <= len(reply.content) <= MAX_IMAGE_BYTES:
+                return None
+            # Applied to scraped candidates only. A URL that is itself an image
+            # was chosen by the person who pasted it, and silently dropping it
+            # would leave them with "no photographs found" about a photograph
+            # they were looking at.
+            if not is_large_enough(reply.content):
                 return None
             return _build(image_url, reply.content, ctype, index)
 
