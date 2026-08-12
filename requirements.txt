@@ -1,28 +1,15 @@
-# AutoPivot — core dependencies (no machine learning)
-# Developed by Vadim Rudoi
-#
-# Enough to run authentication, the dashboard and the database tooling:
-#
-#     uvicorn api.app:app --reload
-#
-# Every package here has a prebuilt wheel on Apple Silicon and installs in
-# seconds. For the vehicle processing pipeline, use requirements-ml.txt instead.
-
-# Server
 fastapi
 uvicorn[standard]
 python-multipart
 python-dotenv
-
-# Auth
-bcrypt>=4.0,<5.0
-PyJWT>=2.8,<3.0
-email-validator
-
-# Image handling — validating and measuring uploads needs no ML
+huggingface_hub
+transformers
+torch
+torchvision
 pillow
-
-# Database
-SQLAlchemy>=2.0,<3.0
-alembic>=1.13,<2.0
-psycopg[binary]>=3.1,<4.0
+opencv-python-headless
+ultralytics
+numpy
+kornia
+timm
+einops

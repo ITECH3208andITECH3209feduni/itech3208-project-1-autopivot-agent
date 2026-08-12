@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- For a future Capacitor build, set window.AUTO_PIVOT_API_URL or add an autopivot-api-url meta tag. -->
+  <title>AutoPivot — Vehicle Processing Demo</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav>
+    <span class="navigation-logo"><span style="color:var(--gold)">AUTO</span>PIVOT<span class="navigation-logo-dot"></span></span>
+    <ul class="navigation-links">
+      <li><a href="#demo-section" id="demo-nav-link">Demo</a></li>
+    </ul>
+  </nav>
+
+  <section class="hero-section">
+    <div class="hero-introduction">
+      <h1>Vehicle processing,<br><em>simplified.</em></h1>
+      <p>Upload a photo and AutoPivot removes backgrounds, detects vehicles and hides license plates automatically.</p>
+      <div class="hero-action-buttons">
+        <button class="primary-upload-button" id="manual-upload-button">Upload photo</button>
+        <a href="#demo-section" class="secondary-demo-link" id="try-demo-link">Try demo</a>
+      </div>
+    </div>
+
+    <div class="demo-panel" id="demo-section">
+      <div class="background-removal-card">
+        <div class="background-removal-card-header">
+          <h3>Vehicle Processing Pipeline</h3>
+        </div>
+        <div class="background-removal-card-body">
+          
+          <div class="image-upload-zone" id="image-upload-zone">
+            <input id="image-file-input" type="file" accept="image/jpeg,image/png,image/webp">
+            <h4>Drop a vehicle photo or click to browse</h4>
+            <p>Supports JPG, PNG, WEBP.</p>
+          </div>
+          <div class="upload-reset-row">
+            <button type="button" class="reset-step-button" id="reset-car-button" disabled>Reset Car Upload</button>
+          </div>
+
+          <div class="pipeline-options" id="pipeline-options" style="display: none;">
+            <div class="option-group">
+              <label for="processing-mode">Processing Mode</label>
+              <select id="processing-mode">
+                <option value="/process-vehicle">Full Pipeline (Vehicle + BG + Plates)</option>
+                <option value="/remove-background">Background Removal Only</option>
+                <option value="/detect-and-hide">Detect & Hide Plates Only</option>
+              </select>
+            </div>
+            
+            <div class="optional-uploads" id="optional-uploads">
+              <div class="option-group" id="bg-upload-group">
+                <label for="background-style">Background</label>
+                <select id="background-style">
+                  <option value="studio_full" selected>AutoPivot Studio — Full Car / Display Base</option>
+                  <option value="studio_closeup">AutoPivot Studio — Close-up / Interior</option>
+                  <option value="transparent">Transparent / No Background</option>
+                  <option value="custom">Custom Background</option>
+                </select>
+                <div class="custom-background-upload" id="custom-background-upload" style="display:none;">
+                  <div class="inline-upload-control">
+                    <input type="file" id="bg-file-input" accept="image/jpeg,image/png,image/webp" class="file-input-small">
+                    <button type="button" class="reset-step-button" id="reset-bg-button" disabled>Reset Background</button>
+                  </div>
+                  <small>Use Full Car for exterior shots and Close-up / Interior for detail images.</small>
+                </div>
+              </div>
+              <div class="option-group" id="plate-upload-group">
+                <label>Plate Overlay (Optional)</label>
+                <div class="inline-upload-control">
+                  <input type="file" id="plate-file-input" accept="image/jpeg,image/png,image/webp" class="file-input-small">
+                  <button type="button" class="reset-step-button" id="reset-plate-button" disabled>Reset Numberplate</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="progress-container" id="progress-container">
+            <div class="progress-status-row">
+              <span id="progress-status-text">Waiting for image…</span>
+              <span id="progress-percentage">0%</span>
+            </div>
+            <div class="progress-track"><div class="progress-indicator" id="progress-indicator"></div></div>
+          </div>
+
+          <div class="processing-actions">
+            <button class="remove-background-button" id="process-button" disabled>Process Image</button>
+            <button type="button" class="reset-all-button" id="reset-all-button" disabled>Reset Everything</button>
+            <a class="download-button" id="download-button" download="autopivot-processed.png">Download</a>
+          </div>
+
+          <div class="error-message-bar" id="error-message-bar"></div>
+
+          <div class="image-comparison-grid" id="image-comparison-grid">
+            <div class="image-preview-panel">
+              <div class="image-preview-header"><span>Original</span></div>
+              <div class="image-preview-body"><img id="original-image-preview" src="" alt="Original"></div>
+            </div>
+            <div class="image-preview-panel">
+              <div class="image-preview-header">
+                <span>Processed</span>
+                <span class="status-badge" id="processed-status-badge">Awaiting</span>
+              </div>
+              <div class="image-preview-body">
+                <img id="processed-image-preview" src="" alt="Processed" style="display:none">
+                <span id="processed-image-placeholder" style="font-size:13px;color:var(--mid)">Upload an image and configure options.</span>
+              </div>
+              <div class="processing-stats" id="processing-stats" style="display:none;"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
