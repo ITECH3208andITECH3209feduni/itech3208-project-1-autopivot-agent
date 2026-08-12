@@ -1,0 +1,38 @@
+# AutoPivot — full dependencies, including the vision stack
+# Developed by Vadim Rudoi
+#
+# Installs the core requirements plus everything autopivot_backend.py needs:
+#
+#     pip install -r requirements-ml.txt
+#     python autopivot_backend.py
+#
+# Several gigabytes, and a CUDA GPU to be useful. On a machine without one,
+# install requirements.txt and run the light API instead.
+
+-r requirements.txt
+
+# ML / Vision
+#
+# torch and torchvision are deliberately NOT pinned and usually not installed
+# here at all: a GPU host image ships a build matched to its CUDA driver, and
+# replacing it with a generic wheel is how a working GPU stops being detected.
+#
+# transformers IS pinned, and has to be. It tracks torch's internal APIs
+# closely — releases from 4.46 onward import DTensor from torch.distributed
+# .tensor, which does not exist in the torch that most GPU images still ship.
+# Unpinned, pip installs the newest release and the import fails at startup
+# with no obvious connection to the version you actually have.
+huggingface_hub
+transformers>=4.40,<4.46
+torch
+torchvision
+opencv-python-headless
+ultralytics
+numpy
+kornia
+timm
+einops
+
+# HTML parsing / outbound HTTP — used by /extract-images-from-url
+beautifulsoup4
+httpx

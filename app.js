@@ -1,15 +1,9 @@
 // Main JavaScript Logic for AutoPivot Full Pipeline Interface
 // Developed by Vadim Rudoi, Akhanda Bhandari and Suraj Purella
 
-const API_META = document.querySelector('meta[name="autopivot-api-url"]');
-const BACKEND_URL = (window.AUTO_PIVOT_API_URL || API_META?.content || window.location.origin).replace(/\/$/, '');
-const USE_VERSIONED_API = Boolean(window.AUTO_PIVOT_API_URL || API_META?.content);
-const API_PREFIX = window.AUTO_PIVOT_API_PREFIX ?? (USE_VERSIONED_API ? '/api/v1' : '');
-const DEMO_IMAGE_URLS = USE_VERSIONED_API
-  ? [`${BACKEND_URL}/static/assets/demo-car.jpg`, 'assets/demo-car.jpg']
-  : ['/static/assets/demo-car.jpg', 'assets/demo-car.jpg'];
+const BACKEND_URL = window.location.origin;
+const DEMO_IMAGE_URLS = ['/static/assets/demo-car.jpg', 'assets/demo-car.jpg'];
 const FULL_PIPELINE_ENDPOINT = '/process-vehicle';
-const MAX_UPLOAD_MB = 20;
 
 let currentFile = null;
 let isProcessing = false;
@@ -132,9 +126,9 @@ function loadFile(file)
   {
     return showErr('Please upload a JPG, PNG, or WEBP image.');
   }
-  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) 
+  if (file.size > 10 * 1024 * 1024) 
   {
-    return showErr(`File too large — max ${MAX_UPLOAD_MB}MB.`);
+    return showErr('File too large — max 10MB.');
   }
 
   currentFile = file;
@@ -333,7 +327,7 @@ async function executePipeline()
       form.append('plate_overlay', plateFileInput.files[0], plateFileInput.files[0].name);
     }
   }
-  if (endpoint === '/process-vehicle' || endpoint === '/remove-background') 
+  if (endpoint === '/process-vehicle') 
   {
     if (bgFileInput.files[0]) 
     {
@@ -343,29 +337,20 @@ async function executePipeline()
 
   setProgress(30, 'Uploading & Server Processing...');
 
-  const response = await fetch(`${BACKEND_URL}${API_PREFIX}${endpoint}`, 
+  const response = await fetch(`${BACKEND_URL.replace(/\/$/, '')}${endpoint}`, 
   {
     method: 'POST',
     body: form
   });
 
-  let json = null;
-  try
-  {
-    json = await response.json();
-  }
-  catch
-  {
-    json = null;
-  }
-
   if (!response.ok) 
   {
-    const message = json?.error?.message || json?.message || `Server error ${response.status}.`;
-    throw new Error(message);
+    const body = await response.text();
+    throw new Error(`Server error ${response.status}: ${body}`);
   }
 
   setProgress(80, 'Rendering results...');
+  const json = await response.json();
 
   if (!json.success) 
   {
@@ -442,7 +427,7 @@ function updateModeUploads(mode)
   } 
   else if (mode === '/remove-background') 
   {
-    bgUploadGroup.style.display = 'block';
+    bgUploadGroup.style.display = 'none';
     plateUploadGroup.style.display = 'none';
   } 
   else if (mode === '/detect-and-hide') 
