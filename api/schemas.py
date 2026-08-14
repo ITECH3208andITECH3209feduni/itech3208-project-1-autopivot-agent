@@ -106,6 +106,9 @@ class VehicleListingUpdate(BaseModel):
 class ImageOut(BaseModel):
     id: int
     image_type: str
+    # What the photograph is of. Null until the classifier has seen it.
+    image_kind: Optional[str] = None
+    kind_confidence: Optional[float] = None
     original_filename: str
     image_url: str
     width: int
@@ -140,6 +143,16 @@ class VehicleListingDetail(VehicleListingOut):
 class ProcessRequest(BaseModel):
     # Optional: without one the vehicle is returned on a transparent background.
     backdrop_id: Optional[int] = None
+
+
+class UrlImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class UrlImportResult(BaseModel):
+    images: list[ImageOut]
+    # Set when the import worked but the result is worth a second look.
+    note: Optional[str] = None
 
 
 class ProcessingJobOut(BaseModel):

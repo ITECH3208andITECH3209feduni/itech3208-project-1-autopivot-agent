@@ -39,10 +39,15 @@ class ProcessOutcome:
     plates_detected: int = 0
     plate_treatment: Optional[str] = None
     model_used: Optional[str] = None
-    # Both stay None until the angle question is settled. The schema carries
-    # them so the pipeline can start filling them in without another migration.
     detected_angle: Optional[str] = None
     angle_confidence: Optional[float] = None
+    # What the photograph is of, as distinct from whether a vehicle appears in
+    # it. A finance advertisement contains a real car and passes vehicle
+    # detection, but compositing it onto a backdrop puts a stranger's car in
+    # the dealer's listing. Written back to the image, not just the job, so the
+    # listing can show and offer to remove what it excluded.
+    image_kind: Optional[str] = None
+    kind_confidence: Optional[float] = None
     message: Optional[str] = None
 
 
@@ -114,15 +119,33 @@ def create_jobs(
     return jobs
 
 
+def latest_jobs(session: Session, listing_id: int) -> list[ProcessingJob]:
+    """The most recent attempt for each photograph, oldest photograph first.
+
+    A failed job is kept rather than deleted, and reprocessing adds a new job
+    beside it. Anything reporting the state of a listing has to look at the
+    latest attempt only — otherwise one historical failure makes the listing
+    look permanently broken, and a successful reprocess appears to do nothing.
+    """
+    history = session.scalars(
+        select(ProcessingJob)
+        .where(ProcessingJob.vehicle_listing_id == listing_id)
+        .order_by(ProcessingJob.created_at, ProcessingJob.id)
+    ).all()
+
+    latest: dict[int, ProcessingJob] = {}
+    for job in history:
+        latest[job.input_image_id] = job
+    return list(latest.values())
+
+
 def _refresh_listing_status(session: Session, listing_id: int) -> None:
     """Roll each job's outcome up into the listing's processing status.
 
     The dashboard sorts and filters on this column, so it is maintained here
     rather than aggregated over every job on each read.
     """
-    jobs = session.scalars(
-        select(ProcessingJob).where(ProcessingJob.vehicle_listing_id == listing_id)
-    ).all()
+    jobs = latest_jobs(session, listing_id)
     listing = session.get(VehicleListing, listing_id)
     if listing is None:
         return
@@ -173,6 +196,13 @@ def run_job(session: Session, job: ProcessingJob) -> None:
         job.plate_treatment = outcome.plate_treatment
         job.detected_angle = outcome.detected_angle
         job.angle_confidence = outcome.angle_confidence
+
+        # The classifier's verdict belongs to the photograph, which outlives
+        # any one job: reprocessing should not have to look at it again, and
+        # the listing needs it to explain why an image was left out.
+        if outcome.image_kind is not None:
+            source.image_kind = outcome.image_kind
+            source.kind_confidence = outcome.kind_confidence
 
         if not outcome.vehicle_detected or outcome.image_png is None:
             # The job ran correctly and produced nothing usable. That is not a

@@ -2,7 +2,7 @@
 // screen draws from one implementation and from design.ts rather than a local
 // copy of the tokens.
 
-import { useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import { C, CARD_SHADOW, MONO, RADIUS_CARD, RADIUS_CONTROL, SANS, serif } from '../design'
 
@@ -97,6 +97,9 @@ export function Field({
   )
 }
 
+const FOCUSABLE =
+  'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+
 export function Modal({
   onClose, children, maxWidth = 420,
 }: {
@@ -104,6 +107,54 @@ export function Modal({
   children: ReactNode
   maxWidth?: number
 }) {
+  const dialog = useRef<HTMLDivElement>(null)
+
+  // A dialog that does not manage focus is only nominally accessible: it opens
+  // with focus still behind it, Tab walks out into the page underneath, Escape
+  // does nothing, and closing it drops focus to <body> so the next Tab starts
+  // from the top of the document. All four are fixed here rather than in each
+  // caller, because every one of them would otherwise have to remember.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+
+    const first = dialog.current?.querySelector<HTMLElement>(FOCUSABLE)
+    ;(first ?? dialog.current)?.focus()
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !dialog.current) return
+
+      const focusable = Array.from(
+        dialog.current.querySelectorAll<HTMLElement>(FOCUSABLE),
+      ).filter(el => el.offsetParent !== null)
+      if (focusable.length === 0) {
+        event.preventDefault()
+        return
+      }
+
+      const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1]
+      if (document.activeElement === edge || !dialog.current.contains(document.activeElement)) {
+        event.preventDefault()
+        ;(event.shiftKey ? focusable[focusable.length - 1] : focusable[0]).focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown, true)
+    // The page behind must not scroll while a dialog is over it.
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.body.style.overflow = previousOverflow
+      opener?.focus?.()
+    }
+  }, [onClose])
+
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
@@ -115,11 +166,14 @@ export function Modal({
       }}
     >
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         style={{
           background: C.white, borderRadius: RADIUS_CARD, width: '100%', maxWidth,
           boxShadow: '0 8px 32px rgba(26,26,23,0.18)', overflow: 'hidden', position: 'relative',
+          outline: 'none',
         }}
       >
         {children}
@@ -199,5 +253,138 @@ export function StatusPill({ status }: { status: keyof typeof STATUS_LABEL }) {
     }}>
       {STATUS_LABEL[status]}
     </span>
+  )
+}
+
+// ── Shared pieces added for the workflow rework ───────────────────────────────
+
+/** A destructive action needs a deliberate second step, not a browser confirm(). */
+export function ConfirmDialog({
+  title, body, confirmLabel = 'Delete', busy = false, onConfirm, onCancel,
+}: {
+  title: string
+  body: ReactNode
+  confirmLabel?: string
+  busy?: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Modal onClose={busy ? () => {} : onCancel} maxWidth={440}>
+      <div style={{ padding: 24 }}>
+        <p style={{ ...serif(22), color: C.ink, margin: '0 0 8px', letterSpacing: '-0.01em' }}>
+          {title}
+        </p>
+        <div style={{ fontFamily: SANS, fontSize: 14, color: C.inkSoft, lineHeight: 1.6, margin: '0 0 24px' }}>
+          {body}
+        </div>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            style={{
+              fontFamily: SANS, fontSize: 14, color: C.ink, background: 'none',
+              border: `1px solid ${C.lineStrong}`, borderRadius: RADIUS_CONTROL,
+              padding: '10px 18px', cursor: busy ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              fontFamily: SANS, fontSize: 14, fontWeight: 500, color: C.white,
+              background: C.rust, border: 'none', borderRadius: RADIUS_CONTROL,
+              padding: '10px 18px', cursor: busy ? 'not-allowed' : 'pointer',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? 'Working…' : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+export type Step = { key: string; label: string; href?: string }
+
+/**
+ * Where you are in Upload → Process → Review.
+ *
+ * Rendered as an ordered list because that is what it is; a screen reader
+ * announcing "step 2 of 3" is the whole point of the component.
+ */
+export function Stepper({
+  steps, current, onNavigate,
+}: {
+  steps: Step[]
+  current: string
+  onNavigate?: (step: Step, index: number) => void
+}) {
+  const currentIndex = steps.findIndex(s => s.key === current)
+
+  return (
+    <nav aria-label="Progress" style={{ marginBottom: 32 }}>
+      <ol style={{
+        display: 'flex', alignItems: 'center', gap: 0,
+        listStyle: 'none', margin: 0, padding: 0, flexWrap: 'wrap',
+      }}>
+        {steps.map((step, i) => {
+          const done = i < currentIndex
+          const active = i === currentIndex
+          // Only steps already reached are navigable: jumping ahead to Review
+          // before anything has processed lands on an empty screen.
+          const reachable = i <= currentIndex && !!onNavigate
+
+          return (
+            <li key={step.key} style={{ display: 'flex', alignItems: 'center' }}>
+              <button
+                onClick={reachable ? () => onNavigate?.(step, i) : undefined}
+                disabled={!reachable}
+                aria-current={active ? 'step' : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  background: 'none', border: 'none', padding: '4px 2px',
+                  cursor: reachable && !active ? 'pointer' : 'default',
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: MONO, fontSize: 11, lineHeight: 1,
+                    background: done ? C.forest : active ? C.ink : 'transparent',
+                    color: done || active ? C.white : C.inkSoft,
+                    border: done || active ? 'none' : `1px solid ${C.lineStrong}`,
+                  }}
+                >
+                  {done ? '✓' : i + 1}
+                </span>
+                <span style={{
+                  fontFamily: SANS, fontSize: 14,
+                  fontWeight: active ? 500 : 400,
+                  color: active ? C.ink : C.inkSoft,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {step.label}
+                </span>
+              </button>
+              {i < steps.length - 1 && (
+                <span
+                  aria-hidden
+                  style={{
+                    width: 40, height: 1, margin: '0 12px',
+                    background: i < currentIndex ? C.forest : C.line,
+                  }}
+                />
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </nav>
   )
 }

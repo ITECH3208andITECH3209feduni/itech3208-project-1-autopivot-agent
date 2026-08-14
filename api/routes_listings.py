@@ -22,13 +22,15 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api import processing, storage
+from api import processing, storage, url_import
 from api.deps import CurrentUser, DbSession
 from api.schemas import (
     ImageOut,
     ProcessingJobOut,
     ProcessingSummary,
     ProcessRequest,
+    UrlImportRequest,
+    UrlImportResult,
     VehicleListingCreate,
     VehicleListingDetail,
     VehicleListingOut,
@@ -92,6 +94,8 @@ def _serialise_image(image: Image) -> ImageOut:
     return ImageOut(
         id=image.id,
         image_type=image.image_type,
+        image_kind=image.image_kind,
+        kind_confidence=float(image.kind_confidence) if image.kind_confidence is not None else None,
         original_filename=image.original_filename,
         image_url=f"/api/files/{image.storage_path}",
         width=image.width,
@@ -273,16 +277,24 @@ def delete_listing(listing_id: int, user: CurrentUser, session: DbSession) -> No
     paths = [i.storage_path for i in images]
 
     try:
+        # Every job for the listing goes first: they hold RESTRICT references
+        # to the photographs, and the listing cannot go while they exist.
+        for job in session.scalars(
+            select(ProcessingJob).where(ProcessingJob.vehicle_listing_id == listing.id)
+        ).all():
+            session.delete(job)
+        session.flush()
+
         for image in images:
             session.delete(image)
         session.delete(listing)
         session.commit()
     except IntegrityError:
         session.rollback()
-        # processing_jobs holds RESTRICT references to both.
+        logger.exception("Listing %s could not be deleted", listing_id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This listing has been processed and cannot be deleted.",
+            detail="This listing is still referenced and could not be deleted.",
         )
 
     # Files are removed only after the rows are gone, so a failed commit never
@@ -366,6 +378,160 @@ async def upload_images(
     return [_serialise_image(i) for i in created]
 
 
+@router.post(
+    "/{listing_id}/images/from-url",
+    response_model=UrlImportResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_images_from_url(
+    listing_id: int,
+    body: UrlImportRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> UrlImportResult:
+    """
+    Attach photographs found on a listing page.
+
+    Fetching and parsing are Akhanda Bhandari's, in api/url_import.py. This
+    route adds authentication, dealership scoping and storage — the standalone
+    /extract-images-from-url endpoint has none of those and returns base64 to
+    the caller instead of saving anything.
+
+    Not every site works. url_import raises UrlImportError with a message that
+    names the reason, and that message is what the dealer sees.
+    """
+    listing = _owned_listing(session, user, listing_id)
+
+    try:
+        result = await url_import.fetch_images(body.url)
+    except url_import.UrlImportError as exc:
+        # 422: the request was well formed and the caller is entitled to make
+        # it; the page at the other end is what did not cooperate.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+    existing = session.scalar(
+        select(func.count(Image.id)).where(
+            Image.vehicle_listing_id == listing.id, Image.image_type == "original"
+        )
+    ) or 0
+    room = MAX_IMAGES_PER_LISTING - existing
+    if room <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This listing already holds {MAX_IMAGES_PER_LISTING} photographs.",
+        )
+
+    created: list[Image] = []
+    skipped = 0
+    for fetched in result.images[:room]:
+        try:
+            stored = storage.save_image(listing.dealership_id, "original", fetched.content)
+        except storage.StorageError:
+            # A page will serve SVG logos and tracking gifs alongside the
+            # vehicle. One unreadable file should not fail the whole import.
+            skipped += 1
+            continue
+
+        session.add(
+            image := Image(
+                vehicle_listing_id=listing.id,
+                image_type="original",
+                original_filename=fetched.filename[:255],
+                storage_path=stored.storage_path,
+                mime_type=stored.mime_type,
+                file_size_bytes=stored.size_bytes,
+                width=stored.width,
+                height=stored.height,
+            )
+        )
+        created.append(image)
+
+    if not created:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Nothing on that page could be read as a photograph.",
+        )
+
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Those photographs are already attached to a listing.",
+        )
+
+    for image in created:
+        session.refresh(image)
+
+    logger.info(
+        "URL import — listing=%s imported=%d skipped=%d",
+        listing.id, len(created), skipped,
+    )
+    return UrlImportResult(
+        images=[_serialise_image(i) for i in created],
+        note=result.note,
+    )
+
+
+def _release_job_references(session: Session, image_ids: set[int]) -> list[str]:
+    """
+    Clear the processing jobs that stand between these images and deletion.
+
+    `processing_jobs` holds RESTRICT references to the photographs it consumed
+    and produced. That is deliberate — it stops a job from being orphaned by a
+    stray delete, and it is part of what keeps a job inside its own dealership.
+    But it also meant that once a listing had been processed, neither its
+    photographs nor the listing itself could be removed, which is precisely
+    when a dealer wants to tidy up: the advertisement banner that came in with
+    a URL import is only recognisable as junk after it has been processed.
+
+    Rather than weaken the constraints, the dependent rows are cleared here in
+    the order the database requires. Returns the storage paths of any processed
+    output that went with them, so the caller can remove the files afterwards.
+
+    Deleting an original takes its processed result with it: the output is
+    derived from the input and means nothing without it. Deleting a processed
+    image on its own leaves the job in place with no output, so the photograph
+    can simply be processed again.
+    """
+    if not image_ids:
+        return []
+
+    orphaned_paths: list[str] = []
+
+    # Jobs that produced one of these images keep their history but lose the
+    # pointer. The composite foreign key is skipped once any column is NULL,
+    # which is what makes this legal.
+    for job in session.scalars(
+        select(ProcessingJob).where(ProcessingJob.output_image_id.in_(image_ids))
+    ).all():
+        job.output_image_id = None
+
+    # Jobs that consumed one of these images go entirely, and take whatever
+    # they produced with them.
+    consuming = session.scalars(
+        select(ProcessingJob).where(ProcessingJob.input_image_id.in_(image_ids))
+    ).all()
+
+    produced_ids = {j.output_image_id for j in consuming if j.output_image_id}
+    for job in consuming:
+        session.delete(job)
+    session.flush()
+
+    for image in session.scalars(
+        select(Image).where(Image.id.in_(produced_ids - image_ids))
+    ).all():
+        orphaned_paths.append(image.storage_path)
+        session.delete(image)
+
+    session.flush()
+    return orphaned_paths
+
+
 def _serialise_job(job: ProcessingJob, output_path: str | None) -> ProcessingJobOut:
     return ProcessingJobOut(
         id=job.id,
@@ -388,11 +554,9 @@ def _serialise_job(job: ProcessingJob, output_path: str | None) -> ProcessingJob
 
 
 def _summarise(session: Session, listing: VehicleListing) -> ProcessingSummary:
-    jobs = session.scalars(
-        select(ProcessingJob)
-        .where(ProcessingJob.vehicle_listing_id == listing.id)
-        .order_by(ProcessingJob.id)
-    ).all()
+    # The latest attempt per photograph, so a listing reprocessed after a
+    # failure shows one row per photograph rather than one per attempt.
+    jobs = processing.latest_jobs(session, listing.id)
 
     # One lookup for every output path, rather than one query per job.
     output_ids = [j.output_image_id for j in jobs if j.output_image_id]
@@ -498,15 +662,21 @@ def delete_image(
     if image is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found.")
 
-    path = image.storage_path
+    paths = [image.storage_path]
     try:
+        paths.extend(_release_job_references(session, {image.id}))
         session.delete(image)
         session.commit()
     except IntegrityError:
         session.rollback()
+        logger.exception("Image %s could not be deleted", image_id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This image has been processed and cannot be deleted.",
+            detail="This image is still referenced and could not be deleted.",
         )
 
-    storage.delete(path)
+    # Files go only after the rows are committed, so a failed commit never
+    # leaves the database pointing at a file that is no longer there.
+    for path in paths:
+        storage.delete(path)
+    logger.info("Image deleted — listing=%s image=%s files=%d", listing_id, image_id, len(paths))

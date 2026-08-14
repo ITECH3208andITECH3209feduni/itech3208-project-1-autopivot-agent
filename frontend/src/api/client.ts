@@ -61,9 +61,14 @@ export type VehicleListing = {
   updated_at: string
 }
 
+/** What a photograph is of. Null until the classifier has seen it. */
+export type ImageKind = 'exterior' | 'interior' | 'detail' | 'advertisement' | 'unknown'
+
 export type ListingImage = {
   id: number
   image_type: 'original' | 'processed' | 'background' | 'plate_overlay'
+  image_kind: ImageKind | null
+  kind_confidence: number | null
   original_filename: string
   image_url: string
   width: number
@@ -75,6 +80,12 @@ export type ListingImage = {
 export type VehicleListingDetail = VehicleListing & {
   description: string | null
   images: ListingImage[]
+}
+
+export type UrlImportResult = {
+  images: ListingImage[]
+  /** Set when the import worked but the result deserves a second look. */
+  note: string | null
 }
 
 export type VehicleListingCreate = {
@@ -216,6 +227,12 @@ export const api = {
       body,
     })
   },
+
+  importImagesFromUrl: (listingId: number, url: string) =>
+    request<UrlImportResult>(`/api/listings/${listingId}/images/from-url`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
 
   deleteImage: (listingId: number, imageId: number) =>
     request<void>(`/api/listings/${listingId}/images/${imageId}`, { method: 'DELETE' }),

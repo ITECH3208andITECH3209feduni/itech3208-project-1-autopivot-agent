@@ -330,6 +330,15 @@ class Image(Base):
         CheckConstraint("file_size_bytes > 0", name="file_size_positive"),
         CheckConstraint("width > 0", name="width_positive"),
         CheckConstraint("height > 0", name="height_positive"),
+        CheckConstraint(
+            # What the photograph is of, which is not the same as what role it
+            # plays in the listing. A URL import pulls in advertisement
+            # banners, dealer badges and interior shots alongside the vehicle,
+            # and only an exterior shot can be composited onto a backdrop.
+            "image_kind IS NULL OR image_kind IN "
+            "('exterior', 'interior', 'detail', 'advertisement', 'unknown')",
+            name="image_kind_allowed",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -340,6 +349,11 @@ class Image(Base):
         index=True,
     )
     image_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Null until something has looked at it. Set by the classifier.
+    image_kind: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    kind_confidence: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[str] = mapped_column(
         String(1000), nullable=False, unique=True
@@ -407,8 +421,12 @@ class ProcessingJob(Base):
             name="review_state_allowed",
         ),
         CheckConstraint(
+            # 'blur', 'pixelate' and 'white' name the method actually applied.
+            # 'masked' predates them and is kept so rows written before the
+            # pipeline reported the specific method stay valid.
             "plate_treatment IS NULL OR "
-            "plate_treatment IN ('masked', 'overlay', 'none')",
+            "plate_treatment IN ('masked', 'overlay', 'none', "
+            "'blur', 'pixelate', 'white')",
             name="plate_treatment_allowed",
         ),
         CheckConstraint(

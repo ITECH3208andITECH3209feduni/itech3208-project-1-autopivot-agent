@@ -116,11 +116,25 @@ ok "PostgreSQL is up"
 
 # ── 3. Python dependencies ───────────────────────────────────────────────────
 say "Python dependencies"
-if python3 -c "import fastapi, sqlalchemy, psycopg, PIL, torch" 2>/dev/null; then
+# Every module the app needs before it can serve a request, not a sample. A
+# PyTorch pod image already ships torch, fastapi and friends, so a short list
+# here declares "already installed" and skips the install — and then the very
+# next step runs alembic, which was never one of the things checked for.
+REQUIRED_MODULES="fastapi, sqlalchemy, psycopg, PIL, torch, alembic, bcrypt, jwt, bs4, httpx"
+
+if python3 -c "import ${REQUIRED_MODULES}" 2>/dev/null; then
   ok "already installed"
 else
   info "installing (several minutes on a cold pod)…"
-  python3 -m pip install --quiet -r requirements-ml.txt 2>&1 | grep -v "^WARNING: Running pip" || true
+  PIP_LOG="$VOLUME/autopivot-pip.log"
+  if ! python3 -m pip install -r requirements-ml.txt >"$PIP_LOG" 2>&1; then
+    tail -30 "$PIP_LOG" | sed 's/^/  /'
+    die "installing dependencies failed — full output in $PIP_LOG"
+  fi
+  if ! IMPORT_ERROR=$(python3 -c "import ${REQUIRED_MODULES}" 2>&1); then
+    printf '  %s\n' "$IMPORT_ERROR"
+    die "dependencies installed but will not import — see $PIP_LOG"
+  fi
   ok "installed"
 fi
 
@@ -137,9 +151,30 @@ fi
 
 # ── 4. Schema and dealership ─────────────────────────────────────────────────
 say "Schema and dealership"
-alembic upgrade head 2>&1 | grep -E "Running upgrade|ERROR" || true
-ok "schema at head"
-python3 -m scripts.seed_dealership | sed 's/^/  /'
+
+# Run through `python3 -m` rather than the `alembic` console script: the script
+# lands in a bin directory that is not always on PATH in a pod's shell, and
+# "command not found" here used to be swallowed along with everything else.
+MIGRATE_LOG="$VOLUME/autopivot-migrate.log"
+if python3 -m alembic upgrade head >"$MIGRATE_LOG" 2>&1; then
+  grep -E "Running upgrade" "$MIGRATE_LOG" | sed 's/^/  /'
+  ok "schema at head"
+else
+  sed 's/^/  /' "$MIGRATE_LOG"
+  die "the migrations failed — full output in $MIGRATE_LOG"
+fi
+
+# The migrations reporting success is not the same as the tables being there:
+# a DATABASE_URL pointing somewhere unexpected would migrate one database while
+# the app reads another, and the first symptom is a login failing with
+# "relation users does not exist" long after this script said it was fine.
+python3 -m scripts.verify_schema 2>&1 | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || die "the schema is not queryable — see the output above"
+
+python3 -m scripts.seed_dealership 2>&1 | sed 's/^/  /'
+# Without this the exit status is sed's, so a failed seed reads as a success
+# and the admin account simply does not exist.
+[ "${PIPESTATUS[0]}" -eq 0 ] || die "seeding the dealership failed — see the output above"
 
 # ── 5. Client ────────────────────────────────────────────────────────────────
 say "Client"
