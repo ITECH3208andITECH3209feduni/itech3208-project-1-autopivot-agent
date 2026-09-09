@@ -37,6 +37,19 @@ tunnel_url() {
   grep -ohE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | tail -1
 }
 
+# RunPod's own HTTP proxy, as an alternative to the cloudflared tunnel above.
+# Deterministic from the pod ID RunPod already injects as an env var — no
+# process to start, nothing to poll for. Stable for the pod's whole life:
+# stopping and starting keeps the same pod ID, so this URL survives a restart
+# where the tunnel's does not. The one thing it needs that this script cannot
+# do for you: port 8000 has to be marked as an exposed HTTP port on the pod
+# itself, in RunPod's own dashboard (pod settings, or at creation). If that
+# was never set, this prints a URL that will not resolve — the tunnel above
+# is what still works unconditionally, which is why it is not being replaced.
+runpod_proxy_url() {
+  [ -n "${RUNPOD_POD_ID:-}" ] && echo "https://${RUNPOD_POD_ID}-${PORT}.proxy.runpod.net"
+}
+
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -51,6 +64,7 @@ case "${1:-}" in
     [ -n "$(app_pid)" ]    && echo "app     : running (pid $(app_pid))"    || echo "app     : stopped"
     [ -n "$(tunnel_pid)" ] && echo "tunnel  : running (pid $(tunnel_pid))" || echo "tunnel  : stopped"
     [ -n "$(tunnel_url)" ] && echo "url     : $(tunnel_url)"
+    [ -n "$(runpod_proxy_url)" ] && echo "proxy   : $(runpod_proxy_url)  (stable — needs port $PORT exposed as HTTP on this pod)"
     [ -f "$ENV_FILE" ]     && echo "config  : $ENV_FILE"
     exit 0
     ;;
@@ -239,12 +253,27 @@ URL="$(tunnel_url)"
 [ -n "$URL" ] || die "the tunnel did not produce a URL — see $TUNNEL_LOG"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
+PROXY_URL="$(runpod_proxy_url)"
+
 printf '\n\033[1m════════════════════════════════════════════════════════\033[0m\n'
 printf '  \033[1mAutoPivot is live\033[0m\n\n'
 printf '  URL       %s\n' "$URL"
+if [ -n "$PROXY_URL" ]; then
+  printf '  Stable    %s\n' "$PROXY_URL"
+fi
 printf '  Email     ana.reid@northshore.co.nz\n'
 printf '  Password  %s\n' "$SEED_ADMIN_PASSWORD"
 printf '\033[1m════════════════════════════════════════════════════════\033[0m\n\n'
+if [ -n "$PROXY_URL" ]; then
+  cat <<PROXY
+The "Stable" URL above is RunPod's own proxy, computed from this pod's ID —
+it survives a stop/start, unlike the tunnel URL, which regenerates every
+restart. It only resolves if port $PORT is marked as an exposed HTTP port on
+this pod (RunPod dashboard → pod settings). If it doesn't load, that's the
+reason, and the URL above still works regardless.
+
+PROXY
+fi
 cat <<NEXT
 If a password manager fills something else, that is what the server sees —
 check DevTools > Network > login > Payload before assuming the password is wrong.
