@@ -3,17 +3,22 @@
 /// (5 June): open the app, it tells you which angle to shoot, you shoot it,
 /// it uploads as a set.
 ///
-/// This file is deliberately scoped to the *camera* half of that story only:
-/// a real, working live preview; a shutter that takes a real photograph;
-/// a strip of what has been captured so far, with a way to drop a bad shot
-/// before submitting. It does not know what angle it is on, what a good
-/// angle-3 photograph looks like, whether a shot is too dark or blurred, or
-/// how to hold a set offline and resume it later — those are a second
-/// developer's story, built on top of this one. Two places mark exactly
-/// where that work plugs in: [_ProgressPill] and [_GuidePlaceholder] below,
-/// both commented `TODO(angle-sequence)`. Submitting a set is stubbed for
-/// the same reason: a real upload needs an angle tag per photograph, which
-/// does not exist yet on this screen.
+/// The 8-shot sequence in [CaptureAngle] and its guide silhouettes
+/// ([VehicleGuideOverlay]) are real, not placeholders — this screen knows
+/// exactly which angle it wants next and shows the photographer what to line
+/// the car up against. What is still deliberately not here: reading the
+/// phone's actual tilt at the moment of capture (the client brief's own
+/// "layer that matters most" — see `CaptureAngle.targetElevationDeg`'s doc
+/// comment for why), a warning on a dark or blurred shot, and holding a set
+/// offline and resuming it after the app is closed. The tilt reading is
+/// blocked on a package (`sensors_plus`) this environment could not fetch
+/// over the network at the time this was written, not on any design
+/// question — everything here is already shaped to take a measured pitch
+/// per photograph the moment that package can be added. Submitting a set is
+/// still stubbed: a real upload needs the backend's metadata column for
+/// per-image angle/pitch, which is a small, already-scoped backend change
+/// (see `docs/MOBILE_PLAN.md`'s "Backend changes" section) rather than
+/// anything blocking on this screen.
 ///
 /// Not reachable from a listing — there is no "start a new listing" flow in
 /// this app yet either, so this screen is opened standalone from the camera
@@ -33,6 +38,8 @@ import 'package:flutter/material.dart';
 
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import 'capture_angles.dart';
+import 'vehicle_silhouette_painter.dart';
 
 // ── Camera lifecycle state ──────────────────────────────────────────────────
 
@@ -94,8 +101,43 @@ class CaptureScreen extends StatefulWidget {
 class _CaptureScreenState extends State<CaptureScreen>
     with WidgetsBindingObserver {
   _CameraState _state = const _CameraInitializing();
-  final List<XFile> _captured = [];
+
+  /// One photograph per angle it was shot for. Deliberately a map keyed by
+  /// [CaptureAngle] rather than a plain list: an angle can be recaptured (a
+  /// delete just removes its entry, making it "next" again), and the fixed
+  /// sequence — not capture order — is what the rest of this screen displays
+  /// things in, via [_orderedCaptures].
+  final Map<CaptureAngle, XFile> _captured = {};
+
+  /// Angles the photographer chose to skip rather than shoot — see
+  /// [_skip]. Kept separate from [_captured] because a skipped angle is not
+  /// "done", it is "deliberately left for later", and the two must not be
+  /// conflated when deciding what is next.
+  final Set<CaptureAngle> _skipped = {};
+
   bool _capturing = false;
+
+  /// The next angle to shoot: the first in the fixed sequence that is
+  /// neither captured nor skipped. Null once every angle has one or the
+  /// other — the whole set is then either complete or deliberately partial,
+  /// and either is a valid state to submit from (see the exception flows
+  /// this story's brief calls out: skipping is permitted, not an error).
+  CaptureAngle? get _currentAngle {
+    for (final angle in CaptureAngle.values) {
+      if (!_captured.containsKey(angle) && !_skipped.contains(angle)) {
+        return angle;
+      }
+    }
+    return null;
+  }
+
+  /// Captured photographs in sequence order — the order they are shot in by
+  /// default, but not necessarily the order they end up in [_captured] once
+  /// a middle angle has been deleted and reshot later.
+  List<MapEntry<CaptureAngle, XFile>> get _orderedCaptures => [
+    for (final angle in CaptureAngle.values)
+      if (_captured[angle] case final file?) MapEntry(angle, file),
+  ];
 
   @override
   void initState() {
@@ -173,13 +215,19 @@ class _CaptureScreenState extends State<CaptureScreen>
 
   Future<void> _capture() async {
     final state = _state;
-    if (state is! _CameraReady || _capturing) return;
+    final angle = _currentAngle;
+    if (state is! _CameraReady || _capturing || angle == null) return;
 
     setState(() => _capturing = true);
     try {
       final photo = await state.controller.takePicture();
       if (!mounted) return;
-      setState(() => _captured.add(photo));
+      // A reshoot of an angle that was previously skipped supersedes the
+      // skip — it is no longer "left for later", it is done.
+      setState(() {
+        _captured[angle] = photo;
+        _skipped.remove(angle);
+      });
     } on CameraException {
       // Skeleton scope: a failed shutter press just leaves the set
       // unchanged rather than surfacing a dedicated error — see the doc
@@ -190,19 +238,35 @@ class _CaptureScreenState extends State<CaptureScreen>
     }
   }
 
-  void _removeCaptured(int index) => setState(() => _captured.removeAt(index));
+  void _removeCaptured(CaptureAngle angle) =>
+      setState(() => _captured.remove(angle));
+
+  /// Permitted, not an error — the brief is explicit that a photographer
+  /// standing at a vehicle knows more about why an angle is awkward right
+  /// now (parked against a wall, another car too close) than this screen
+  /// does, and the set should move on rather than block.
+  void _skip() {
+    final angle = _currentAngle;
+    if (angle == null) return;
+    setState(() => _skipped.add(angle));
+  }
 
   void _submit() {
-    final count = _captured.length;
+    final captured = _captured.length;
+    final total = CaptureAngle.values.length;
+    final skipped = _skipped.length;
+    final completeness = skipped == 0
+        ? '$captured of $total angles'
+        : '$captured of $total angles ($skipped skipped)';
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Not wired up yet'),
         content: Text(
-          'This will upload the $count photograph${count == 1 ? '' : 's'} '
-          "captured here, each tagged with the angle it was shot from — "
-          'once the angle sequence exists to tag them with. That part, and '
-          'the upload itself, is the next piece of this story.',
+          'This will upload the $completeness captured here, each tagged '
+          'with the angle it was shot for. The upload itself, and the '
+          "backend column that stores each photograph's angle, are the next "
+          'piece of this story.',
         ),
         actions: [
           TextButton(
@@ -232,18 +296,22 @@ class _CaptureScreenState extends State<CaptureScreen>
               ),
               _NoCameraHardware() => _CaptureBody(
                 controller: null,
-                captured: _captured,
+                currentAngle: _currentAngle,
+                orderedCaptures: _orderedCaptures,
                 capturing: _capturing,
                 onCapture: null,
                 onRemove: _removeCaptured,
+                onSkip: _currentAngle == null ? null : _skip,
                 onSubmit: _captured.isEmpty ? null : _submit,
               ),
               _CameraReady(:final controller) => _CaptureBody(
                 controller: controller,
-                captured: _captured,
+                currentAngle: _currentAngle,
+                orderedCaptures: _orderedCaptures,
                 capturing: _capturing,
-                onCapture: _capture,
+                onCapture: _currentAngle == null ? null : _capture,
                 onRemove: _removeCaptured,
+                onSkip: _currentAngle == null ? null : _skip,
                 onSubmit: _captured.isEmpty ? null : _submit,
               ),
             },
@@ -340,28 +408,37 @@ class _CloseButton extends StatelessWidget {
 class _CaptureBody extends StatelessWidget {
   const _CaptureBody({
     required this.controller,
-    required this.captured,
+    required this.currentAngle,
+    required this.orderedCaptures,
     required this.capturing,
     required this.onCapture,
     required this.onRemove,
+    required this.onSkip,
     required this.onSubmit,
   });
 
   /// Null on a device with no camera to preview — see [_NoCameraHardware].
   final CameraController? controller;
-  final List<XFile> captured;
+
+  /// The angle to shoot next, or null once every angle has been either
+  /// captured or skipped.
+  final CaptureAngle? currentAngle;
+  final List<MapEntry<CaptureAngle, XFile>> orderedCaptures;
   final bool capturing;
 
-  /// Null when there is no controller to capture from. The shutter renders
-  /// disabled rather than disappearing, so the rest of the layout — where it
-  /// sits, how big it is — can still be reviewed without a camera.
+  /// Null when there is no controller to capture from, or nothing left in
+  /// the sequence to shoot. The shutter renders disabled rather than
+  /// disappearing in either case, so the rest of the layout — where it sits,
+  /// how big it is — can still be reviewed without a camera.
   final VoidCallback? onCapture;
-  final ValueChanged<int> onRemove;
+  final ValueChanged<CaptureAngle> onRemove;
+  final VoidCallback? onSkip;
   final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
     final controller = this.controller;
+    final angle = currentAngle;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -373,15 +450,11 @@ class _CaptureBody extends StatelessWidget {
             padding: const EdgeInsets.only(top: Space.sm),
             child: Column(
               children: [
-                // TODO(angle-sequence): this counts photographs taken, which
-                // is all this screen knows. Replace with the real angle name
-                // and a progress indicator across the full sequence (e.g.
-                // "3 of 10 — driver-side front quarter").
-                _ProgressPill(count: captured.length),
+                _ProgressPill(currentAngle: angle),
                 // Lives up here rather than sharing the centre with the
-                // guide placeholder below — two explanations both trying to
-                // occupy screen centre is how they end up printed on top of
-                // one another instead of either being readable.
+                // guide overlay below — two things both reaching for screen
+                // centre is how they end up printed on top of one another
+                // instead of either being readable.
                 if (controller == null) ...[
                   const SizedBox(height: Space.sm),
                   const _NoCameraNotice(),
@@ -390,11 +463,10 @@ class _CaptureBody extends StatelessWidget {
             ),
           ),
         ),
-        const Center(
-          // TODO(angle-sequence): replace with a framing overlay specific to
-          // the current angle — a silhouette, a grid, whatever the guidance
-          // design turns out to need. This box only marks where it goes.
-          child: _GuidePlaceholder(),
+        Center(
+          child: angle == null
+              ? const _AllAnglesDone()
+              : VehicleGuideOverlay(angle: angle),
         ),
         SafeArea(
           child: Align(
@@ -402,10 +474,11 @@ class _CaptureBody extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.only(bottom: Space.md),
               child: _BottomControls(
-                captured: captured,
+                orderedCaptures: orderedCaptures,
                 capturing: capturing,
                 onCapture: onCapture,
                 onRemove: onRemove,
+                onSkip: onSkip,
                 onSubmit: onSubmit,
               ),
             ),
@@ -503,12 +576,19 @@ class _NoCameraNotice extends StatelessWidget {
 }
 
 class _ProgressPill extends StatelessWidget {
-  const _ProgressPill({required this.count});
+  const _ProgressPill({required this.currentAngle});
 
-  final int count;
+  /// Null once every angle is captured or skipped.
+  final CaptureAngle? currentAngle;
 
   @override
   Widget build(BuildContext context) {
+    final angle = currentAngle;
+    final total = CaptureAngle.values.length;
+    final label = angle == null
+        ? 'All $total angles done'
+        : '${CaptureAngle.values.indexOf(angle) + 1} of $total — ${angle.label}';
+
     return DecoratedBox(
       decoration: const BoxDecoration(
         color: Colors.black45,
@@ -519,43 +599,33 @@ class _ProgressPill extends StatelessWidget {
           horizontal: Space.md,
           vertical: Space.sm,
         ),
-        child: Text('Photo ${count + 1}', style: T.label.copyWith(color: C.white)),
+        child: Text(label, style: T.label.copyWith(color: C.white)),
       ),
     );
   }
 }
 
-/// TODO(angle-sequence): the intended replacement for this box is a
-/// silhouette of the vehicle for the current angle, which the photographer
-/// lines the real car up against. Framing becomes its own validation that
-/// way — no separate "is this the right angle?" check is needed — and
-/// because the app dictated the angle rather than guessing it afterwards,
-/// every photo this screen produces arrives already tagged with exactly
-/// what it is a photograph of. That is the whole realism argument for this
-/// story: the estimation problem the web upload path still has to solve for
-/// arbitrary imagery simply does not exist for a photograph shot this way.
-class _GuidePlaceholder extends StatelessWidget {
-  const _GuidePlaceholder();
+/// Shown centre-screen once nothing is left to shoot — the guide overlay's
+/// spot, repurposed, rather than an empty gap where it used to be.
+class _AllAnglesDone extends StatelessWidget {
+  const _AllAnglesDone();
 
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
       child: Opacity(
-        opacity: 0.7,
-        child: Container(
-          width: 220,
-          height: 220,
-          alignment: Alignment.center,
-          padding: const EdgeInsets.all(Space.md),
-          decoration: BoxDecoration(
-            border: Border.all(color: C.white, width: 1.5),
-            borderRadius: Radii.cardAll,
-          ),
-          child: Text(
-            'Framing guide for this angle goes here',
-            textAlign: TextAlign.center,
-            style: T.bodySmall.copyWith(color: C.white),
-          ),
+        opacity: 0.85,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle_outline, color: C.white, size: 40),
+            const SizedBox(height: Space.sm),
+            Text(
+              'Every angle is accounted for — submit the set below.',
+              textAlign: TextAlign.center,
+              style: T.bodySmall.copyWith(color: C.white),
+            ),
+          ],
         ),
       ),
     );
@@ -566,17 +636,19 @@ class _GuidePlaceholder extends StatelessWidget {
 
 class _BottomControls extends StatelessWidget {
   const _BottomControls({
-    required this.captured,
+    required this.orderedCaptures,
     required this.capturing,
     required this.onCapture,
     required this.onRemove,
+    required this.onSkip,
     required this.onSubmit,
   });
 
-  final List<XFile> captured;
+  final List<MapEntry<CaptureAngle, XFile>> orderedCaptures;
   final bool capturing;
   final VoidCallback? onCapture;
-  final ValueChanged<int> onRemove;
+  final ValueChanged<CaptureAngle> onRemove;
+  final VoidCallback? onSkip;
   final VoidCallback? onSubmit;
 
   @override
@@ -584,41 +656,69 @@ class _BottomControls extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (captured.isNotEmpty) ...[
+        if (orderedCaptures.isNotEmpty) ...[
           SizedBox(
             height: 56,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: Space.lg),
-              itemCount: captured.length,
+              itemCount: orderedCaptures.length,
               separatorBuilder: (context, index) =>
                   const SizedBox(width: Space.sm),
-              itemBuilder: (context, index) => _Thumbnail(
-                file: captured[index],
-                onRemove: () => onRemove(index),
-              ),
+              itemBuilder: (context, index) {
+                final entry = orderedCaptures[index];
+                return _Thumbnail(
+                  angle: entry.key,
+                  file: entry.value,
+                  onRemove: () => onRemove(entry.key),
+                );
+              },
             ),
           ),
           const SizedBox(height: Space.md),
         ],
-        _ShutterButton(busy: capturing, onPressed: onCapture),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 72,
+              child: onSkip == null
+                  ? null
+                  : TextButton(
+                      onPressed: onSkip,
+                      style: TextButton.styleFrom(foregroundColor: C.white),
+                      child: const Text('Skip'),
+                    ),
+            ),
+            const SizedBox(width: Space.md),
+            _ShutterButton(busy: capturing, onPressed: onCapture),
+            const SizedBox(width: Space.md),
+            const SizedBox(width: 72),
+          ],
+        ),
         const SizedBox(height: Space.md),
-        _SubmitButton(count: captured.length, onPressed: onSubmit),
+        _SubmitButton(count: orderedCaptures.length, onPressed: onSubmit),
       ],
     );
   }
 }
 
 class _Thumbnail extends StatelessWidget {
-  const _Thumbnail({required this.file, required this.onRemove});
+  const _Thumbnail({
+    required this.angle,
+    required this.file,
+    required this.onRemove,
+  });
 
+  final CaptureAngle angle;
   final XFile file;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Captured photograph ${file.name}. Double tap to remove.',
+      label: '${angle.label} photograph. Double tap to remove.',
       child: SizedBox(
         width: 56,
         height: 56,
