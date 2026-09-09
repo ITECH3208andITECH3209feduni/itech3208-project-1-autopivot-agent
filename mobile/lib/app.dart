@@ -20,14 +20,11 @@ import 'design/theme.dart';
 import 'design/tokens.dart';
 import 'design/typography.dart';
 import 'features/change_password/change_password_screen.dart';
+import 'features/listing_detail/listing_detail_screen.dart';
 import 'features/listings/listings_screen.dart';
 import 'features/sign_in/sign_in_screen.dart';
-
-class _Routes {
-  static const signIn = '/sign-in';
-  static const changePassword = '/change-password';
-  static const listings = '/';
-}
+import 'routes.dart';
+import 'widgets/app_shell.dart';
 
 /// Rebuilds the router's redirect decision whenever [AuthState] changes.
 ///
@@ -50,20 +47,47 @@ final _routerRefreshProvider = Provider<_RouterRefreshListenable>((ref) {
 
 final _routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
-    initialLocation: _Routes.listings,
+    initialLocation: AppRoutes.listings,
     refreshListenable: ref.watch(_routerRefreshProvider),
     routes: [
       GoRoute(
-        path: _Routes.signIn,
+        path: AppRoutes.signIn,
         builder: (context, state) => const SignInScreen(),
       ),
       GoRoute(
-        path: _Routes.changePassword,
+        path: AppRoutes.changePassword,
         builder: (context, state) => const ChangePasswordScreen(),
       ),
-      GoRoute(
-        path: _Routes.listings,
-        builder: (context, state) => const ListingsScreen(),
+      // Everything a signed-in user with nothing forced on them can reach
+      // shares one persistent shell — the dealership name and the camera
+      // action stay mounted and keep their own state while only the content
+      // beneath changes. Sign-in and the forced password change are
+      // deliberately outside this: neither should show a way to sign out of
+      // a screen the user cannot leave, or a camera button that goes
+      // anywhere before they are actually in.
+      ShellRoute(
+        builder: (context, state, child) => AppShell(child: child),
+        routes: [
+          GoRoute(
+            path: AppRoutes.listings,
+            builder: (context, state) => const ListingsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.listingDetail,
+            builder: (context, state) {
+              final id = int.tryParse(state.pathParameters['id'] ?? '');
+              // A malformed or missing id cannot build the real screen —
+              // this is what a hand-typed or stale URL produces, not a
+              // real navigation from within the app, since every real
+              // navigation goes through AppRoutes.listingDetailPath with a
+              // genuine int.
+              if (id == null) {
+                return const _InvalidListingScreen();
+              }
+              return ListingDetailScreen(listingId: id);
+            },
+          ),
+        ],
       ),
     ],
 
@@ -89,19 +113,19 @@ final _routerProvider = Provider<GoRouter>((ref) {
           return null;
 
         case AuthSignedOut():
-          return target == _Routes.signIn ? null : _Routes.signIn;
+          return target == AppRoutes.signIn ? null : AppRoutes.signIn;
 
         case AuthSignedIn(:final mustChangePassword):
           if (mustChangePassword) {
-            return target == _Routes.changePassword
+            return target == AppRoutes.changePassword
                 ? null
-                : _Routes.changePassword;
+                : AppRoutes.changePassword;
           }
           // A signed-in user with nothing left to do on sign-in or
           // change-password is sent to the listings screen; anywhere else
           // they were already headed is left alone.
-          if (target == _Routes.signIn || target == _Routes.changePassword) {
-            return _Routes.listings;
+          if (target == AppRoutes.signIn || target == AppRoutes.changePassword) {
+            return AppRoutes.listings;
           }
           return null;
       }
@@ -137,6 +161,33 @@ class AutoPivotApp extends ConsumerWidget {
           _ => child ?? const SizedBox.shrink(),
         };
       },
+    );
+  }
+}
+
+/// A `/listings/{id}` reached with an id that will not parse as an int — a
+/// hand-typed or stale URL, since every real navigation in this app goes
+/// through `AppRoutes.listingDetailPath`, which only ever builds one from a
+/// genuine int.
+class _InvalidListingScreen extends StatelessWidget {
+  const _InvalidListingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: C.paper,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(Space.xl),
+            child: Text(
+              'That vehicle could not be found.',
+              style: T.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -17,16 +17,24 @@
 /// [VehicleListing] also carries no image URL — only an `imageCount` — so
 /// there is nothing to fetch a thumbnail from. [AuthedImage] exists for the
 /// capture story this app grows into next, not for this screen.
+///
+/// The dealership name and sign-out, both originally rendered here, now live
+/// in `AppShell` instead — persistent chrome that wraps this screen and the
+/// listing detail screen it leads to, rather than something each screen
+/// inside that shell would otherwise have to repeat. This screen keeps only
+/// what is specifically its own: the page title, and the list.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../api/api_exception.dart';
 import '../../api/models/vehicle_listing.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../routes.dart';
 import '../../widgets/primitives.dart';
 
 /// What the screen currently has to show.
@@ -105,32 +113,24 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
     }
   }
 
-  Future<void> _signOut() => ref.read(authProvider.notifier).signOut();
+  void _openListing(int id) => context.push(AppRoutes.listingDetailPath(id));
 
   @override
   Widget build(BuildContext context) {
-    final user = ref.watch(currentUserProvider);
-    final dealershipName = user?.dealership?.name ?? 'AutoPivot';
-
     return Scaffold(
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _fetch,
           child: CustomScrollView(
             slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
+              const SliverPadding(
+                padding: EdgeInsets.fromLTRB(
                   Space.lg,
                   Space.lg,
                   Space.lg,
                   Space.md,
                 ),
-                sliver: SliverToBoxAdapter(
-                  child: _Header(
-                    dealershipName: dealershipName,
-                    onSignOut: _signOut,
-                  ),
-                ),
+                sliver: SliverToBoxAdapter(child: _Header()),
               ),
               _content(_state),
             ],
@@ -167,7 +167,10 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
             padding: EdgeInsets.only(
               bottom: index == listings.length - 1 ? 0 : Space.md,
             ),
-            child: _ListingRow(listing: listings[index]),
+            child: _ListingRow(
+              listing: listings[index],
+              onTap: () => _openListing(listings[index].id),
+            ),
           ),
           childCount: listings.length,
         ),
@@ -176,7 +179,7 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
   };
 }
 
-/// The dealership's name and a way to sign out.
+/// The page title.
 ///
 /// Not an [AppBar]: the brief calls for a serif display heading at 28px or
 /// larger for the screen title, and `AppBarTheme` styles every app bar's
@@ -185,36 +188,11 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
 /// rest of the content, which reads better on a small screen than a title
 /// that stays pinned above an otherwise short list.
 class _Header extends StatelessWidget {
-  const _Header({required this.dealershipName, required this.onSignOut});
-
-  final String dealershipName;
-  final VoidCallback onSignOut;
+  const _Header();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(dealershipName, style: T.label),
-              const SizedBox(height: Space.xs),
-              Text('Vehicles', style: serif(32)),
-            ],
-          ),
-        ),
-        // Icon-only, so the tooltip carries the accessible name — Flutter
-        // surfaces an IconButton's tooltip as its semantic label, which is
-        // what a screen reader announces in place of the bare icon.
-        IconButton(
-          onPressed: onSignOut,
-          icon: const Icon(Icons.logout, color: C.inkSoft),
-          tooltip: 'Sign out',
-        ),
-      ],
-    );
+    return Text('Vehicles', style: serif(32));
   }
 }
 
@@ -248,12 +226,13 @@ class _RetryPanel extends StatelessWidget {
 }
 
 /// One vehicle: its title, its pipeline status, its stock number if it has
-/// one, and its image count. Presentational only — this sprint has nowhere
-/// for a tap on the row to go, so it carries no gesture handler.
+/// one, and its image count. Opens the listing detail screen on tap — its
+/// photographs, and the ability to remove one that turned out to be no good.
 class _ListingRow extends StatelessWidget {
-  const _ListingRow({required this.listing});
+  const _ListingRow({required this.listing, required this.onTap});
 
   final VehicleListing listing;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -275,36 +254,53 @@ class _ListingRow extends StatelessWidget {
     ].join(', ');
 
     return Semantics(
+      button: true,
       container: true,
       excludeSemantics: true,
       label: semanticLabel,
       child: AppCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: Text(listing.title, style: T.label)),
-                const SizedBox(width: Space.sm),
-                StatusPill(processing),
-              ],
-            ),
-            const SizedBox(height: Space.sm),
-            // Figures — anything countable — set in T.figure, matching how
-            // the rest of this codebase treats a stock number or a count.
-            Row(
-              children: [
-                if (hasStockNumber) ...[
-                  Text('#$stockNumber', style: T.figure),
-                  const SizedBox(width: Space.sm),
-                  const Text('·', style: T.bodySmall),
-                  const SizedBox(width: Space.sm),
+        // AppCard itself has no ink response — Material wraps it so the tap
+        // reads as a tap rather than the whole card silently swallowing the
+        // gesture with nothing to show for it.
+        padding: EdgeInsets.zero,
+        child: Material(
+          type: MaterialType.transparency,
+          borderRadius: Radii.cardAll,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(Space.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: Text(listing.title, style: T.label)),
+                      const SizedBox(width: Space.sm),
+                      StatusPill(processing),
+                    ],
+                  ),
+                  const SizedBox(height: Space.sm),
+                  // Figures — anything countable — set in T.figure, matching
+                  // how the rest of this codebase treats a stock number or a
+                  // count.
+                  Row(
+                    children: [
+                      if (hasStockNumber) ...[
+                        Text('#$stockNumber', style: T.figure),
+                        const SizedBox(width: Space.sm),
+                        const Text('·', style: T.bodySmall),
+                        const SizedBox(width: Space.sm),
+                      ],
+                      Text(photoLabel, style: T.figure),
+                    ],
+                  ),
                 ],
-                Text(photoLabel, style: T.figure),
-              ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );

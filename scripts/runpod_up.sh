@@ -255,25 +255,50 @@ URL="$(tunnel_url)"
 # ── Done ─────────────────────────────────────────────────────────────────────
 PROXY_URL="$(runpod_proxy_url)"
 
+# Whether port $PORT is marked as an exposed HTTP port is a RunPod platform
+# setting on the pod itself — nothing running inside the pod, this script
+# included, can turn it on. What this script CAN do honestly is check whether
+# it already happens to be on, rather than print a URL and hope. A real
+# response here is /health/api answering; RunPod's own edge returns an
+# empty-body 404 for a port it has no route for, which reads nothing like a
+# working API and is what you get if this was never enabled.
+PROXY_READY=false
+if [ -n "$PROXY_URL" ]; then
+  PROXY_STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROXY_URL/health/api" 2>/dev/null || true)"
+  [ "$PROXY_STATUS" = "200" ] && PROXY_READY=true
+fi
+
 printf '\n\033[1m════════════════════════════════════════════════════════\033[0m\n'
 printf '  \033[1mAutoPivot is live\033[0m\n\n'
 printf '  URL       %s\n' "$URL"
-if [ -n "$PROXY_URL" ]; then
-  printf '  Stable    %s\n' "$PROXY_URL"
+if [ "$PROXY_READY" = true ]; then
+  printf '  Stable    %s  (verified — this one survives a pod restart)\n' "$PROXY_URL"
 fi
 printf '  Email     ana.reid@northshore.co.nz\n'
 printf '  Password  %s\n' "$SEED_ADMIN_PASSWORD"
 printf '\033[1m════════════════════════════════════════════════════════\033[0m\n\n'
-if [ -n "$PROXY_URL" ]; then
+if [ -n "$PROXY_URL" ] && [ "$PROXY_READY" != true ]; then
   cat <<PROXY
-The "Stable" URL above is RunPod's own proxy, computed from this pod's ID —
-it survives a stop/start, unlike the tunnel URL, which regenerates every
-restart. It only resolves if port $PORT is marked as an exposed HTTP port on
-this pod (RunPod dashboard → pod settings). If it doesn't load, that's the
-reason, and the URL above still works regardless.
+The stable proxy URL ($PROXY_URL) is not answering yet — port $PORT is not
+marked as an exposed HTTP port on this pod. That is a RunPod dashboard
+setting (pod → Edit → Expose HTTP Ports → add $PORT), not something this
+script can turn on from inside the pod. Not required — see below for a way
+to skip this altogether.
 
 PROXY
 fi
+cat <<TUNNELHELP
+Simplest path, no dashboard setting and no URL to type on the mobile side —
+run this ON YOUR MAC, not here, once this pod's SSH details are in hand
+(RunPod console → pod → Connect → "SSH over exposed TCP", not the
+ssh.runpod.io proxy variant):
+
+  bash scripts/mobile_dev_tunnel.sh root@<pod-ip> <ssh-port>
+
+Leave it running, then \`flutter run -d "iPhone 17"\` from mobile/ just works —
+its default already points at what that tunnel forwards, no URL needed.
+
+TUNNELHELP
 cat <<NEXT
 If a password manager fills something else, that is what the server sees —
 check DevTools > Network > login > Payload before assuming the password is wrong.

@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import 'api_exception.dart';
+import 'models/listing_detail.dart';
 import 'models/nav_counts.dart';
 import 'models/user.dart';
 import 'models/vehicle_listing.dart';
@@ -167,6 +168,27 @@ class ApiClient {
         .toList();
   }
 
+  /// One vehicle, with its description and every photograph attached to it.
+  Future<VehicleListingDetail> listing(int listingId) async {
+    final json = await _send(
+      () => _dio.get('/api/listings/$listingId', options: _options()),
+    );
+    return VehicleListingDetail.fromJson(json);
+  }
+
+  /// Removes one photograph. The server enforces what may not be deleted —
+  /// an image another job still depends on comes back as
+  /// [ApiRequestException] with status 409, which already carries a message
+  /// safe to show as-is; this method does not special-case it.
+  Future<void> deleteImage(int listingId, int imageId) async {
+    await _guardVoid(
+      () => _dio.delete(
+        '/api/listings/$listingId/images/$imageId',
+        options: _options(),
+      ),
+    );
+  }
+
   Future<NavCounts> counts() async {
     final json = await _send(
       () => _dio.get('/api/dashboard/counts', options: _options()),
@@ -228,6 +250,16 @@ class ApiClient {
     final data = response.data;
     if (data is List) return data;
     throw const ApiServerException();
+  }
+
+  /// For a 204 with no body — deletion, mainly. `_send`/`_sendList` both
+  /// throw on exactly this response shape, since a missing body is normally
+  /// a sign something went wrong; here it is the success case.
+  Future<void> _guardVoid(
+    Future<Response<dynamic>> Function() request,
+  ) async {
+    final response = await _guard(request);
+    _throwForStatus(response, null);
   }
 
   Future<Response<dynamic>> _guard(
