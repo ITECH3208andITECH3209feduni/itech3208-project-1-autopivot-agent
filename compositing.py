@@ -41,13 +41,15 @@ height normalisation, the angle profiles and the reflection extend them.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+
+import elevation
 
 logger = logging.getLogger("autopivot.compositing")
 
@@ -132,6 +134,18 @@ class BackdropPreset:
     # None means "use the backdrop's own dimensions", which is what a dealer
     # upload wants — their scene, their resolution.
     output_size: tuple[int, int] | None = None
+    # Where the scene's own eye level falls, as a canvas ratio. Measured from a
+    # dealer's uploaded backdrop by `backdrop_analysis.analyse`, and None for a
+    # backdrop nobody has measured — which is not the same as a backdrop
+    # measured and found to have no readable geometry, and is why the
+    # compositor is given the ratio rather than a flag.
+    #
+    # This is the half of the horizon that belongs to the scene. The other half
+    # belongs to the photograph and arrives as an estimated camera elevation.
+    # Aligning the two is Phase 1: a low-angle photograph dropped into an
+    # eye-level room has its floor receding at the wrong rate, and no amount of
+    # shadow or colour matching repairs that.
+    horizon_y_ratio: float | None = None
 
 
 # Measured by Suraj Purella against the rendered showroom. The reference was
@@ -171,9 +185,85 @@ STUDIO_PRESETS: dict[str, BackdropPreset] = {
     STUDIO_CLOSEUP.key: STUDIO_CLOSEUP,
 }
 
-# What a dealership's own backdrop gets. No measured platform, so shadows are
-# not clipped and the vehicle stands on a nominal ground line.
+# What a dealership's own backdrop gets when nothing about it has been measured.
+# No platform, so shadows are not clipped and the vehicle stands on a nominal
+# ground line 84% of the way down — which is right for a scene shot the way the
+# studio was and a guess for every other one.
 DEALER_BACKDROP = BackdropPreset(key="custom", label="Dealership backdrop")
+
+# How far below the wall-floor junction a vehicle must stand, as a fraction of
+# the floor visible in front of it. Enough to read as standing ON the floor
+# rather than against the wall behind it.
+#
+# A measured floor MOVES the contact line only when the line that shipped would
+# miss the floor entirely. It does not relocate a car that was already standing
+# correctly, and the reason is a mistake worth recording.
+#
+# The first version of this derived a standing position from the studio scene —
+# its floor begins at 0.598 and a vehicle stands at 0.755, so 39% down the
+# visible floor — and applied that fraction to a dealer's backdrop. It looked
+# principled and it was wrong. The studio has a raised platform in the middle
+# distance and its car is sized to that platform; a dealer's showroom has a
+# floor running to the bottom of the frame, and the compositor still renders the
+# vehicle at 86% of the canvas width, which is a car close to the camera. Large
+# and far back at the same time is exactly the contradiction the eye reads as
+# floating, and on a real backdrop measured at 0.53 it lifted the car 133 pixels
+# off the line it had been standing on quite happily.
+#
+# So the measurement is used as a FLOOR under the placement rather than as a
+# position: a car already standing on the floor stays where it was, and only one
+# that would otherwise stand in the wall is moved down onto it. That is the
+# failure the handover's second gap actually describes.
+FLOOR_CONTACT_MARGIN = 0.06
+
+# However high the floor begins, a vehicle is never stood this far down: past it
+# the contact line is at the frame edge and the car is cropped by it.
+MAX_GROUND_Y_RATIO = 0.95
+
+# How much a backdrop may be enlarged beyond covering the canvas in order to buy
+# the slack a horizon shift needs.
+#
+# A backdrop the same shape as the output canvas covers it exactly and has no
+# spare pixels to slide, so without this a correctly measured horizon could not
+# be acted on at all. Enlarging crops into the scene, which costs field of view
+# and eventually the room's own perspective stops agreeing with the shift — this
+# is exactly the limit REALISM_PLAN.md notes when it says shifting a crop can
+# only do so much before a re-render is needed. Ten per cent is enough for the
+# elevation range dealer photographs actually occupy and small enough that the
+# scene is not visibly zoomed.
+MAX_ALIGNMENT_OVERSCALE = 1.10
+
+
+def dealer_preset(
+    horizon_y_ratio: float | None = None,
+    floor_top_y_ratio: float | None = None,
+) -> BackdropPreset:
+    """
+    A preset for a dealership's own backdrop, using whatever has been measured.
+
+    With nothing measured this is exactly `DEALER_BACKDROP`, so a backdrop
+    uploaded before any of this existed composes precisely as it did before.
+
+    A measured floor is used as a limit rather than as a position: a backdrop
+    whose floor begins above the line that shipped leaves that line alone, and
+    only one whose floor begins below it moves the vehicle down onto the floor.
+    A dealer happy with their listings therefore sees nothing change, and the
+    dealer whose showroom floor starts three quarters of the way down the frame
+    stops having cars stood in the middle of their back wall.
+    """
+    if horizon_y_ratio is None and floor_top_y_ratio is None:
+        return DEALER_BACKDROP
+
+    ground = DEALER_BACKDROP.ground_y_ratio
+    if floor_top_y_ratio is not None:
+        on_the_floor = floor_top_y_ratio + FLOOR_CONTACT_MARGIN * (1.0 - floor_top_y_ratio)
+        ground = min(MAX_GROUND_Y_RATIO, max(ground, on_the_floor))
+
+    return replace(
+        DEALER_BACKDROP,
+        ground_y_ratio=ground,
+        horizon_y_ratio=horizon_y_ratio,
+    )
 
 
 @dataclass(frozen=True)
@@ -321,18 +411,94 @@ def _canvas_size(backdrop: Image.Image, preset: BackdropPreset) -> tuple[int, in
     return width, height
 
 
-def _fit_backdrop(backdrop: Image.Image, size: tuple[int, int]) -> Image.Image:
-    """Cover the canvas without distorting: scale to fill, then centre-crop."""
+def _fit_backdrop(
+    backdrop: Image.Image,
+    size: tuple[int, int],
+    horizon_y_ratio: float | None = None,
+    target_horizon_y: float | None = None,
+) -> tuple[Image.Image, float | None]:
+    """
+    Cover the canvas without distorting: scale to fill, then crop.
+
+    Given both the scene's own horizon and where the vehicle's horizon needs it,
+    the crop is offset to bring the two together instead of being centred.
+    Given neither — which is every backdrop nobody has measured — this is
+    exactly the centre-crop that shipped.
+
+    Returns the fitted scene and where its horizon actually ended up, in canvas
+    pixels, or None when there was no horizon to place. Actually ended up, not
+    where it was asked to go: a backdrop the same shape as the canvas covers it
+    exactly and has nothing spare to slide, so the scene is enlarged to buy
+    slack — by as little as the shift needs and never past
+    `MAX_ALIGNMENT_OVERSCALE` — and beyond that the crop is clamped. Measuring
+    the result rather than assuming it is what lets the caller report a
+    shortfall honestly, and an alignment half made is a different outcome from
+    one made in full.
+    """
     target_w, target_h = size
     source = backdrop.convert("RGBA")
-    scale = max(target_w / source.width, target_h / source.height)
+    cover = max(target_w / source.width, target_h / source.height)
+    aligning = horizon_y_ratio is not None and target_horizon_y is not None
+
+    scale = cover
+    if aligning:
+        # The crop offset that lands the horizon on target is
+        #     top = horizon_y_ratio * source.height * scale - target_horizon_y
+        # and it has to fall inside the resized image. Both bounds resolve to a
+        # minimum scale, so the smallest enlargement that makes the alignment
+        # reachable at all is simply the larger of them — and enlarging is only
+        # ever done for that reason, because cropping further into a dealer's
+        # scene costs them field of view they chose to include.
+        denominator = max(1e-6, horizon_y_ratio * source.height)
+        needed_for_top = target_horizon_y / denominator
+        needed_for_bottom = (target_h - target_horizon_y) / max(
+            1e-6, source.height * (1.0 - horizon_y_ratio)
+        )
+        scale = min(
+            cover * MAX_ALIGNMENT_OVERSCALE,
+            max(cover, needed_for_top, needed_for_bottom),
+        )
+
     resized = source.resize(
         (max(1, round(source.width * scale)), max(1, round(source.height * scale))),
         Image.Resampling.LANCZOS,
     )
+
     left = max(0, (resized.width - target_w) // 2)
-    top = max(0, (resized.height - target_h) // 2)
-    return resized.crop((left, top, left + target_w, top + target_h))
+    if aligning:
+        top = round(horizon_y_ratio * resized.height - target_horizon_y)
+    else:
+        top = (resized.height - target_h) // 2
+    top = max(0, min(resized.height - target_h, top))
+
+    fitted = resized.crop((left, top, left + target_w, top + target_h))
+    if not aligning:
+        return fitted, None
+    return fitted, float(horizon_y_ratio * resized.height - top)
+
+
+def _vehicle_horizon_y(
+    elevation_deg: float, ground_y: int, vehicle_height_px: int
+) -> float:
+    """
+    Where the photograph's own eye level falls on the finished canvas.
+
+    A horizon is the camera's height above the ground, seen at the distance of
+    whatever is standing on it. The elevation estimate gives that height through
+    `elevation.camera_height_for_elevation`, and the vehicle gives the scale:
+    it is a known number of metres tall and has just been rendered at a known
+    number of pixels, so metres convert to pixels without needing a focal length
+    for the photograph — which is fortunate, because a cutout no longer carries
+    one.
+
+    A camera at zero elevation is level with the wheel centres, so its horizon
+    falls a wheel's radius above the floor rather than on it. That is why the
+    height is taken from the ground rather than from the contact line directly.
+    """
+    if vehicle_height_px <= 0:
+        return float(ground_y)
+    pixels_per_metre = vehicle_height_px / elevation.REFERENCE_VEHICLE_HEIGHT_M
+    return ground_y - elevation.camera_height_for_elevation(elevation_deg) * pixels_per_metre
 
 
 def _fit_vehicle(
@@ -768,6 +934,7 @@ def compose(
     preset: BackdropPreset = DEALER_BACKDROP,
     *,
     angle: VehicleAngle | str | None = None,
+    elevation_deg: float | None = None,
 ) -> tuple[Image.Image, dict]:
     """
     Place a cut-out vehicle onto a backdrop.
@@ -781,14 +948,39 @@ def compose(
     a label this module does not recognise, composes exactly as it would have
     without the argument. It is keyword-only so that the two- and three-
     positional-argument calls that already exist keep working untouched.
+
+    `elevation_deg` is how far above the horizontal the photograph was taken
+    from, as `elevation.estimate_elevation` reports it. Given that and a preset
+    carrying the scene's own horizon, the backdrop is slid so the two horizons
+    meet — which is Phase 1. Given either alone there is nothing to align
+    against and the scene is centred exactly as before.
     """
     cutout = trim_transparent(cutout.convert("RGBA"))
     size = _canvas_size(backdrop, preset)
-    canvas = _fit_backdrop(backdrop, size)
     profile = _angle_profile(angle)
 
+    # The vehicle is placed before the scene is fitted, because where the
+    # scene's horizon has to land depends on how tall the car came out and what
+    # line it stands on. Nothing here reads the backdrop's pixels, so the order
+    # costs nothing; only `match_colour` needs the finished canvas, and it runs
+    # after both.
     vehicle, normalised = _fit_vehicle(cutout, preset, size)
+    # The visible silhouette rather than the resized image: a cutout carries
+    # whatever transparent margin the segmentation left around it, and
+    # reporting that as the car's height would move the gallery figure by
+    # however much padding each photograph happened to arrive with.
+    _, visible_top, _, visible_bottom = _visible_bounds(vehicle)
     x, y, ground_y = _vehicle_position(vehicle, preset, size, profile)
+
+    vehicle_horizon_y: float | None = None
+    if elevation_deg is not None and preset.horizon_y_ratio is not None:
+        vehicle_horizon_y = _vehicle_horizon_y(
+            elevation_deg, ground_y, int(visible_bottom - visible_top)
+        )
+
+    canvas, backdrop_horizon_y = _fit_backdrop(
+        backdrop, size, preset.horizon_y_ratio, vehicle_horizon_y
+    )
     vehicle = match_colour(vehicle, canvas, x, y)
 
     result = canvas.copy()
@@ -832,4 +1024,26 @@ def compose(
         "shot_angle": angle,
         "height_normalised": normalised,
         "reflection_applied": reflected,
+        # The size the car came out at and the line it stands on. Both were
+        # known here and thrown away, which left gallery coherence measurable
+        # only by hunting for the vehicle's colour in the finished frame —
+        # something a test can do against a synthetic block and a job record
+        # cannot do at all. `metrics.size_spread` takes these across a listing.
+        "vehicle_height_px": int(visible_bottom - visible_top),
+        "contact_y_px": int(ground_y),
+        # Phase 1. All three are None when there was nothing to align — no
+        # measured backdrop horizon, or no elevation estimated for the
+        # photograph — which is a different record from an alignment that was
+        # attempted and fell short, and `metrics.horizon_offset` reads them.
+        "camera_elevation_deg": elevation_deg,
+        "vehicle_horizon_y_px": None if vehicle_horizon_y is None else round(vehicle_horizon_y, 1),
+        # How far the scene's horizon still misses the vehicle's after the crop
+        # was shifted as far as it could go. Zero is a full alignment; a
+        # non-zero value means the backdrop ran out of slack, which is the limit
+        # a re-render at the right camera height would remove.
+        "horizon_residual_px": (
+            None
+            if vehicle_horizon_y is None or backdrop_horizon_y is None
+            else round(backdrop_horizon_y - vehicle_horizon_y, 1)
+        ),
     }

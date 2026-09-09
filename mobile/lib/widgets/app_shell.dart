@@ -1,28 +1,48 @@
-/// The persistent chrome around every signed-in screen: the dealership name
-/// at the top, expanding into account actions on tap, and a floating camera
-/// action bottom-right.
+/// The persistent chrome around every signed-in screen: an avatar bubble and
+/// dealership name at the top, opening an iOS-style sheet with account
+/// actions, and a floating camera action bottom-right.
 ///
-/// Wraps go_router's `ShellRoute` child — the dealership name and the camera
-/// action stay mounted and keep their own state (the account panel's
-/// open/closed flag) as the user moves between screens inside the shell;
-/// only the content below the header changes. Sign-in and the forced
-/// password change sit outside this shell entirely and are unaffected — a
-/// screen the user is not meant to leave has no business showing a sign-out
-/// button.
+/// Wraps go_router's `ShellRoute` child — the header and the camera action
+/// stay mounted and keep their own state as the user moves between screens
+/// inside the shell; only the content below the header changes. Sign-in and
+/// the forced password change sit outside this shell entirely and are
+/// unaffected — a screen the user is not meant to leave has no business
+/// showing a sign-out button.
 ///
-/// Camera and settings are both screens this app grows into later, not
-/// today. What exists here is the shape they will slot into: a bubble that
-/// currently says so rather than doing nothing when pressed, and an account
-/// panel with a "Settings" entry that is visibly, honestly not live yet
-/// rather than a dead tap.
+/// The account sheet slides up from the bottom with a drag handle and rounded
+/// top corners — the same shape iOS uses for its own sheets, and the one an
+/// app like Flighty uses for its account panel — rather than expanding
+/// in place under the header. A sheet gives the same information room to
+/// breathe (dealership, the signed-in person, then actions) without pushing
+/// the page content down every time it opens.
+///
+/// The camera bubble opens the real capture screen at [AppRoutes.capture].
+/// Settings is not built yet — its row in the sheet says so plainly rather
+/// than being a dead tap.
 library;
 
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/models/user.dart';
 import '../auth/auth_controller.dart';
 import '../design/tokens.dart';
 import '../design/typography.dart';
+import '../features/capture/capture_screen.dart';
+
+/// The initials shown in the header's avatar bubble.
+///
+/// Falls back to 'A' for AutoPivot when there is no signed-in user yet (the
+/// shell can render for one frame before [currentUserProvider] settles) or
+/// when a name is somehow empty — never an empty bubble.
+String _initials(User? user) {
+  if (user == null) return 'A';
+  final first = user.firstName.isNotEmpty ? user.firstName[0] : '';
+  final last = user.lastName.isNotEmpty ? user.lastName[0] : '';
+  final initials = ('$first$last').toUpperCase();
+  return initials.isNotEmpty ? initials : 'A';
+}
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.child});
@@ -34,18 +54,18 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
-  bool _accountOpen = false;
+  void _signOut() => ref.read(authProvider.notifier).signOut();
 
-  void _toggleAccount() => setState(() => _accountOpen = !_accountOpen);
-
-  void _signOut() {
-    setState(() => _accountOpen = false);
-    ref.read(authProvider.notifier).signOut();
-  }
-
-  void _cameraComingSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Camera capture is coming in a later update.')),
+  void _openAccountSheet(User? user) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: C.paper,
+      showDragHandle: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.card)),
+      ),
+      builder: (context) => _AccountSheet(user: user, onSignOut: _signOut),
     );
   }
 
@@ -69,9 +89,8 @@ class _AppShellState extends ConsumerState<AppShell> {
               ),
               child: _AccountHeader(
                 dealershipName: dealershipName,
-                open: _accountOpen,
-                onToggle: _toggleAccount,
-                onSignOut: _signOut,
+                initials: _initials(user),
+                onTap: () => _openAccountSheet(user),
               ),
             ),
             // The routed screen. Each one keeps its own Scaffold — this
@@ -82,124 +101,152 @@ class _AppShellState extends ConsumerState<AppShell> {
           ],
         ),
       ),
-      floatingActionButton: _CameraBubble(onPressed: _cameraComingSoon),
+      floatingActionButton: const _CameraBubble(),
     );
   }
 }
 
-/// The dealership name, a chevron, and — expanded — account actions.
-///
-/// An inline expansion rather than a popup menu: the brief asked for the
-/// panel to appear where the name is, not detached from it in a menu that
-/// could open anywhere Flutter decides has room.
+/// The avatar bubble, dealership name and a chevron hinting there is more
+/// underneath. The whole row is one tap target, opening the account sheet.
 class _AccountHeader extends StatelessWidget {
   const _AccountHeader({
     required this.dealershipName,
-    required this.open,
-    required this.onToggle,
-    required this.onSignOut,
+    required this.initials,
+    required this.onTap,
   });
 
   final String dealershipName;
-  final bool open;
-  final VoidCallback onToggle;
-  final VoidCallback onSignOut;
+  final String initials;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Material(
-          type: MaterialType.transparency,
-          child: InkWell(
-            onTap: onToggle,
-            borderRadius: Radii.controlAll,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: Space.xs),
-              child: Semantics(
-                button: true,
-                label: open
-                    ? 'Account menu, expanded'
-                    : 'Account menu, collapsed',
-                excludeSemantics: true,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(dealershipName, style: T.label),
-                    const SizedBox(width: Space.xs),
-                    AnimatedRotation(
-                      turns: open ? 0.5 : 0,
-                      duration: const Duration(milliseconds: 150),
-                      child: const Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 18,
-                        color: C.inkSoft,
-                      ),
-                    ),
-                  ],
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: Radii.controlAll,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Space.xs),
+          child: Semantics(
+            button: true,
+            label: 'Account and settings',
+            excludeSemantics: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _AvatarBubble(initials: initials),
+                const SizedBox(width: Space.sm),
+                Text(dealershipName, style: T.label),
+                const SizedBox(width: Space.xs),
+                const Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 18,
+                  color: C.inkSoft,
                 ),
-              ),
+              ],
             ),
           ),
         ),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOut,
-          alignment: Alignment.topLeft,
-          child: open
-              ? Padding(
-                  padding: const EdgeInsets.only(top: Space.sm),
-                  child: _AccountPanel(onSignOut: onSignOut),
-                )
-              : const SizedBox(width: double.infinity),
-        ),
-      ],
+      ),
     );
   }
 }
 
-class _AccountPanel extends StatelessWidget {
-  const _AccountPanel({required this.onSignOut});
+/// A small circle carrying the signed-in person's initials — the "bubble"
+/// that makes the header read as an account entry point rather than plain
+/// text, the way an avatar does in most apps that use this sheet pattern.
+class _AvatarBubble extends StatelessWidget {
+  const _AvatarBubble({required this.initials});
 
-  final VoidCallback onSignOut;
+  final String initials;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        color: C.white,
-        borderRadius: Radii.cardAll,
-        border: Border.all(color: C.line),
-        boxShadow: cardShadow,
+      width: 28,
+      height: 28,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        color: C.forestTint,
+        shape: BoxShape.circle,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Present and visibly inert, rather than absent — the brief is
-          // explicit that this app should already show the shape settings
-          // will slot into, not pretend the account panel only ever has one
-          // item in it.
-          const _AccountPanelRow(
-            icon: Icons.settings_outlined,
-            label: 'Settings',
-            trailing: 'Coming soon',
-            onTap: null,
-          ),
-          const Divider(height: 1, color: C.line),
-          _AccountPanelRow(
-            icon: Icons.logout,
-            label: 'Sign out',
-            onTap: onSignOut,
-          ),
-        ],
+      child: Text(
+        initials,
+        style: T.body.copyWith(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: C.forest,
+        ),
       ),
     );
   }
 }
 
-class _AccountPanelRow extends StatelessWidget {
-  const _AccountPanelRow({
+/// The sheet's content: who this dealership and person are, then what can be
+/// done — Settings (not yet live) and Sign out.
+class _AccountSheet extends StatelessWidget {
+  const _AccountSheet({required this.user, required this.onSignOut});
+
+  final User? user;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final dealership = user?.dealership;
+    final dealershipName = dealership?.name ?? 'AutoPivot';
+    final location = dealership?.location;
+    final hasLocation = location != null && location.isNotEmpty;
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(dealershipName, style: serif(28)),
+            if (hasLocation) ...[
+              const SizedBox(height: Space.xs),
+              Text(location, style: T.bodySmall),
+            ],
+            if (user != null) ...[
+              const SizedBox(height: Space.lg),
+              Text(user!.displayName, style: T.label),
+              const SizedBox(height: 2),
+              Text(user!.email, style: T.bodySmall),
+            ],
+            const SizedBox(height: Space.lg),
+            const Divider(height: 1, color: C.line),
+            const _AccountSheetRow(
+              icon: Icons.settings_outlined,
+              label: 'Settings',
+              trailing: 'Coming soon',
+              onTap: null,
+            ),
+            const Divider(height: 1, color: C.line),
+            _AccountSheetRow(
+              icon: Icons.logout,
+              label: 'Sign out',
+              // Pop the sheet first, then sign out — signing out while the
+              // sheet is still on screen would leave it showing an account
+              // that no longer exists in AuthState for the instant before
+              // the router redirect fires.
+              onTap: () {
+                Navigator.of(context).pop();
+                onSignOut();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AccountSheetRow extends StatelessWidget {
+  const _AccountSheetRow({
     required this.icon,
     required this.label,
     required this.onTap,
@@ -222,10 +269,7 @@ class _AccountPanelRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: Space.md,
-            vertical: 12,
-          ),
+          padding: const EdgeInsets.symmetric(vertical: 14),
           child: Row(
             children: [
               Icon(icon, size: 18, color: contentColor),
@@ -233,11 +277,10 @@ class _AccountPanelRow extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  style: T.body.copyWith(fontSize: 14, color: contentColor),
+                  style: T.body.copyWith(fontSize: 15, color: contentColor),
                 ),
               ),
-              if (trailing != null)
-                Text(trailing!, style: T.caption),
+              if (trailing != null) Text(trailing!, style: T.caption),
             ],
           ),
         ),
@@ -252,19 +295,42 @@ class _AccountPanelRow extends StatelessWidget {
 /// surface is the reason this app is Flutter rather than a hybrid wrapper in
 /// the first place (see docs/MOBILE_PLAN.md) — the entry point to it reads as
 /// its own deliberate action, not one icon among three.
+///
+/// [OpenContainer] is Material's "container transform" pattern: the bubble
+/// itself grows to fill the screen and become [CaptureScreen], rather than
+/// the capture screen sliding in as an unrelated route — and shrinks back
+/// into the bubble on the way out, via the `closeContainer` callback passed
+/// as [CaptureScreen.onClose]. This is why capture has no go_router route of
+/// its own: the transform owns its own push, and giving it a second, plainer
+/// entry point would mean two different ways to arrive with two different
+/// closing animations.
 class _CameraBubble extends StatelessWidget {
-  const _CameraBubble({required this.onPressed});
-
-  final VoidCallback onPressed;
+  const _CameraBubble();
 
   @override
   Widget build(BuildContext context) {
-    return FloatingActionButton(
-      onPressed: onPressed,
-      backgroundColor: C.forest,
-      foregroundColor: C.white,
-      tooltip: 'Add photographs (coming soon)',
-      child: const Icon(Icons.camera_alt_outlined),
+    return Tooltip(
+      message: 'Add photographs',
+      child: OpenContainer(
+        transitionDuration: const Duration(milliseconds: 350),
+        transitionType: ContainerTransitionType.fade,
+        closedShape: const CircleBorder(),
+        closedElevation: 6,
+        closedColor: C.forest,
+        openColor: Colors.black,
+        closedBuilder: (context, openContainer) => SizedBox(
+          width: 56,
+          height: 56,
+          child: Semantics(
+            button: true,
+            label: 'Add photographs',
+            excludeSemantics: true,
+            child: Icon(Icons.camera_alt_outlined, color: C.white),
+          ),
+        ),
+        openBuilder: (context, closeContainer) =>
+            CaptureScreen(onClose: closeContainer),
+      ),
     );
   }
 }

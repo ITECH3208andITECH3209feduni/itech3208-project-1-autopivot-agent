@@ -8,3 +8,17 @@ venv/
 # Uploaded files (local storage backend)
 storage/
 .DS_Store
+
+# Realism evidence (scripts/realism_report.py, --out defaults here).
+# The renders are large binaries and there is a fresh set of them every run;
+# the metrics file and its summary are a few kilobytes and are the record a
+# later phase compares itself against, so those two are kept. The re-include of
+# directories is what lets git descend far enough to see them: an ignored
+# parent directory cannot have its contents re-included.
+/evidence/**
+!/evidence/**/
+!/evidence/**/*.json
+!/evidence/**/summary.txt
+# Except the drawn cut-outs of a smoke run, which are an input rather than a
+# result and come back whenever --synthetic is passed again.
+/evidence/**/synthetic/

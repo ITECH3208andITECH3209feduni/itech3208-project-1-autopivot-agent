@@ -41,6 +41,15 @@ class ProcessOutcome:
     model_used: Optional[str] = None
     detected_angle: Optional[str] = None
     angle_confidence: Optional[float] = None
+    # Where the camera was, estimated from the cutout: the elevation in degrees,
+    # how far the estimator trusts it, and which rung of the cascade produced
+    # it. All three stay None on a run that never produced a cutout, because
+    # there was nothing to measure — which is a different thing from the cascade
+    # having fallen through to its assumption, and the method is what tells the
+    # two apart.
+    camera_elevation_deg: Optional[float] = None
+    elevation_confidence: Optional[float] = None
+    elevation_method: Optional[str] = None
     # What the photograph is of, as distinct from whether a vehicle appears in
     # it. A finance advertisement contains a real car and passes vehicle
     # detection, but compositing it onto a backdrop puts a stranger's car in
@@ -51,9 +60,34 @@ class ProcessOutcome:
     message: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class BackdropPlacement:
+    """
+    What was measured from a backdrop when the dealer uploaded it.
+
+    Carried into the pipeline rather than measured there, because it is a
+    property of the backdrop and does not change: measuring per job would repeat
+    identical work for every photograph in every listing that uses it.
+
+    Both stay None for a backdrop nobody has measured — one added before any of
+    this existed — and the compositor then behaves exactly as it did before,
+    standing the vehicle on the assumed ground line.
+    """
+
+    horizon_y_ratio: Optional[float] = None
+    floor_top_y_ratio: Optional[float] = None
+
+    @property
+    def measured(self) -> bool:
+        return self.horizon_y_ratio is not None or self.floor_top_y_ratio is not None
+
+
 class VehicleProcessor(Protocol):
     def process(
-        self, image: bytes, background: Optional[bytes]
+        self,
+        image: bytes,
+        background: Optional[bytes],
+        placement: Optional[BackdropPlacement] = None,
     ) -> ProcessOutcome: ...
 
 
@@ -184,18 +218,35 @@ def run_job(session: Session, job: ProcessingJob) -> None:
         image_bytes = storage.resolve(source.storage_path).read_bytes()
 
         background_bytes: Optional[bytes] = None
+        placement = BackdropPlacement()
         if job.backdrop_id is not None:
             backdrop = session.get(Backdrop, job.backdrop_id)
             if backdrop is not None:
                 background_bytes = storage.resolve(backdrop.storage_path).read_bytes()
+                # Measured once at upload and carried in here. Numeric columns
+                # arrive as Decimal, which the compositor's arithmetic cannot
+                # mix with floats.
+                placement = BackdropPlacement(
+                    horizon_y_ratio=(
+                        None if backdrop.horizon_y_ratio is None
+                        else float(backdrop.horizon_y_ratio)
+                    ),
+                    floor_top_y_ratio=(
+                        None if backdrop.floor_top_y_ratio is None
+                        else float(backdrop.floor_top_y_ratio)
+                    ),
+                )
 
-        outcome = processor.process(image_bytes, background_bytes)
+        outcome = processor.process(image_bytes, background_bytes, placement)
 
         job.model_used = outcome.model_used
         job.plates_detected = outcome.plates_detected
         job.plate_treatment = outcome.plate_treatment
         job.detected_angle = outcome.detected_angle
         job.angle_confidence = outcome.angle_confidence
+        job.camera_elevation_deg = outcome.camera_elevation_deg
+        job.elevation_confidence = outcome.elevation_confidence
+        job.elevation_method = outcome.elevation_method
 
         # The classifier's verdict belongs to the photograph, which outlives
         # any one job: reprocessing should not have to look at it again, and
@@ -220,6 +271,12 @@ def run_job(session: Session, job: ProcessingJob) -> None:
             output = Image(
                 vehicle_listing_id=job.vehicle_listing_id,
                 image_type="processed",
+                # Recorded on the image, not left to be inferred from this job.
+                # A job is deleted along with the photograph it consumed, so
+                # anything that reached back through the job lost the pairing at
+                # the first tidy-up — and a before-and-after pair is the whole
+                # basis on which the composited result gets judged.
+                source_image_id=source.id,
                 original_filename=source.original_filename,
                 storage_path=stored.storage_path,
                 mime_type=stored.mime_type,

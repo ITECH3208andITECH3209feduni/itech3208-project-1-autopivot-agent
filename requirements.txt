@@ -22,6 +22,16 @@ email-validator
 # Image handling — validating and measuring uploads needs no ML
 pillow
 
+# Backdrop geometry (backdrop_analysis.py). A dealer's backdrop is measured when
+# it is uploaded — where its floor begins and where its horizon falls — and
+# upload is a light-half route, so the geometry has to work here. These are
+# ordinary numerical wheels rather than a model stack: they install in seconds,
+# pull in no GPU runtime and no torch, so the split that requirements-ml.txt
+# draws is unchanged. Without them a backdrop could only be measured on a
+# machine with a GPU, which is the wrong shape entirely for an upload form.
+numpy
+opencv-python-headless
+
 # Listing-URL import (api/url_import.py). Core rather than ML: fetching a page
 # and reading its <img> tags needs neither torch nor a GPU, and both install
 # in seconds.

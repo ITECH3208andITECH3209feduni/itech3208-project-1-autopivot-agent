@@ -94,6 +94,7 @@ def _serialise_image(image: Image) -> ImageOut:
     return ImageOut(
         id=image.id,
         image_type=image.image_type,
+        source_image_id=image.source_image_id,
         image_kind=image.image_kind,
         kind_confidence=float(image.kind_confidence) if image.kind_confidence is not None else None,
         original_filename=image.original_filename,
@@ -283,6 +284,19 @@ def delete_listing(listing_id: int, user: CurrentUser, session: DbSession) -> No
             select(ProcessingJob).where(ProcessingJob.vehicle_listing_id == listing.id)
         ).all():
             session.delete(job)
+        session.flush()
+
+        # Then the lineage links between the photographs themselves, before any
+        # of them go. Every image here is about to be deleted, so the order the
+        # session happens to emit them in decides whether this works: a
+        # processed image holds a RESTRICT reference to the original it came
+        # from, and an original deleted first is refused — which would mean a
+        # dealer could no longer delete a listing once it had been processed.
+        # Clearing the pointers first makes the order irrelevant, and the
+        # composite foreign key is skipped once any column is NULL. Nothing is
+        # lost by it: the pair is only worth recording while both halves exist.
+        for image in images:
+            image.source_image_id = None
         session.flush()
 
         for image in images:
@@ -497,6 +511,14 @@ def _release_job_references(session: Session, image_ids: set[int]) -> list[str]:
     derived from the input and means nothing without it. Deleting a processed
     image on its own leaves the job in place with no output, so the photograph
     can simply be processed again.
+
+    A processed image now also holds a RESTRICT reference straight back to the
+    original it was made from, which is a second edge into the same graph and
+    the reason the order below matters more than it used to: the derived rows
+    have to be gone before the caller deletes the original, or the delete is
+    refused and the dealer is told a photograph they can plainly see cannot be
+    removed. The flush at the end is what guarantees that — it puts the child
+    DELETEs on the wire before the caller's own delete is flushed.
     """
     if not image_ids:
         return []
@@ -522,8 +544,22 @@ def _release_job_references(session: Session, image_ids: set[int]) -> list[str]:
         session.delete(job)
     session.flush()
 
+    # Derived images are collected by their own source link as well as through
+    # the jobs. The job pointer is a second copy of the same fact — one this
+    # very function sets to NULL a few lines above — whereas source_image_id is
+    # the column the database actually enforces the RESTRICT on. Anything left
+    # holding that link refuses the caller's delete, so that link is what has to
+    # be searched; following only the job pointers would leave the deletion path
+    # correct exactly as long as the two never drift apart.
+    derived_ids = produced_ids | {
+        image_id
+        for image_id in session.scalars(
+            select(Image.id).where(Image.source_image_id.in_(image_ids))
+        ).all()
+    }
+
     for image in session.scalars(
-        select(Image).where(Image.id.in_(produced_ids - image_ids))
+        select(Image).where(Image.id.in_(derived_ids - image_ids))
     ).all():
         orphaned_paths.append(image.storage_path)
         session.delete(image)

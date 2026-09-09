@@ -59,6 +59,31 @@ class BackdropOut(BaseModel):
     image_url: str
     created_at: datetime
 
+    # Measured from the image when it was uploaded. All optional: a backdrop
+    # added before the measurement existed has never been looked at, which the
+    # client has to be able to tell apart from one that was looked at and gave
+    # nothing up — that case arrives as method 'assumed' with a zero confidence.
+    horizon_y_ratio: Optional[float] = None
+    horizon_confidence: Optional[float] = None
+    horizon_method: Optional[str] = None
+    floor_top_y_ratio: Optional[float] = None
+    floor_confidence: Optional[float] = None
+    camera_elevation_deg: Optional[float] = None
+    geometry_overridden: bool = False
+
+
+class BackdropGeometryIn(BaseModel):
+    """A dealer correcting where the floor and the horizon actually are.
+
+    Both are ratios down the canvas, 0 at the top edge and 1 at the bottom. The
+    person who took the photograph knows where their own floor is, and a
+    measurement they can see is wrong is worse than no measurement at all if
+    they cannot fix it.
+    """
+
+    horizon_y_ratio: float = Field(..., ge=0.0, le=1.0)
+    floor_top_y_ratio: float = Field(..., ge=0.0, le=1.0)
+
 
 class DashboardStats(BaseModel):
     vehicles_this_month: int
@@ -106,6 +131,11 @@ class VehicleListingUpdate(BaseModel):
 class ImageOut(BaseModel):
     id: int
     image_type: str
+    # The original this one was made from, so a client holding a listing's
+    # images can pair each processed result with its before shot without asking
+    # for the jobs as well. Null on an original, and on anything processed
+    # before the column existed.
+    source_image_id: Optional[int] = None
     # What the photograph is of. Null until the classifier has seen it.
     image_kind: Optional[str] = None
     kind_confidence: Optional[float] = None

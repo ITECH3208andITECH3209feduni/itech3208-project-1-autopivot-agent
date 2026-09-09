@@ -28,6 +28,7 @@ from ultralytics import YOLO
 
 import classification
 import compositing
+import elevation
 from api import processing, url_import
 from api.app import create_app
 from api.config import BASE_DIR, HOST, PORT
@@ -409,7 +410,10 @@ class PipelineProcessor:
     """Runs the full pipeline over raw bytes and reports what it found."""
 
     def process(
-        self, image: bytes, background: Optional[bytes]
+        self,
+        image: bytes,
+        background: Optional[bytes],
+        placement: Optional[processing.BackdropPlacement] = None,
     ) -> processing.ProcessOutcome:
         source = _open_image(image).convert("RGB")
 
@@ -459,10 +463,22 @@ class PipelineProcessor:
         # scene: after that, coordinates taken from the crop no longer apply.
         bg_removed = _apply_plate_treatment(bg_removed, plates, None)
 
-        background_image = _open_image(background) if background else None
         angle = classified.angle if classified else None
+        # Estimated between the plate treatment and the compositor, and neither
+        # side of that is free to move. The estimator wants the plates already
+        # obscured because that is the cutout the rest of the pipeline hands on,
+        # and a blurred plate sits well clear of the wheels it reads. It has to
+        # run before _place_on_backdrop for the same reason the plates do: the
+        # compositor rescales the cutout to stand on the scene's platform, so a
+        # tyre measured afterwards describes the studio's geometry rather than
+        # the photograph's, and the camera height it reports would be the
+        # backdrop's own.
+        estimated = _estimate_elevation(bg_removed, angle)
+
+        background_image = _open_image(background) if background else None
         final, _ = _place_on_backdrop(
-            bg_removed, background_image, source.size, coords, angle=angle
+            bg_removed, background_image, source.size, coords, angle=angle,
+            placement=placement, estimated=estimated,
         )
 
         buffer = io.BytesIO()
@@ -478,6 +494,9 @@ class PipelineProcessor:
             model_used=model_used,
             detected_angle=angle,
             angle_confidence=classified.angle_confidence if classified else None,
+            camera_elevation_deg=estimated.degrees if estimated else None,
+            elevation_confidence=estimated.confidence if estimated else None,
+            elevation_method=estimated.method if estimated else None,
             image_kind=classified.kind if classified else None,
             kind_confidence=classified.kind_confidence if classified else None,
         )
@@ -969,18 +988,58 @@ def _classify(image: Image.Image) -> Optional[classification.Classification]:
         return None
 
 
+def _estimate_elevation(
+    cutout: Image.Image, angle: Optional[str]
+) -> Optional[elevation.ElevationEstimate]:
+    """
+    Where the camera was for this photograph, or None if it could not be worked
+    out at all.
+
+    elevation.estimate_elevation is written never to raise and never to return
+    None — each measurement rung runs inside its own guard and the last rung
+    assumes standing eye level rather than declining. The guard is repeated here
+    anyway because of where in the pipeline the call sits: by this point the
+    photograph has already survived classification, detection, a background
+    removal and plate treatment, which is every expensive thing the job does.
+    Losing all of that to an unforeseen error in a geometry helper would turn a
+    photograph that processed perfectly well into a failed job, and the estimate
+    is an annotation on the result rather than part of producing it.
+
+    Returning None leaves the three elevation columns null, which is what a job
+    that stopped before there was a cutout records too — so a reader still
+    cannot mistake either for the cascade's own 'assumed' answer. Logged per job
+    rather than once, unlike the classifier warning above: a classifier that
+    will not load fails identically every time and would bury the real output,
+    whereas this depends on the individual cutout and each occurrence names a
+    different photograph.
+    """
+    try:
+        return elevation.estimate_elevation(cutout, angle)
+    except Exception as exc:
+        logger.warning(
+            "Camera elevation could not be estimated, so this photograph is "
+            "processed without one: %s", exc, exc_info=True,
+        )
+        return None
+
+
 def _place_on_backdrop(
     cutout: Image.Image,
     background: Optional[Image.Image],
     original_size: tuple[int, int],
     coords: tuple[int, int, int, int],
     angle: Optional[str] = None,
+    placement: Optional[processing.BackdropPlacement] = None,
+    estimated: Optional[elevation.ElevationEstimate] = None,
 ) -> tuple[Image.Image, dict]:
     """
     Produce the finished image from a treated cutout.
 
     With a backdrop, hand off to the compositor: the vehicle is scaled to the
-    scene, stood on its ground line, given shadows and colour-matched.
+    scene, stood on its ground line, given shadows and colour-matched. When the
+    backdrop was measured at upload the vehicle stands on that dealer's own
+    floor rather than on an assumed line, and when the photograph also yielded a
+    usable camera elevation the scene is slid so the two horizons meet.
 
     Without one, fall back to the old behaviour — the cutout returns to its
     place on a transparent canvas the size of the original photograph. There is
@@ -994,8 +1053,35 @@ def _place_on_backdrop(
         canvas.paste(patch, (x1, y1), patch.getchannel("A"))
         return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
 
+    placement = placement or processing.BackdropPlacement()
+    preset = compositing.dealer_preset(
+        horizon_y_ratio=placement.horizon_y_ratio,
+        floor_top_y_ratio=placement.floor_top_y_ratio,
+    )
+
+    # Only an estimate that actually read the photograph may slide the scene.
+    #
+    # Tested on the method rather than on the confidence, and the difference is
+    # not academic: the shot-angle prior returns 11.16 deg for every side-on
+    # photograph ever taken, at a confidence of 0.20 that clears any sensible
+    # floor. Aligning a dealer's room to it would move their backdrop by a fact
+    # about dealers in general while looking exactly like a measurement of their
+    # car. The confidence floor is kept as well, because a measured rung can
+    # still measure badly.
+    #
+    # Composing without it leaves the scene centred, which is what shipped, and
+    # the job still records the estimate either way — so a photograph that could
+    # not be aligned is visible as such rather than silently absent.
+    elevation_deg = None
+    if (
+        estimated is not None
+        and estimated.method in elevation.MEASURED_METHODS
+        and estimated.confidence >= elevation.MIN_USEFUL_CONFIDENCE
+    ):
+        elevation_deg = estimated.degrees
+
     return compositing.compose(
-        cutout, background, compositing.DEALER_BACKDROP, angle=angle
+        cutout, background, preset, angle=angle, elevation_deg=elevation_deg
     )
 
 
