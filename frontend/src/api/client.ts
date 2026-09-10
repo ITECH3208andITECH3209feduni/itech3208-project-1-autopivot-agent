@@ -9,8 +9,28 @@ export type Dealership = {
   id: number
   name: string
   location: string | null
+  contact_name: string | null
+  contact_email: string | null
+  contact_phone: string | null
   status: string
   user_count: number
+}
+
+export type DealershipOnboardRequest = {
+  name: string
+  location: string
+  contact_name: string
+  contact_email: string
+  contact_phone: string
+  admin_email: string
+  admin_first_name: string
+  admin_last_name: string
+}
+
+export type DealershipProvisioned = {
+  dealership: Dealership
+  administrator: User
+  initial_password: string
 }
 
 export type User = {
@@ -201,6 +221,15 @@ export const api = {
     request<User>('/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ current_password, new_password }),
+    }),
+
+  platformDealerships: () =>
+    request<Dealership[]>('/api/platform/dealerships'),
+
+  onboardDealership: (payload: DealershipOnboardRequest) =>
+    request<DealershipProvisioned>('/api/platform/dealerships', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
 
   dashboardStats: () => request<DashboardStats>('/api/dashboard/stats'),

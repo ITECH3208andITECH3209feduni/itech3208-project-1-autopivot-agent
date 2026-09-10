@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Callable
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from api.schemas import DealershipOut, UserOut
 from api.security import decode_access_token
 from database.connection import get_db_session
-from database.models import User
+from database.models import AuditLog, User
 
 # auto_error=False so a missing header produces our own 401 with a WWW-Authenticate
 # challenge rather than Starlette's bare 403.
@@ -65,11 +65,38 @@ def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def get_ready_user(user: CurrentUser) -> User:
+    """Require completion of the initial password change before app access."""
+    if user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must change your initial password before continuing.",
+        )
+    return user
+
+
+ReadyUser = Annotated[User, Depends(get_ready_user)]
+
+
 def require_roles(*roles: str) -> Callable[[User], User]:
     """Dependency factory restricting an endpoint to the given roles."""
 
-    def _guard(user: CurrentUser) -> User:
+    def _guard(request: Request, session: DbSession, user: ReadyUser) -> User:
         if user.role not in roles:
+            try:
+                session.add(
+                    AuditLog(
+                        actor_user_id=user.id,
+                        dealership_id=user.dealership_id,
+                        action="administration_access",
+                        outcome="denied",
+                        request_path=request.url.path,
+                        details=f"Required role: {', '.join(roles)}; actual role: {user.role}",
+                    )
+                )
+                session.commit()
+            except Exception:
+                session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your account does not have access to this resource.",
@@ -97,6 +124,9 @@ def serialise_user(session: Session, user: User) -> UserOut:
             id=user.dealership.id,
             name=user.dealership.name,
             location=user.dealership.location,
+            contact_name=user.dealership.contact_name,
+            contact_email=user.dealership.contact_email,
+            contact_phone=user.dealership.contact_phone,
             status=user.dealership.status,
             user_count=user_count or 0,
         )

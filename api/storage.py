@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +44,22 @@ MIME_FOR_PIL_FORMAT: dict[str, str] = {
 
 class StorageError(Exception):
     """Raised for unreadable images and unsafe paths."""
+
+
+def provision_dealership(dealership_id: int) -> Path:
+    """Create and return the isolated storage root for a new dealership."""
+    if dealership_id <= 0:
+        raise StorageError("A valid dealership id is required for storage.")
+    destination = STORAGE_ROOT / str(dealership_id)
+    destination.mkdir(parents=True, exist_ok=False)
+    return destination
+
+
+def remove_provisioned_dealership(dealership_id: int) -> None:
+    """Compensate for a failed onboarding transaction."""
+    destination = STORAGE_ROOT / str(dealership_id)
+    if destination.is_dir() and destination.is_relative_to(STORAGE_ROOT):
+        shutil.rmtree(destination)
 
 
 class StoredImage:
