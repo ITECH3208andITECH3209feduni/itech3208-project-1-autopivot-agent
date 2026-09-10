@@ -24,6 +24,7 @@ const PRIMARY_NAV: NavItem[] = [
 ]
 
 const SECONDARY_NAV: NavItem[] = [{ label: 'Settings', to: '/app/settings' }]
+const PLATFORM_NAV: NavItem[] = [{ label: 'Dealerships', to: '/app/platform' }]
 
 function SearchField() {
   const navigate = useNavigate()
@@ -117,6 +118,8 @@ export default function AppShell() {
   const wide = useIsWide()
   const contentMaxWidth = wide ? CONTENT_MAX_WIDTH_WIDE : CONTENT_MAX_WIDTH
   const [menuOpen, setMenuOpen] = useState(false)
+  const isPlatformAdministrator = user?.role === 'platform_admin'
+  const primaryNav = isPlatformAdministrator ? PLATFORM_NAV : PRIMARY_NAV
 
   // Refreshed on every navigation so a newly created vehicle is reflected
   // without a reload. Cheap: three COUNT(*) queries against indexed columns.
@@ -124,12 +127,16 @@ export default function AppShell() {
   // client-side navigation, so the counts would never update.
   const { pathname } = useLocation()
   useEffect(() => {
+    if (isPlatformAdministrator) {
+      setCounts(null)
+      return
+    }
     let cancelled = false
     api.navCounts()
       .then(next => { if (!cancelled) setCounts(next) })
       .catch(() => { /* counts are decoration; the nav works without them */ })
     return () => { cancelled = true }
-  }, [pathname])
+  }, [pathname, isPlatformAdministrator])
 
   // Any navigation closes the slide-over; leaving it open over the page the
   // user just asked for is the classic mobile-nav annoyance.
@@ -196,7 +203,7 @@ export default function AppShell() {
         {/* The single primary action, per the guidelines' one-solid-button rule.
             It used to appear twice — once on Overview and once on Results —
             competing with itself for the same task. */}
-        <div style={{ padding: '0 10px 12px' }}>
+        {!isPlatformAdministrator && <div style={{ padding: '0 10px 12px' }}>
           <button
             onClick={() => navigate('/app/upload')}
             style={{
@@ -210,12 +217,12 @@ export default function AppShell() {
           >
             + New vehicle
           </button>
-        </div>
+        </div>}
 
-        <SearchField />
+        {!isPlatformAdministrator && <SearchField />}
 
         <nav style={{ flex: 1, padding: '0 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {PRIMARY_NAV.map(item => (
+          {primaryNav.map(item => (
             <NavRow key={item.to} item={item} counts={counts} />
           ))}
 

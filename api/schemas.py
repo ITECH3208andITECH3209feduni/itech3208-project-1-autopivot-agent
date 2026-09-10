@@ -28,6 +28,9 @@ class DealershipOut(BaseModel):
     name: str
     # Shown beneath the dealership name in the application sidebar.
     location: Optional[str]
+    contact_name: Optional[str] = None
+    contact_email: Optional[EmailStr] = None
+    contact_phone: Optional[str] = None
     status: str
     user_count: int
 
@@ -41,6 +44,23 @@ class UserOut(BaseModel):
     is_active: bool
     must_change_password: bool
     dealership: Optional[DealershipOut] = None
+
+
+class DealershipOnboardRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    location: str = Field(min_length=1, max_length=120)
+    contact_name: str = Field(min_length=1, max_length=200)
+    contact_email: EmailStr
+    contact_phone: str = Field(min_length=1, max_length=50)
+    admin_email: EmailStr
+    admin_first_name: str = Field(min_length=1, max_length=100)
+    admin_last_name: str = Field(min_length=1, max_length=100)
+
+
+class DealershipProvisionedOut(BaseModel):
+    dealership: DealershipOut
+    administrator: UserOut
+    initial_password: str
 
 
 class LoginResponse(BaseModel):

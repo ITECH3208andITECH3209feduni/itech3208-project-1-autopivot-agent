@@ -17,12 +17,15 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
+    Integer,
     JSON,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,6 +36,7 @@ from database.base import Base
 class Dealership(Base):
     __tablename__ = "dealerships"
     __table_args__ = (
+        Index("uq_dealerships_name_lower", text("lower(name)"), unique=True),
         CheckConstraint(
             "length(trim(name)) > 0",
             name="name_not_blank",
@@ -43,10 +47,15 @@ class Dealership(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     # Shown beneath the dealership name in the application sidebar.
     location: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="active"
     )
@@ -65,6 +74,32 @@ class Dealership(Base):
         back_populates="dealership"
     )
     backdrops: Mapped[list[Backdrop]] = relationship(back_populates="dealership")
+
+
+class AuditLog(Base):
+    """Persistent record of sensitive administration actions and refusals."""
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        CheckConstraint("outcome IN ('success', 'denied', 'failed')", name="outcome_allowed"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
+    )
+    actor_user_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    dealership_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("dealerships.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class Backdrop(Base):
@@ -167,7 +202,9 @@ class User(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
+    )
     dealership_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("dealerships.id", ondelete="RESTRICT"),

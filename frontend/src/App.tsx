@@ -3,16 +3,19 @@
 // back button did nothing.
 
 import { Navigate, Route, BrowserRouter as Router, Routes, useLocation, useParams } from 'react-router-dom'
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 
 import AppShell from './components/AppShell'
 import Guidelines from './Guidelines'
 import { AuthProvider, useAuth } from './auth/AuthContext'
+import { api } from './api/client'
 import { C, SANS, serif } from './design'
 import ComingSoonPage from './pages/ComingSoonPage'
 import DashboardPage from './pages/DashboardPage'
+import ChangePasswordPage from './pages/ChangePasswordPage'
 import LandingPage from './pages/LandingPage'
 import NotFoundPage from './pages/NotFoundPage'
+import PlatformAdminPage from './pages/PlatformAdminPage'
 import BackdropsView from './views/BackdropsView'
 import ProcessingView from './views/ProcessingView'
 import ResultsView from './views/ResultsView'
@@ -36,7 +39,32 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!user) return <Navigate to="/" replace state={{ from: location }} />
+  if (user.must_change_password && location.pathname !== '/app/change-password') {
+    return <Navigate to="/app/change-password" replace />
+  }
   return <>{children}</>
+}
+
+function AppHome() {
+  const { user } = useAuth()
+  return user?.role === 'platform_admin' ? <Navigate to="/app/platform" replace /> : <DashboardPage />
+}
+
+function RequirePlatformAdmin({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  useEffect(() => {
+    if (user && user.role !== 'platform_admin') {
+      // The protected API records the denied attempt in the persistent audit log.
+      void api.platformDealerships().catch(() => undefined)
+    }
+  }, [user])
+
+  if (user?.role === 'platform_admin') return <>{children}</>
+  return (
+    <div role="alert" style={{ padding: 24, background: C.white, color: C.ink, fontFamily: SANS }}>
+      Your account does not have access to platform administration.
+    </div>
+  )
 }
 
 /** Carries the listing id across the Results → Vehicles rename. */
@@ -71,7 +99,9 @@ export default function App() {
           <Route path="/guidelines" element={<Guidelines />} />
 
           <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
-            <Route index element={<DashboardPage />} />
+            <Route index element={<AppHome />} />
+            <Route path="change-password" element={<ChangePasswordPage />} />
+            <Route path="platform" element={<RequirePlatformAdmin><PlatformAdminPage /></RequirePlatformAdmin>} />
             <Route path="vehicles" element={<ResultsView />} />
             <Route path="vehicles/:listingId" element={<ResultsView />} />
             {/* Upload and Processing are reachable but not in the nav: one is

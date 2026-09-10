@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
-from api.deps import CurrentUser, DbSession
+from api.deps import DbSession, ReadyUser
 from api.schemas import DashboardStats, NavCounts
 from database.models import Backdrop, Image, User, VehicleListing
 
@@ -37,7 +37,7 @@ def _dealership_id(user: User) -> int:
 
 
 @router.get("/counts", response_model=NavCounts)
-def nav_counts(user: CurrentUser, session: DbSession) -> NavCounts:
+def nav_counts(user: ReadyUser, session: DbSession) -> NavCounts:
     """Totals shown beside the sidebar's nav items."""
     dealership_id = _dealership_id(user)
 
@@ -62,7 +62,7 @@ def nav_counts(user: CurrentUser, session: DbSession) -> NavCounts:
 
 
 @router.get("/stats", response_model=DashboardStats)
-def dashboard_stats(user: CurrentUser, session: DbSession) -> DashboardStats:
+def dashboard_stats(user: ReadyUser, session: DbSession) -> DashboardStats:
     dealership_id = _dealership_id(user)
 
     month_start = datetime.now(timezone.utc).replace(
