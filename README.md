@@ -23,6 +23,7 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 - `api/processing.py` - job orchestration, behind a processor protocol so the
   light API stays free of ML imports.
 - `scripts/seed_dealership.py` - provisions a dealership and its administrator.
+- `scripts/seed_platform_admin.py` - provisions the initial AutoPivot administrator.
 - `api/storage.py` - content-addressed file storage, scoped per dealership.
 - `api/url_import.py` - fetching and parsing listing pages, shared by the light
   API and the processing backend.
@@ -145,6 +146,17 @@ alembic upgrade head
 python -m scripts.seed_dealership
 ```
 
+To use the platform administration area, provision its first AutoPivot
+administrator once:
+
+```bash
+python -m scripts.seed_platform_admin
+```
+
+The generated initial password is printed once and must be changed at first
+login. Platform administrators can then create dealerships and their first
+administrator from `/app/platform`.
+
 This provisions one dealership and one administrator, and nothing else — no
 vehicles, images or backdrops. A dealership fills up through the application.
 Name, location and admin details are configurable via `SEED_DEALERSHIP_NAME`,
@@ -184,6 +196,9 @@ Then open the ngrok URL in your browser. If using browser requests from another 
 - `GET /auth/me` — the authenticated user plus dealership context.
 - `POST /auth/change-password` — rotate the password and clear the
   `must_change_password` flag.
+- `GET /api/platform/dealerships` — list dealerships; platform administrator only.
+- `POST /api/platform/dealerships` — atomically provision a dealership, scoped
+  storage and its first administrator; platform administrator only.
 - `GET /api/dashboard/stats` — vehicles this month, images processed, and the
   number needing review.
 - `GET|POST /api/listings` — list and create vehicle listings. The list

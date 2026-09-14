@@ -25,6 +25,7 @@ from api.routes_auth import router as auth_router
 from api.routes_backdrops import router as backdrops_router
 from api.routes_dashboard import router as dashboard_router
 from api.routes_listings import router as listings_router
+from api.routes_platform_admin import router as platform_admin_router
 
 logger = logging.getLogger("autopivot")
 
@@ -76,6 +77,7 @@ def create_app(
     app.include_router(dashboard_router)
     app.include_router(listings_router)
     app.include_router(backdrops_router)
+    app.include_router(platform_admin_router)
 
     return app
 

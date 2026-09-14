@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from api import storage
-from api.deps import CurrentUser, DbSession
+from api.deps import DbSession, ReadyUser
 from api.schemas import BackdropOut
 from database.models import Backdrop
 
@@ -28,7 +28,7 @@ MAX_BACKDROP_MB = 25
 MAX_BACKDROP_BYTES = MAX_BACKDROP_MB * 1024 * 1024
 
 
-def _dealership_id(user: CurrentUser) -> int:
+def _dealership_id(user: ReadyUser) -> int:
     if user.dealership_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -51,7 +51,7 @@ def _serialise(backdrop: Backdrop) -> BackdropOut:
 
 
 @router.get("/backdrops", response_model=list[BackdropOut])
-def list_backdrops(user: CurrentUser, session: DbSession) -> list[BackdropOut]:
+def list_backdrops(user: ReadyUser, session: DbSession) -> list[BackdropOut]:
     dealership_id = _dealership_id(user)
     rows = session.scalars(
         select(Backdrop)
@@ -63,7 +63,7 @@ def list_backdrops(user: CurrentUser, session: DbSession) -> list[BackdropOut]:
 
 @router.post("/backdrops", response_model=BackdropOut, status_code=status.HTTP_201_CREATED)
 async def create_backdrop(
-    user: CurrentUser,
+    user: ReadyUser,
     session: DbSession,
     name: str = Form(..., min_length=1, max_length=120),
     file: UploadFile = File(...),
@@ -120,7 +120,7 @@ async def create_backdrop(
 
 
 @router.delete("/backdrops/{backdrop_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_backdrop(backdrop_id: int, user: CurrentUser, session: DbSession) -> None:
+def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> None:
     dealership_id = _dealership_id(user)
 
     backdrop = session.scalar(
@@ -152,7 +152,7 @@ def delete_backdrop(backdrop_id: int, user: CurrentUser, session: DbSession) -> 
 
 
 @router.get("/files/{storage_path:path}", include_in_schema=False)
-def serve_file(storage_path: str, user: CurrentUser) -> FileResponse:
+def serve_file(storage_path: str, user: ReadyUser) -> FileResponse:
     """Serve a stored file to a member of the dealership that owns it.
 
     Authorisation is by path prefix rather than a database lookup, because every
