@@ -18,6 +18,7 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 - `api/security.py` - password hashing and access tokens.
 - `api/deps.py` - database session and authenticated-user dependencies.
 - `api/routes_auth.py` - login, current user and password change.
+- `api/routes_dealership_users.py` - dealership-scoped user creation, reset and deactivation.
 - `api/routes_dashboard.py` - dashboard statistics.
 - `api/routes_listings.py` - vehicle listings, photograph upload and processing.
 - `api/processing.py` - job orchestration, behind a processor protocol so the
@@ -156,6 +157,8 @@ python -m scripts.seed_platform_admin
 The generated initial password is printed once and must be changed at first
 login. Platform administrators can then create dealerships and their first
 administrator from `/app/platform`.
+The default platform-administrator email is `admin@autopivot.example.com`;
+set `SEED_PLATFORM_ADMIN_EMAIL` before seeding to choose a different valid email.
 
 This provisions one dealership and one administrator, and nothing else — no
 vehicles, images or backdrops. A dealership fills up through the application.
@@ -166,6 +169,35 @@ password is generated and printed once if unset. Re-running is safe.
 There is no registration endpoint by design: dealer accounts are provisioned by
 AutoPivot, which is why `users.must_change_password` defaults to true. Seeded
 accounts must change their password at first login via `/auth/change-password`.
+
+## APA-231 dealership user management
+
+The existing `users.dealership_id` links every dealership administrator and staff
+member to exactly one dealership. The available roles are `platform_admin`
+(no dealership), `dealership_admin` and `dealership_staff`. A dealership
+administrator can visit `/app/users` to list, add, reset or deactivate accounts
+in their own dealership. The API derives the dealership from the authenticated
+database user rather than trusting a client-supplied ID. Attempts to specify
+another dealership or manage another dealership's user are denied and recorded
+in `audit_logs` with the actor, path and action. The user's email remains unique
+across the platform, including deactivated accounts.
+
+Initial passwords are generated with `secrets`, hashed with bcrypt and returned
+once to the administrator for secure handover outside the platform. New and
+reset accounts must change their password before accessing application routes.
+JWTs carry `users.token_version`: reset increments it, invalidating all earlier
+tokens on their next request. Deactivation also increments the version and the
+existing `get_current_user` check refuses inactive users on every request.
+Deactivation leaves the user row and historical attribution intact. The added
+`f8d91a6b20e4` migration supplies `token_version` to existing users with a
+default of zero. No public registration or email-based reset endpoint exists.
+
+Run the focused two-dealership evidence with:
+
+```bash
+python -m pytest tests/test_dealership_user_management.py tests/test_platform_administration.py tests/test_migrations.py -q
+npm run build --prefix frontend
+```
 
 ## Runpod / ngrok / remote access setup
 

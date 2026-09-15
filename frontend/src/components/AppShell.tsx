@@ -25,6 +25,7 @@ const PRIMARY_NAV: NavItem[] = [
 
 const SECONDARY_NAV: NavItem[] = [{ label: 'Settings', to: '/app/settings' }]
 const PLATFORM_NAV: NavItem[] = [{ label: 'Dealerships', to: '/app/platform' }]
+const DEALERSHIP_ADMIN_NAV: NavItem[] = [{ label: 'Team', to: '/app/users' }]
 
 function SearchField() {
   const navigate = useNavigate()
@@ -228,7 +229,7 @@ export default function AppShell() {
 
           <div style={{ borderTop: `1px solid ${C.line}`, margin: '12px 2px' }} />
 
-          {SECONDARY_NAV.map(item => (
+          {[...(user?.role === 'dealership_admin' ? DEALERSHIP_ADMIN_NAV : []), ...SECONDARY_NAV].map(item => (
             <NavRow key={item.to} item={item} counts={counts} />
           ))}
         </nav>
