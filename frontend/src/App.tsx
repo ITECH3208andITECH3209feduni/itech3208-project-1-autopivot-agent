@@ -16,6 +16,7 @@ import ChangePasswordPage from './pages/ChangePasswordPage'
 import LandingPage from './pages/LandingPage'
 import NotFoundPage from './pages/NotFoundPage'
 import PlatformAdminPage from './pages/PlatformAdminPage'
+import DealershipUsersPage from './pages/DealershipUsersPage'
 import BackdropsView from './views/BackdropsView'
 import ProcessingView from './views/ProcessingView'
 import ResultsView from './views/ResultsView'
@@ -67,6 +68,19 @@ function RequirePlatformAdmin({ children }: { children: ReactNode }) {
   )
 }
 
+function RequireDealershipAdmin({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  useEffect(() => {
+    if (user && user.role !== 'dealership_admin') {
+      void api.dealershipUsers().catch(() => undefined)
+    }
+  }, [user])
+  if (user?.role === 'dealership_admin') return <>{children}</>
+  return <div role="alert" style={{ padding: 24, background: C.white, color: C.ink, fontFamily: SANS }}>
+    Your account does not have access to dealership user management.
+  </div>
+}
+
 /** Carries the listing id across the Results → Vehicles rename. */
 function RedirectToVehicle() {
   const { listingId } = useParams()
@@ -102,6 +116,7 @@ export default function App() {
             <Route index element={<AppHome />} />
             <Route path="change-password" element={<ChangePasswordPage />} />
             <Route path="platform" element={<RequirePlatformAdmin><PlatformAdminPage /></RequirePlatformAdmin>} />
+            <Route path="users" element={<RequireDealershipAdmin><DealershipUsersPage /></RequireDealershipAdmin>} />
             <Route path="vehicles" element={<ResultsView />} />
             <Route path="vehicles/:listingId" element={<ResultsView />} />
             {/* Upload and Processing are reachable but not in the nav: one is

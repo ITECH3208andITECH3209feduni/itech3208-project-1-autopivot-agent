@@ -18,7 +18,8 @@ load_dotenv(override=False)
 
 
 def main() -> int:
-    email = os.getenv("SEED_PLATFORM_ADMIN_EMAIL", "admin@autopivot.local").strip().lower()
+    # The login API validates EmailStr; .local is reserved and cannot sign in.
+    email = os.getenv("SEED_PLATFORM_ADMIN_EMAIL", "admin@autopivot.example.com").strip().lower()
     first_name = os.getenv("SEED_PLATFORM_ADMIN_FIRST_NAME", "AutoPivot").strip()
     last_name = os.getenv("SEED_PLATFORM_ADMIN_LAST_NAME", "Administrator").strip()
     password = os.getenv("SEED_PLATFORM_ADMIN_PASSWORD", "").strip()

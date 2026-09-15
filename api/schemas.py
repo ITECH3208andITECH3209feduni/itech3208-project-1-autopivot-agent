@@ -63,6 +63,34 @@ class DealershipProvisionedOut(BaseModel):
     initial_password: str
 
 
+class DealershipUserOut(BaseModel):
+    id: int
+    email: EmailStr
+    first_name: str
+    last_name: str
+    role: str
+    is_active: bool
+    must_change_password: bool
+
+
+class DealershipUserCreate(BaseModel):
+    email: EmailStr
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    role: str = Field(pattern="^(dealership_admin|dealership_staff)$")
+    # Optional only to detect and audit a caller attempting to override scope.
+    dealership_id: Optional[int] = None
+
+
+class DealershipUserProvisionedOut(BaseModel):
+    user: DealershipUserOut
+    initial_password: str
+
+
+class DealershipUserResetOut(BaseModel):
+    initial_password: str
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

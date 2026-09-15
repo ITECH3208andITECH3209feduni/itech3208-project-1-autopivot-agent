@@ -59,6 +59,9 @@ def get_current_user(
         # this is re-checked on every request rather than trusted from the token.
         raise _UNAUTHENTICATED
 
+    if payload.get("token_version") != user.token_version:
+        raise _UNAUTHENTICATED
+
     return user
 
 
