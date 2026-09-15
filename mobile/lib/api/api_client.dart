@@ -12,6 +12,7 @@ import 'package:dio/dio.dart';
 
 import 'api_exception.dart';
 import 'models/listing_detail.dart';
+import 'models/listing_image.dart';
 import 'models/nav_counts.dart';
 import 'models/user.dart';
 import 'models/vehicle_listing.dart';
@@ -174,6 +175,53 @@ class ApiClient {
       () => _dio.get('/api/listings/$listingId', options: _options()),
     );
     return VehicleListingDetail.fromJson(json);
+  }
+
+  /// Creates a new listing. `make`, `model` and `year` are the server's own
+  /// minimum — they are `NOT NULL` columns, so a listing genuinely cannot
+  /// exist from photographs alone, which is why the capture screen asks for
+  /// them at submit time rather than assuming a details step happens
+  /// elsewhere.
+  Future<VehicleListingDetail> createListing({
+    required String make,
+    required String model,
+    required int year,
+    String? variant,
+  }) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/listings',
+        data: {'make': make, 'model': model, 'year': year, 'variant': ?variant},
+        options: _options(),
+      ),
+    );
+    return VehicleListingDetail.fromJson(json);
+  }
+
+  /// Attaches original photographs to a listing. [filePaths] become one
+  /// multipart file each, all under the field name the server's
+  /// `files: list[UploadFile]` expects — a single list value in dio's
+  /// [FormData] produces exactly that repeated-field shape.
+  Future<List<ListingImage>> uploadImages(
+    int listingId,
+    List<String> filePaths,
+  ) async {
+    final formData = FormData();
+    for (final path in filePaths) {
+      formData.files.add(
+        MapEntry('files', await MultipartFile.fromFile(path)),
+      );
+    }
+    final json = await _sendList(
+      () => _dio.post(
+        '/api/listings/$listingId/images',
+        data: formData,
+        options: _options(),
+      ),
+    );
+    return json
+        .map((e) => ListingImage.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   /// Removes one photograph. The server enforces what may not be deleted —

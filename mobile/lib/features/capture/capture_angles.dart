@@ -21,6 +21,15 @@
 /// assumption the backend's population-prior fallback already makes for
 /// each angle — the capture flow is aiming the photographer at the number
 /// the pipeline already trusts, not a separately guessed one.
+///
+/// Declaration order is the walking order, deliberately a single loop: start
+/// at the front, walk all the way around one side, finish back at the front
+/// on the other side — front, front-right, right side, rear-right, rear,
+/// rear-left, left side, front-left. Every consecutive pair is a physically
+/// adjacent stop, so a photographer never doubles back across the front or
+/// rear to reach the next shot, unlike the first cut of this sequence, which
+/// alternated left/right within each pair and had them crossing the car
+/// twice per pair.
 library;
 
 enum CaptureAngle {
@@ -31,13 +40,6 @@ enum CaptureAngle {
     mirrored: false,
     targetElevationDeg: 11.16,
   ),
-  frontLeftCorner(
-    label: 'Front-left corner',
-    pipelineAngle: 'front_quarter',
-    shape: VehicleGuideShape.frontQuarter,
-    mirrored: false,
-    targetElevationDeg: 4.61,
-  ),
   frontRightCorner(
     label: 'Front-right corner',
     pipelineAngle: 'front_quarter',
@@ -45,26 +47,12 @@ enum CaptureAngle {
     mirrored: true,
     targetElevationDeg: 4.61,
   ),
-  leftSide(
-    label: 'Left side',
-    pipelineAngle: 'side',
-    shape: VehicleGuideShape.side,
-    mirrored: false,
-    targetElevationDeg: 11.16,
-  ),
   rightSide(
     label: 'Right side',
     pipelineAngle: 'side',
     shape: VehicleGuideShape.side,
     mirrored: true,
     targetElevationDeg: 11.16,
-  ),
-  rearLeftCorner(
-    label: 'Rear-left corner',
-    pipelineAngle: 'rear_quarter',
-    shape: VehicleGuideShape.rearQuarter,
-    mirrored: false,
-    targetElevationDeg: 14.30,
   ),
   rearRightCorner(
     label: 'Rear-right corner',
@@ -79,6 +67,27 @@ enum CaptureAngle {
     shape: VehicleGuideShape.rear,
     mirrored: false,
     targetElevationDeg: 17.43,
+  ),
+  rearLeftCorner(
+    label: 'Rear-left corner',
+    pipelineAngle: 'rear_quarter',
+    shape: VehicleGuideShape.rearQuarter,
+    mirrored: false,
+    targetElevationDeg: 14.30,
+  ),
+  leftSide(
+    label: 'Left side',
+    pipelineAngle: 'side',
+    shape: VehicleGuideShape.side,
+    mirrored: false,
+    targetElevationDeg: 11.16,
+  ),
+  frontLeftCorner(
+    label: 'Front-left corner',
+    pipelineAngle: 'front_quarter',
+    shape: VehicleGuideShape.frontQuarter,
+    mirrored: false,
+    targetElevationDeg: 4.61,
   );
 
   const CaptureAngle({
@@ -110,5 +119,5 @@ enum CaptureAngle {
 }
 
 /// The 5 distinct outlines a capture guide can show — see
-/// [VehicleSilhouettePainter].
+/// [VehicleGuideOverlay].
 enum VehicleGuideShape { front, frontQuarter, side, rearQuarter, rear }

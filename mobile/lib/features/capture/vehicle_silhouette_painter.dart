@@ -1,184 +1,89 @@
-/// Draws the 5 base vehicle guide outlines a photographer lines the real car
-/// up against.
+/// The capture guide overlay: one of 5 base vehicle outlines a photographer
+/// lines the real car up against, shown as a translucent case-mould shape
+/// over the live camera preview.
 ///
-/// Plain stroked line art, not an illustration — the point is a fast
-/// alignment cue on a translucent camera overlay, and every shape carries a
-/// text label alongside it (see `capture_screen.dart`), so the drawing only
-/// has to read as "roughly this kind of view", not stand alone. Built from
-/// straight lines and a handful of quadratic curves rather than freehand
-/// bezier art, deliberately, so the shape stays predictable at any size.
+/// These are pre-rendered PNGs, not drawn at runtime. Each is traced
+/// straight from a real reference — a CC BY 4.0 LiDAR scan ("Car - Lidar
+/// scan" by Moshe Caine, Sketchfab — commercial use permitted with
+/// attribution, credited wherever this app's licences are listed) — rather
+/// than approximated with hand-placed curves the way an earlier version of
+/// this file drew them. The pipeline: splat the scan's ~805k real points
+/// into a solid silhouette from each of this screen's own 5 target camera
+/// angles (matching `CaptureAngle.targetElevationDeg`), blur and threshold
+/// that solid shape to erode it by a few pixels, then subtract the eroded
+/// copy from the original — what survives is a fixed-width ring sitting
+/// exactly on the true projected boundary of the real scan, the same way a
+/// case is moulded to a phone's exact shape rather than sketched free-hand.
+/// Wheel arches are added the same way: found from the solid shape's own
+/// column-density profile (a wheel arch reaches distinctly higher up the
+/// frame than the flat rocker panel beside it), not placed at a guessed
+/// screen position — only which of the 5 shapes gets a wheel circle at all,
+/// and how many, still mirrors the original hand-drawn version (side: both
+/// ends; the two quarter views: the near corner only; front/rear: none).
 library;
 
 import 'package:flutter/material.dart';
 
+import '../../design/tokens.dart';
 import 'capture_angles.dart';
 
-class VehicleSilhouettePainter extends CustomPainter {
-  const VehicleSilhouettePainter({required this.shape, required this.color});
-
-  final VehicleGuideShape shape;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bodyPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
-    final markPaint = Paint()..color = color;
-
-    switch (shape) {
+/// Maps each base shape to its traced PNG in `assets/silhouettes/`.
+extension on VehicleGuideShape {
+  String get _assetPath {
+    switch (this) {
       case VehicleGuideShape.front:
-        _paintNose(canvas, size, bodyPaint, markPaint, upright: true);
-      case VehicleGuideShape.rear:
-        _paintNose(canvas, size, bodyPaint, markPaint, upright: false);
-      case VehicleGuideShape.side:
-        canvas.drawPath(_sideBody(size), bodyPaint);
-        _wheel(canvas, size, markPaint, cx: 0.26);
-        _wheel(canvas, size, markPaint, cx: 0.76);
+        return 'assets/silhouettes/front.png';
       case VehicleGuideShape.frontQuarter:
-        canvas.drawPath(_quarterLowerBody(size), bodyPaint);
-        canvas.drawPath(_quarterGreenhouse(size, noseNear: true), bodyPaint);
-        _wheel(canvas, size, markPaint, cx: 0.20);
+        return 'assets/silhouettes/front_quarter.png';
+      case VehicleGuideShape.side:
+        return 'assets/silhouettes/side.png';
       case VehicleGuideShape.rearQuarter:
-        canvas.drawPath(_quarterLowerBody(size), bodyPaint);
-        canvas.drawPath(_quarterGreenhouse(size, noseNear: false), bodyPaint);
-        _wheel(canvas, size, markPaint, cx: 0.20);
+        return 'assets/silhouettes/rear_quarter.png';
+      case VehicleGuideShape.rear:
+        return 'assets/silhouettes/rear.png';
     }
   }
-
-  /// Front and rear share one head-on silhouette — a low body with a
-  /// windshield trapezoid above it — since a stroked outline of either end
-  /// of a car reads as near-identical without colour or grille/badge detail
-  /// to tell them apart. What actually distinguishes them here is
-  /// [upright] (the rear's greenhouse sits a little taller and squarer,
-  /// suggesting a boxier trunk line rather than a sloped bonnet) plus the
-  /// two marks along the bumper: headlamps (circles) for the front, a
-  /// numberplate strip (a single bar) for the rear. Reasonable, not exact —
-  /// the on-screen label carries the rest.
-  void _paintNose(
-    Canvas canvas,
-    Size size,
-    Paint bodyPaint,
-    Paint markPaint, {
-    required bool upright,
-  }) {
-    final w = size.width, h = size.height;
-    final bodyTop = h * 0.46;
-
-    final body = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTRB(w * 0.14, bodyTop, w * 0.86, h * 0.82),
-          Radius.circular(h * 0.07),
-        ),
-      );
-
-    final greenhouseTop = upright ? h * 0.18 : h * 0.24;
-    final greenhouse = Path()
-      ..moveTo(w * 0.30, bodyTop)
-      ..lineTo(w * 0.36, greenhouseTop)
-      ..lineTo(w * 0.64, greenhouseTop)
-      ..lineTo(w * 0.70, bodyTop);
-
-    canvas.drawPath(body, bodyPaint);
-    canvas.drawPath(greenhouse, bodyPaint);
-
-    if (upright) {
-      _dot(canvas, markPaint, Offset(w * 0.22, h * 0.68), h * 0.035);
-      _dot(canvas, markPaint, Offset(w * 0.78, h * 0.68), h * 0.035);
-    } else {
-      canvas.drawLine(
-        Offset(w * 0.40, h * 0.68),
-        Offset(w * 0.60, h * 0.68),
-        bodyPaint,
-      );
-    }
-  }
-
-  /// A side profile: a two-tier outline (lower body, offset cabin) that
-  /// reads as the classic "car icon" silhouette, plus two wheels.
-  Path _sideBody(Size size) {
-    final w = size.width, h = size.height;
-    return Path()
-      ..moveTo(w * 0.06, h * 0.78)
-      ..lineTo(w * 0.06, h * 0.56)
-      ..quadraticBezierTo(w * 0.06, h * 0.46, w * 0.16, h * 0.44)
-      ..lineTo(w * 0.30, h * 0.26)
-      ..quadraticBezierTo(w * 0.34, h * 0.18, w * 0.42, h * 0.18)
-      ..lineTo(w * 0.68, h * 0.18)
-      ..quadraticBezierTo(w * 0.76, h * 0.18, w * 0.81, h * 0.26)
-      ..lineTo(w * 0.90, h * 0.44)
-      ..quadraticBezierTo(w * 0.94, h * 0.46, w * 0.94, h * 0.56)
-      ..lineTo(w * 0.94, h * 0.78)
-      ..close();
-  }
-
-  /// A three-quarter view's lower body: the near corner (left, whichever end
-  /// is nearest the camera) drawn tall, the far corner short and low,
-  /// receding the way a car's far side genuinely foreshortens at an angle —
-  /// two tiers, the same idea as [_sideBody], rather than one flat outline,
-  /// which is what makes this read as a body with a roof rather than a
-  /// wedge. Shared by both quarter angles; [_quarterGreenhouse] is what
-  /// tells a front-quarter guide from a rear-quarter one.
-  Path _quarterLowerBody(Size size) {
-    final w = size.width, h = size.height;
-    return Path()
-      ..moveTo(w * 0.06, h * 0.78)
-      ..lineTo(w * 0.06, h * 0.56)
-      ..lineTo(w * 0.20, h * 0.48)
-      ..lineTo(w * 0.90, h * 0.58)
-      ..lineTo(w * 0.90, h * 0.72)
-      ..close();
-  }
-
-  /// The cabin, sitting on the near (tall) end of [_quarterLowerBody] and
-  /// tapering off before the far end — a roofline recedes faster than the
-  /// body does at this angle, which is what keeps the far end reading as
-  /// "further away" rather than just "shorter". [noseNear] pushes the
-  /// window line's peak a little further from the near edge for a
-  /// front-quarter guide (more bonnet in view ahead of the windscreen) than
-  /// a rear-quarter one (more boot, less glass ahead of the rear window).
-  Path _quarterGreenhouse(Size size, {required bool noseNear}) {
-    final w = size.width, h = size.height;
-    final peakStart = noseNear ? 0.30 : 0.20;
-    return Path()
-      ..moveTo(w * 0.14, h * 0.56)
-      ..lineTo(w * peakStart, h * 0.30)
-      ..lineTo(w * (peakStart + 0.34), h * 0.26)
-      ..lineTo(w * 0.68, h * 0.42);
-  }
-
-  void _wheel(Canvas canvas, Size size, Paint paint, {required double cx}) {
-    canvas.drawCircle(
-      Offset(size.width * cx, size.height * 0.78),
-      size.height * 0.12,
-      paint..style = PaintingStyle.stroke..strokeWidth = 2.5,
-    );
-  }
-
-  void _dot(Canvas canvas, Paint paint, Offset center, double radius) {
-    canvas.drawCircle(center, radius, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant VehicleSilhouettePainter oldDelegate) =>
-      oldDelegate.shape != shape || oldDelegate.color != color;
 }
 
 /// The guide overlay itself: one of the 5 base shapes, mirrored for the
 /// slots that need the opposite side, with a translucent finish so the live
 /// preview (or, on a device with none, the flat placeholder fill) still
 /// shows through it.
+///
+/// [aligned] tints the outline green instead of white — the on-device
+/// vehicle check (see `vehicle_frame_detector.dart`) already knows when the
+/// shot is well-framed, since that's exactly what currently disables or
+/// enables the shutter; this just gives that same signal a visible home on
+/// the guide itself; a photographer glancing at the outline sees the same
+/// verdict the shutter is already acting on, rather than having to read the
+/// text banner separately.
 class VehicleGuideOverlay extends StatelessWidget {
-  const VehicleGuideOverlay({super.key, required this.angle});
+  const VehicleGuideOverlay({super.key, required this.angle, this.aligned = false});
 
   final CaptureAngle angle;
+  final bool aligned;
+
+  // Was 0xFF34D058, a bright success-green with no source in
+  // design/tokens.dart. That file's own comment is explicit that there is
+  // "deliberately no success colour" and to "resist adding a second
+  // accent" — forestLift (a lifted version of the brand's one real accent,
+  // legible against a dark camera feed the way the base `forest` tone
+  // isn't) is what "aligned" should actually look like.
+  static const _alignedColor = C.forestLift;
+
+  /// 240x168 (10:7) read as small on an iPad screen in practice — a
+  /// photographer matching a tiny on-screen outline has no strong cue to
+  /// physically step closer, so shots came out too far back for a usable
+  /// listing photo. Sized off the actual screen instead of a fixed guess:
+  /// most of the width, capped so it doesn't balloon on a tablet.
+  static const double _aspect = 168 / 240;
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final guideWidth = (screenWidth * 0.86).clamp(240.0, 560.0);
+    final guideHeight = guideWidth * _aspect;
+
     return IgnorePointer(
       child: Opacity(
         opacity: 0.75,
@@ -187,13 +92,14 @@ class VehicleGuideOverlay extends StatelessWidget {
           transform: Matrix4.identity()
             ..scaleByDouble(angle.mirrored ? -1.0 : 1.0, 1.0, 1.0, 1.0),
           child: SizedBox(
-            width: 240,
-            height: 168,
-            child: CustomPaint(
-              painter: VehicleSilhouettePainter(
-                shape: angle.shape,
-                color: Colors.white,
+            width: guideWidth,
+            height: guideHeight,
+            child: ColorFiltered(
+              colorFilter: ColorFilter.mode(
+                aligned ? _alignedColor : Colors.white,
+                BlendMode.srcIn,
               ),
+              child: Image.asset(angle.shape._assetPath, fit: BoxFit.contain),
             ),
           ),
         ),
