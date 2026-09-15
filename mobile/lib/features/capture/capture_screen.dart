@@ -53,10 +53,14 @@
 /// `docs/MOBILE_PLAN.md`'s "Backend changes" section).
 ///
 /// The chrome — the progress pill, the exposure-lock badge, the close and
-/// camera-switch buttons — is real frosted glass ([_Glass]: blurred and
-/// translucent), not a flat semi-opaque black, so a control still reads as
-/// floating over the video against a bright, busy background rather than as
-/// a grey box stuck on top of it. The pill's dot row underneath the angle
+/// camera-switch buttons — shares one translucent style ([_Glass]) so a
+/// control still reads as floating over the video rather than as a grey box
+/// stuck on top of it. This was real frosted glass (`BackdropFilter` blur)
+/// for one round; see that class's own doc comment for why it came back
+/// out — measured on-device at 130%+ CPU and a red energy gauge, from
+/// blurring live camera video continuously on every frame across six
+/// regions at once, not a cost that tuning the blur radius down would have
+/// fixed. The pill's dot row underneath the angle
 /// name is position only ("2 of 8"); which angles are actually captured,
 /// skipped or still open is the filmstrip's job ([_Filmstrip], the right
 /// edge) — one tile per angle rather than a growing thumbnail list, tap any
@@ -83,7 +87,6 @@
 library;
 
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -1046,41 +1049,48 @@ class _BlockerBanner extends StatelessWidget {
   }
 }
 
-/// Shared frosted-glass chrome for the small pills and circular buttons
-/// scattered around this screen's edges — real translucency (blurred,
-/// see-through) instead of a flat semi-opaque black, which is what lets a
-/// control still read as "floating over the video" against a bright,
-/// cluttered background (a car lot, not a studio) rather than as a grey box
-/// stuck on top of it. [circular] switches the clip from a rounded
-/// rectangle to a true circle for the icon buttons.
+/// Shared translucent chrome for the small pills and circular buttons
+/// scattered around this screen's edges, so a control still reads as
+/// floating over the video against a bright, cluttered background (a car
+/// lot, not a studio) rather than as a grey box stuck on top of it.
+/// [circular] switches the shape from a rounded rectangle to a true circle
+/// for the icon buttons.
+///
+/// This used to be real frosted glass — a `BackdropFilter` Gaussian blur —
+/// which was measured on-device to push sustained CPU past 130% and the
+/// energy gauge into the red, running visibly laggy, whereas the same
+/// screen with only ML Kit's own (throttled, 400ms-interval) analysis
+/// running was fine. That comparison is the tell: `BackdropFilter` has to
+/// re-blur whatever is behind it on every displayed frame for as long as
+/// it's on screen, not on a throttle — over a live camera preview updating
+/// at 30-60fps, six of them at once (one per pill/button, all this
+/// screen's chrome) meant six full-screen-region blurs recomputed every
+/// single frame, continuously, the entire time this screen is open. ML
+/// Kit's cost was bounded and occasional by comparison. iOS's own
+/// UIVisualEffectView blur is cheap because it's a dedicated native
+/// compositor path with no real equivalent in Flutter's Skia-based
+/// BackdropFilter — this is a case where the literal iOS visual effect
+/// genuinely isn't reproducible at acceptable cost over live video in
+/// Flutter today, not a tuning problem to solve by lowering the blur
+/// radius. A plain translucent fill is what real camera apps' own
+/// "floating over video" chrome mostly is anyway once you look closely.
 class _Glass extends StatelessWidget {
-  const _Glass({
-    required this.child,
-    this.circular = false,
-    this.borderRadius = Radii.controlAll,
-  });
+  const _Glass({required this.child, this.circular = false});
 
   final Widget child;
   final bool circular;
-  final BorderRadius borderRadius;
 
   @override
   Widget build(BuildContext context) {
-    final blurred = BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.black.withAlpha(105),
-          shape: circular ? BoxShape.circle : BoxShape.rectangle,
-          borderRadius: circular ? null : borderRadius,
-          border: Border.all(color: Colors.white.withAlpha(28)),
-        ),
-        child: child,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(130),
+        shape: circular ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: circular ? null : Radii.controlAll,
+        border: Border.all(color: Colors.white.withAlpha(28)),
       ),
+      child: child,
     );
-    return circular
-        ? ClipOval(child: blurred)
-        : ClipRRect(borderRadius: borderRadius, child: blurred);
   }
 }
 

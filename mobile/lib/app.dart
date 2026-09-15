@@ -22,6 +22,8 @@ import 'design/typography.dart';
 import 'features/change_password/change_password_screen.dart';
 import 'features/listing_detail/listing_detail_screen.dart';
 import 'features/listings/listings_screen.dart';
+import 'features/settings/dealerships_screen.dart';
+import 'features/settings/team_screen.dart';
 import 'features/sign_in/sign_in_screen.dart';
 import 'routes.dart';
 import 'widgets/app_shell.dart';
@@ -57,6 +59,23 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.changePassword,
         builder: (context, state) => const ChangePasswordScreen(),
+      ),
+      // Outside the shell deliberately, like changePassword above: this is a
+      // drill-down from the account sheet's Settings row, not part of the
+      // shell's own navigation, and a team roster has no business under a
+      // floating camera action. Any signed-in user can reach the route
+      // itself — the actual gate is that nothing links here for anyone but
+      // a dealership_admin (app_shell.dart), and every request the screen
+      // makes is independently re-checked server-side regardless.
+      GoRoute(
+        path: AppRoutes.team,
+        builder: (context, state) => const TeamScreen(),
+      ),
+      // Same reasoning as AppRoutes.team just above, offered instead of it
+      // to a platform_admin rather than a dealership_admin.
+      GoRoute(
+        path: AppRoutes.dealerships,
+        builder: (context, state) => const DealershipsScreen(),
       ),
       // Everything a signed-in user with nothing forced on them can reach
       // shares one persistent shell — the dealership name and the camera

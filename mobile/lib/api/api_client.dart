@@ -11,6 +11,9 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import 'api_exception.dart';
+import 'models/dealership.dart';
+import 'models/dealership_provisioned.dart';
+import 'models/dealership_user.dart';
 import 'models/listing_detail.dart';
 import 'models/listing_image.dart';
 import 'models/nav_counts.dart';
@@ -242,6 +245,131 @@ class ApiClient {
       () => _dio.get('/api/dashboard/counts', options: _options()),
     );
     return NavCounts.fromJson(json);
+  }
+
+  // ── Dealership team ─────────────────────────────────────────────────────
+  //
+  // All four endpoints are `require_roles("dealership_admin")` server-side —
+  // see `api/routes_dealership_users.py` — so a non-admin calling any of
+  // these gets a 403 `ApiRequestException` regardless of what the client
+  // shows. The screens that call these still gate the entry point on
+  // `User.role` themselves, since asking the server "no" is a worse first
+  // experience than never offering the button.
+
+  /// Every user in the caller's own dealership — an admin can only ever see
+  /// and manage their own, which the server enforces independently of this
+  /// client ever asking for anyone else's.
+  Future<List<DealershipUser>> dealershipUsers() async {
+    final json = await _sendList(
+      () => _dio.get('/api/dealership/users', options: _options()),
+    );
+    return json
+        .map((e) => DealershipUser.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Provisions a new team member with a server-generated password — see
+  /// [DealershipUserProvisioned.initialPassword]'s own doc comment for why
+  /// that value only ever appears in this one response.
+  Future<DealershipUserProvisioned> addDealershipUser({
+    required String email,
+    required String firstName,
+    required String lastName,
+    required String role,
+  }) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/dealership/users',
+        data: {
+          'email': email,
+          'first_name': firstName,
+          'last_name': lastName,
+          'role': role,
+        },
+        options: _options(),
+      ),
+    );
+    return DealershipUserProvisioned.fromJson(json);
+  }
+
+  /// Rotates a team member's password to a new server-generated one and
+  /// returns it — same one-time-only shape as [addDealershipUser]. The
+  /// server rejects this for an already-deactivated account (409), which
+  /// surfaces as an ordinary [ApiRequestException].
+  Future<String> resetDealershipUserPassword(int userId) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/dealership/users/$userId/reset-password',
+        options: _options(),
+      ),
+    );
+    return json['initial_password'] as String;
+  }
+
+  /// Deactivates a team member. There is deliberately no matching
+  /// "reactivate" — the server has no such endpoint (see
+  /// `routes_dealership_users.py`), so this client does not offer one
+  /// either rather than pointing at a 404.
+  Future<DealershipUser> deactivateDealershipUser(int userId) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/dealership/users/$userId/deactivate',
+        options: _options(),
+      ),
+    );
+    return DealershipUser.fromJson(json);
+  }
+
+  // ── Platform administration ─────────────────────────────────────────────
+  //
+  // Both endpoints are `require_roles("platform_admin")` server-side — see
+  // `api/routes_platform_admin.py` — the same belt-and-suspenders relationship
+  // to the client-side role gate as the dealership-team endpoints above.
+
+  /// Every dealership on the platform, not just the caller's own — a
+  /// platform administrator belongs to none (see `User.dealership`'s own
+  /// doc comment) and manages all of them.
+  Future<List<Dealership>> platformDealerships() async {
+    final json = await _sendList(
+      () => _dio.get('/api/platform/dealerships', options: _options()),
+    );
+    return json
+        .map((e) => Dealership.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Creates a dealership and its first administrator account together —
+  /// the server refuses to create one without the other (see
+  /// `onboard_dealership` in `routes_platform_admin.py`), so there is no
+  /// separate "create the dealership, then add its first user" pair of
+  /// calls to sequence here.
+  Future<DealershipProvisioned> onboardDealership({
+    required String name,
+    required String location,
+    required String contactName,
+    required String contactEmail,
+    required String contactPhone,
+    required String adminEmail,
+    required String adminFirstName,
+    required String adminLastName,
+  }) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/platform/dealerships',
+        data: {
+          'name': name,
+          'location': location,
+          'contact_name': contactName,
+          'contact_email': contactEmail,
+          'contact_phone': contactPhone,
+          'admin_email': adminEmail,
+          'admin_first_name': adminFirstName,
+          'admin_last_name': adminLastName,
+        },
+        options: _options(),
+      ),
+    );
+    return DealershipProvisioned.fromJson(json);
   }
 
   // ── Files ───────────────────────────────────────────────────────────────

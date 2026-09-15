@@ -17,19 +17,26 @@
 /// the page content down every time it opens.
 ///
 /// The camera bubble opens the real capture screen at [AppRoutes.capture].
-/// Settings is not built yet — its row in the sheet says so plainly rather
-/// than being a dead tap.
+/// Settings opens one of two different screens depending who is signed in —
+/// [AppRoutes.team] (the dealership's own roster) for a `dealership_admin`,
+/// [AppRoutes.dealerships] (every dealership on the platform) for a
+/// `platform_admin` — since the two roles have nothing in common to manage.
+/// A `dealership_staff` account has neither, so for that role the row still
+/// says "Coming soon" rather than a dead tap, since there is genuinely
+/// nothing behind it for that account today.
 library;
 
 import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../api/models/user.dart';
 import '../auth/auth_controller.dart';
 import '../design/tokens.dart';
 import '../design/typography.dart';
 import '../features/capture/capture_screen.dart';
+import '../routes.dart';
 
 /// The initials shown in the header's avatar bubble.
 ///
@@ -197,6 +204,20 @@ class _AccountSheet extends StatelessWidget {
     final dealershipName = dealership?.name ?? 'AutoPivot';
     final location = dealership?.location;
     final hasLocation = location != null && location.isNotEmpty;
+    // Settings opens a different screen for each of the two admin roles —
+    // see this file's own top doc comment. Exactly one of these can be true
+    // for a given user, since a platform_admin belongs to no dealership and
+    // a dealership_admin belongs to exactly one, but both are read here
+    // rather than one derived from "not the other" so a third role added
+    // later fails safe (row stays "Coming soon") instead of accidentally
+    // inheriting whichever screen the two-way logic happened to default to.
+    final canManageTeam = user?.role == 'dealership_admin';
+    final canManagePlatform = user?.role == 'platform_admin';
+    final settingsDestination = canManageTeam
+        ? AppRoutes.team
+        : canManagePlatform
+        ? AppRoutes.dealerships
+        : null;
 
     return SafeArea(
       top: false,
@@ -219,11 +240,19 @@ class _AccountSheet extends StatelessWidget {
             ],
             const SizedBox(height: Space.lg),
             const Divider(height: 1, color: C.line),
-            const _AccountSheetRow(
+            _AccountSheetRow(
               icon: Icons.settings_outlined,
               label: 'Settings',
-              trailing: 'Coming soon',
-              onTap: null,
+              trailing: settingsDestination == null ? 'Coming soon' : null,
+              // Pop the sheet first, matching Sign out below — leaving it
+              // open underneath a pushed route looks like it belongs to
+              // whatever comes back, not to the screen actually navigating.
+              onTap: settingsDestination == null
+                  ? null
+                  : () {
+                      Navigator.of(context).pop();
+                      context.push(settingsDestination);
+                    },
             ),
             const Divider(height: 1, color: C.line),
             _AccountSheetRow(

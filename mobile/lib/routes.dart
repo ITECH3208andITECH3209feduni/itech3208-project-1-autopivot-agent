@@ -14,5 +14,17 @@ abstract final class AppRoutes {
   static const listings = '/';
   static const listingDetail = '/listings/:id';
 
+  /// The dealership's own team — reached from the account sheet's Settings
+  /// row, and only ever offered there to a `dealership_admin` (see
+  /// `app_shell.dart`). Outside the shell route deliberately: this is a
+  /// drill-down from Settings, not part of the shell's own navigation, and
+  /// the camera FAB has no business floating over a team roster.
+  static const team = '/team';
+
+  /// Every dealership on the platform — the same Settings row as [team]
+  /// above, but offered instead of it to a `platform_admin`, who has no
+  /// team of their own to manage (they belong to no dealership at all).
+  static const dealerships = '/dealerships';
+
   static String listingDetailPath(int id) => '/listings/$id';
 }
