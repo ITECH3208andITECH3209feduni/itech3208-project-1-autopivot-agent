@@ -50,6 +50,22 @@ runpod_proxy_url() {
   [ -n "${RUNPOD_POD_ID:-}" ] && echo "https://${RUNPOD_POD_ID}-${PORT}.proxy.runpod.net"
 }
 
+# Vast.ai's own direct port mapping — the equivalent stable alternative to
+# the cloudflared tunnel above, for a pod running there instead of on
+# RunPod. Vast injects one VAST_TCP_PORT_<internal> env var per port the
+# instance was actually rented with mapped (chosen when the instance was
+# created, not something this script can change after the fact) — if $PORT
+# was one of them, PUBLIC_IPADDR plus that mapped port reaches the API
+# directly, no tunnel and no rate limit to hit. Empty if $PORT was never
+# one of the ports requested at creation, which this script has no way to
+# fix from inside the pod either.
+vast_proxy_url() {
+  local var_name="VAST_TCP_PORT_${PORT}"
+  local mapped_port="${!var_name:-}"
+  [ -n "$mapped_port" ] && [ -n "${PUBLIC_IPADDR:-}" ] \
+    && echo "http://${PUBLIC_IPADDR}:${mapped_port}"
+}
+
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -65,6 +81,7 @@ case "${1:-}" in
     [ -n "$(tunnel_pid)" ] && echo "tunnel  : running (pid $(tunnel_pid))" || echo "tunnel  : stopped"
     [ -n "$(tunnel_url)" ] && echo "url     : $(tunnel_url)"
     [ -n "$(runpod_proxy_url)" ] && echo "proxy   : $(runpod_proxy_url)  (stable — needs port $PORT exposed as HTTP on this pod)"
+    [ -n "$(vast_proxy_url)" ] && echo "proxy   : $(vast_proxy_url)  (Vast.ai's own port mapping — stable, no tunnel involved)"
     [ -f "$ENV_FILE" ]     && echo "config  : $ENV_FILE"
     exit 0
     ;;
@@ -264,10 +281,18 @@ if [ -z "$(tunnel_pid)" ]; then
 fi
 
 URL="$(tunnel_url)"
-[ -n "$URL" ] || die "the tunnel did not produce a URL — see $TUNNEL_LOG"
+# The public tunnel is a convenience, not the only way to reach this pod —
+# runpod_proxy_url and vast_proxy_url below are two others, and Cloudflare's
+# free anonymous quick-tunnel service rate-limits fairly aggressively on a
+# shared-IP host like a rented GPU box, which is a fact about Cloudflare's
+# quota, not a sign anything here is broken. A failed tunnel used to abort
+# the whole run with `die`; now it is a warning, because the app itself is
+# already up by this point regardless of whether the tunnel is.
+[ -n "$URL" ] || warn "the tunnel did not produce a URL (see $TUNNEL_LOG) — continuing without it, see the proxy URLs below"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 PROXY_URL="$(runpod_proxy_url)"
+VAST_URL="$(vast_proxy_url)"
 
 # Whether port $PORT is marked as an exposed HTTP port is a RunPod platform
 # setting on the pod itself — nothing running inside the pod, this script
@@ -282,11 +307,30 @@ if [ -n "$PROXY_URL" ]; then
   [ "$PROXY_STATUS" = "200" ] && PROXY_READY=true
 fi
 
+# Vast's own mapping is either there or it isn't — decided when the instance
+# was created, nothing to poll for — but still worth a real check rather
+# than trusting the env var blindly: a stale or reused mapping pointing
+# nowhere reads exactly like a working one until something actually asks it
+# to answer.
+VAST_READY=false
+if [ -n "$VAST_URL" ]; then
+  VAST_STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$VAST_URL/health/api" 2>/dev/null || true)"
+  [ "$VAST_STATUS" = "200" ] && VAST_READY=true
+fi
+
 printf '\n\033[1m════════════════════════════════════════════════════════\033[0m\n'
 printf '  \033[1mAutoPivot is live\033[0m\n\n'
-printf '  URL       %s\n' "$URL"
+if [ -n "$URL" ]; then
+  printf '  URL       %s\n' "$URL"
+fi
 if [ "$PROXY_READY" = true ]; then
   printf '  Stable    %s  (verified — this one survives a pod restart)\n' "$PROXY_URL"
+fi
+if [ "$VAST_READY" = true ]; then
+  printf '  Stable    %s  (verified — Vast.ai'"'"'s own port mapping, survives a pod restart)\n' "$VAST_URL"
+fi
+if [ -z "$URL" ] && [ "$PROXY_READY" != true ] && [ "$VAST_READY" != true ]; then
+  warn "no working public URL yet — see the notes below for what to try"
 fi
 printf '  Dealership admin\n'
 printf '    Email     ana.reid@northshore.co.nz\n'
@@ -304,6 +348,31 @@ script can turn on from inside the pod. Not required — see below for a way
 to skip this altogether.
 
 PROXY
+fi
+if [ -n "$VAST_URL" ] && [ "$VAST_READY" != true ]; then
+  cat <<VASTPROXY
+Vast.ai has port $PORT mapped to a public port, but nothing answered there
+just now ($VAST_URL). Either the app is still starting up — try
+'bash scripts/runpod_up.sh --status' in a few seconds — or this instance's
+mapping does not actually reach port $PORT despite the env var existing,
+which can happen if the mapping was set up for a different port than this
+run used. Re-check with 'env | grep VAST_TCP_PORT_$PORT' if it persists.
+
+VASTPROXY
+fi
+if [ -z "$URL" ] && [ "$PROXY_READY" != true ] && [ "$VAST_READY" != true ]; then
+  cat <<NOURL
+No public URL came up this run — every one of URL, the RunPod proxy and the
+Vast.ai proxy is either absent or not answering. The app itself is very
+likely still fine; check 'tail -f $APP_LOG' and 'bash scripts/runpod_up.sh
+--status' before assuming otherwise. If you are on Vast.ai specifically and
+no VAST_TCP_PORT_* variable matches port $PORT, this instance was rented
+without $PORT in its exposed-port list — the fix is to rerun with PORT set
+to one of the ports Vast.ai actually mapped (check with
+'env | grep VAST_TCP_PORT'), e.g. 'PORT=8080 bash scripts/runpod_up.sh' —
+not something changeable on an instance that already exists.
+
+NOURL
 fi
 cat <<TUNNELHELP
 Simplest path, no dashboard setting and no URL to type on the mobile side —
