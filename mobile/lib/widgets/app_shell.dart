@@ -17,13 +17,20 @@
 /// the page content down every time it opens.
 ///
 /// The camera bubble opens the real capture screen at [AppRoutes.capture].
-/// Settings opens one of two different screens depending who is signed in —
-/// [AppRoutes.team] (the dealership's own roster) for a `dealership_admin`,
-/// [AppRoutes.dealerships] (every dealership on the platform) for a
-/// `platform_admin` — since the two roles have nothing in common to manage.
-/// A `dealership_staff` account has neither, so for that role the row still
-/// says "Coming soon" rather than a dead tap, since there is genuinely
-/// nothing behind it for that account today.
+/// The account sheet's administration row opens one of two different
+/// screens depending who is signed in, under a label naming which — "Team"
+/// ([AppRoutes.team], the dealership's own roster) for a `dealership_admin`,
+/// "Dealerships" ([AppRoutes.dealerships], every dealership on the
+/// platform) for a `platform_admin` — since the two roles have nothing in
+/// common to manage. A `dealership_staff` account has neither, so for that
+/// role the row still says "Coming soon" rather than a dead tap, since
+/// there is genuinely nothing behind it for that account today. Settings
+/// itself ([AppRoutes.settings]) is a separate row every role gets alike —
+/// app preferences, not administration.
+///
+/// [ProcessingBanner] sits between the header and the routed screen — visible
+/// from every screen this shell wraps, not only the one a set happened to be
+/// submitted from, for as long as anything is still processing.
 library;
 
 import 'package:animations/animations.dart';
@@ -37,6 +44,7 @@ import '../design/tokens.dart';
 import '../design/typography.dart';
 import '../features/capture/capture_screen.dart';
 import '../routes.dart';
+import 'processing_banner.dart';
 
 /// The initials shown in the header's avatar bubble.
 ///
@@ -100,6 +108,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 onTap: () => _openAccountSheet(user),
               ),
             ),
+            const ProcessingBanner(),
             // The routed screen. Each one keeps its own Scaffold — this
             // outer one exists for the header and the camera action, not to
             // replace what each screen already provides for its own content
@@ -210,16 +219,22 @@ class _AccountSheet extends StatelessWidget {
     final dealershipName = dealership?.name ?? 'AutoPivot';
     final location = dealership?.location;
     final hasLocation = location != null && location.isNotEmpty;
-    // Settings opens a different screen for each of the two admin roles —
-    // see this file's own top doc comment. Exactly one of these can be true
-    // for a given user, since a platform_admin belongs to no dealership and
-    // a dealership_admin belongs to exactly one, but both are read here
+    // The administration row opens a different screen, and carries a
+    // different label, for each of the two admin roles — see this file's
+    // own top doc comment. Exactly one of these can be true for a given
+    // user, since a platform_admin belongs to no dealership and a
+    // dealership_admin belongs to exactly one, but both are read here
     // rather than one derived from "not the other" so a third role added
     // later fails safe (row stays "Coming soon") instead of accidentally
     // inheriting whichever screen the two-way logic happened to default to.
     final canManageTeam = user?.role == 'dealership_admin';
     final canManagePlatform = user?.role == 'platform_admin';
-    final settingsDestination = canManageTeam
+    final adminLabel = canManageTeam
+        ? 'Team'
+        : canManagePlatform
+        ? 'Dealerships'
+        : 'Team';
+    final adminDestination = canManageTeam
         ? AppRoutes.team
         : canManagePlatform
         ? AppRoutes.dealerships
@@ -228,7 +243,12 @@ class _AccountSheet extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+        padding: const EdgeInsets.fromLTRB(
+          Space.lg,
+          Space.sm,
+          Space.lg,
+          Space.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -247,18 +267,29 @@ class _AccountSheet extends StatelessWidget {
             const SizedBox(height: Space.lg),
             const Divider(height: 1, color: C.line),
             _AccountSheetRow(
-              icon: Icons.settings_outlined,
-              label: 'Settings',
-              trailing: settingsDestination == null ? 'Coming soon' : null,
+              icon: canManagePlatform
+                  ? Icons.store_outlined
+                  : Icons.groups_outlined,
+              label: adminLabel,
+              trailing: adminDestination == null ? 'Coming soon' : null,
               // Pop the sheet first, matching Sign out below — leaving it
               // open underneath a pushed route looks like it belongs to
               // whatever comes back, not to the screen actually navigating.
-              onTap: settingsDestination == null
+              onTap: adminDestination == null
                   ? null
                   : () {
                       Navigator.of(context).pop();
-                      context.push(settingsDestination);
+                      context.push(adminDestination);
                     },
+            ),
+            const Divider(height: 1, color: C.line),
+            _AccountSheetRow(
+              icon: Icons.settings_outlined,
+              label: 'Settings',
+              onTap: () {
+                Navigator.of(context).pop();
+                context.push(AppRoutes.settings);
+              },
             ),
             const Divider(height: 1, color: C.line),
             _AccountSheetRow(

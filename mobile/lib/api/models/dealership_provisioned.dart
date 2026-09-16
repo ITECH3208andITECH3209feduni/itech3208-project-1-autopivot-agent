@@ -27,14 +27,11 @@ class DealershipProvisioned {
   /// first account instead of one added to an existing dealership.
   final String initialPassword;
 
-  factory DealershipProvisioned.fromJson(Map<String, dynamic> json) =>
-      DealershipProvisioned(
-        dealership: Dealership.fromJson(
-          json['dealership'] as Map<String, dynamic>,
-        ),
-        administrator: User.fromJson(
-          json['administrator'] as Map<String, dynamic>,
-        ),
-        initialPassword: json['initial_password'] as String,
-      );
+  factory DealershipProvisioned.fromJson(
+    Map<String, dynamic> json,
+  ) => DealershipProvisioned(
+    dealership: Dealership.fromJson(json['dealership'] as Map<String, dynamic>),
+    administrator: User.fromJson(json['administrator'] as Map<String, dynamic>),
+    initialPassword: json['initial_password'] as String,
+  );
 }

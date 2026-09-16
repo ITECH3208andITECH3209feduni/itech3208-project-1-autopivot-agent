@@ -32,9 +32,10 @@ if [ -z "${JWT_SECRET:-}" ]; then
 fi
 
 if [ -z "${HF_TOKEN:-}" ]; then
-  warn "HF_TOKEN is not set. RMBG-2.0 needs it and the BRIA licence accepted
-         at https://huggingface.co/briaai/RMBG-2.0 — BiRefNet will be used as
-         the fallback instead. Auth and the dashboard are unaffected."
+  warn "HF_TOKEN is not set. Nothing in this pipeline requires it — BiRefNet
+         (background removal) needs no auth at all — but YOLO26 downloads
+         anonymously without it, subject to Hugging Face's unauthenticated
+         rate limit. Auth and the dashboard are unaffected either way."
 fi
 
 # A pod's disk is wiped when it is terminated. Anything written under a network

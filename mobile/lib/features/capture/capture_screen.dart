@@ -97,6 +97,7 @@ import '../../api/api_exception.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../settings/app_preferences.dart';
 import 'capture_angles.dart';
 import 'capture_draft.dart';
 import 'device_tilt_detector.dart';
@@ -565,6 +566,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         _skipped.remove(angle);
         if (_jumpTarget == angle) _jumpTarget = null;
       });
+      // A firmer tap than the alignment one above — this is the shot
+      // actually being taken, the moment worth the most feedback in the
+      // whole capture loop.
+      haptic(ref, HapticFeedbackType.medium);
       // Locks in whatever auto exposure/focus metered for THIS shot — the
       // first one, specifically, since it's the first moment there was
       // actually a well-framed car to meter against. Every shot after it
@@ -717,6 +722,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       }
       await clearCaptureDraft();
       if (!mounted) return;
+      haptic(ref, HapticFeedbackType.medium);
 
       await showDialog<void>(
         context: context,
@@ -1238,7 +1244,7 @@ class _Glass extends StatelessWidget {
 /// work confirming the tilt formula's sign was correct against real
 /// hardware, and having done that job, don't belong in front of a
 /// photographer who just needs to know which way to move the phone.
-class _LevelIndicator extends StatefulWidget {
+class _LevelIndicator extends ConsumerStatefulWidget {
   const _LevelIndicator({
     required this.tiltReading,
     required this.targetElevationDeg,
@@ -1248,10 +1254,10 @@ class _LevelIndicator extends StatefulWidget {
   final double targetElevationDeg;
 
   @override
-  State<_LevelIndicator> createState() => _LevelIndicatorState();
+  ConsumerState<_LevelIndicator> createState() => _LevelIndicatorState();
 }
 
-class _LevelIndicatorState extends State<_LevelIndicator> {
+class _LevelIndicatorState extends ConsumerState<_LevelIndicator> {
   bool _wasGood = false;
 
   @override
@@ -1263,8 +1269,9 @@ class _LevelIndicatorState extends State<_LevelIndicator> {
 
     if (good && !_wasGood) {
       // Fires once, on the moment level is reached — not every frame it
-      // stays that way.
-      HapticFeedback.lightImpact();
+      // stays that way. Routed through haptic() rather than calling
+      // HapticFeedback directly, so the Settings toggle actually governs it.
+      haptic(ref);
     }
     _wasGood = good;
 

@@ -11,28 +11,82 @@
 /// exists because the capture story lands next and will need it immediately,
 /// and because discovering the 401 then would look like an auth bug rather
 /// than a missing header.
+///
+/// Backed by a disk cache ([_diskCached]) on top of the in-memory one below:
+/// a stored photograph's bytes never change once uploaded — [storagePath] is
+/// content-addressed — so there is nothing to invalidate, only a first fetch
+/// to avoid repeating on every cold start. Without it, reopening a listing
+/// you looked at yesterday re-downloads every photograph again before
+/// showing a single pixel.
 library;
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_controller.dart';
-import '../design/tokens.dart';
+import 'skeleton.dart';
+
+/// A stored path is `/api/files/{dealership}/{listing}/{file}` — replacing
+/// its slashes is enough to make a valid, collision-free filename, since the
+/// path itself is already unique per photograph.
+String _cacheKey(String storagePath) =>
+    storagePath.replaceAll('/', '_').replaceAll(RegExp(r'^_+'), '');
+
+Future<Directory> _imageCacheDir() async {
+  // The OS-managed cache directory, not documents: this is exactly what that
+  // distinction is for — content worth keeping around for speed, never
+  // backed up, and the platform is free to reclaim it under storage
+  // pressure without this app needing to know or care.
+  final base = await getApplicationCacheDirectory();
+  final dir = Directory('${base.path}/image_cache');
+  if (!await dir.exists()) await dir.create(recursive: true);
+  return dir;
+}
+
+/// Reads [storagePath]'s bytes from disk if a prior fetch already cached
+/// them, fetching and caching them via [api] otherwise.
+Future<Uint8List> _diskCached(ApiClient api, String storagePath) async {
+  final dir = await _imageCacheDir();
+  final file = File('${dir.path}/${_cacheKey(storagePath)}');
+
+  if (await file.exists()) {
+    try {
+      return await file.readAsBytes();
+    } catch (_) {
+      // A corrupt or partially-written cache entry is not worth diagnosing —
+      // just refetch as though it were never cached.
+    }
+  }
+
+  final bytes = await api.fileBytes(storagePath);
+  try {
+    await file.writeAsBytes(bytes, flush: true);
+  } catch (_) {
+    // Caching is an optimisation, not a requirement — a write failure (full
+    // disk, a sandbox restriction) should not turn a successful fetch into a
+    // visible error.
+  }
+  return bytes;
+}
 
 /// Decoded bytes, keyed by storage path.
 ///
 /// `autoDispose` would refetch every time a tile scrolled out of view and back,
 /// which on a gallery is a lot of round trips for bytes that have not changed —
-/// stored files are content-addressed, so a path's contents never change.
+/// stored files are content-addressed, so a path's contents never change. The
+/// disk cache in [_diskCached] carries that same guarantee across cold starts,
+/// where this in-memory one cannot help at all.
 final _imageBytesProvider = FutureProvider.family<Uint8List, String>((
   ref,
   path,
 ) async {
   final api = ref.watch(apiClientProvider);
-  return api.fileBytes(path);
+  return _diskCached(api, path);
 });
 
 class AuthedImage extends ConsumerWidget {
@@ -82,14 +136,20 @@ class AuthedImage extends ConsumerWidget {
   }
 }
 
+/// Self-contained rather than reading a [ShimmerGroup] from context: a
+/// photograph can be the first thing loading on a screen that has already
+/// finished its own skeleton state (an image whose bytes have not arrived
+/// yet on an otherwise-loaded listing), so it cannot assume one is already
+/// above it in the tree.
 class _Placeholder extends StatelessWidget {
   const _Placeholder();
 
   @override
   Widget build(BuildContext context) {
-    return const DecoratedBox(
-      decoration: BoxDecoration(color: C.bone),
-      child: SizedBox.expand(),
+    return const ShimmerGroup(
+      child: SizedBox.expand(
+        child: SkeletonBox(borderRadius: BorderRadius.zero),
+      ),
     );
   }
 }

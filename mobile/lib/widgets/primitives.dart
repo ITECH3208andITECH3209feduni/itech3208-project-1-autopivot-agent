@@ -50,10 +50,7 @@ class AppErrorBanner extends StatelessWidget {
       container: true,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(
-          horizontal: Space.md,
-          vertical: 12,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: 12),
         decoration: BoxDecoration(
           color: C.rustTint,
           borderRadius: Radii.controlAll,
@@ -96,6 +93,15 @@ enum ProcessingState {
     ProcessingState.complete => 'Complete',
     ProcessingState.needsReview => 'Needs review',
   };
+
+  /// The inverse of [parse] — what the server's own `processing_status`
+  /// query parameter expects back, e.g. to filter a list to this state.
+  String get wireValue => switch (this) {
+    ProcessingState.pending => 'pending',
+    ProcessingState.processing => 'processing',
+    ProcessingState.complete => 'complete',
+    ProcessingState.needsReview => 'needs_review',
+  };
 }
 
 class StatusPill extends StatelessWidget {
@@ -133,6 +139,48 @@ class StatusPill extends StatelessWidget {
   }
 }
 
+/// A search box that picks up the app's own [InputDecorationTheme] rather
+/// than styling itself — the same border, fill and radius as every other
+/// text field, so a search box reads as part of this app rather than a
+/// borrowed Material default.
+///
+/// Reactive to [controller] via [ValueListenableBuilder] rather than a
+/// `StatefulWidget` of its own: a `TextEditingController` is already a
+/// `Listenable`, and this widget only ever needs to know one thing that
+/// changes — whether there is text to offer a clear button for — which does
+/// not justify a second piece of state alongside the one the caller already
+/// owns.
+class SearchField extends StatelessWidget {
+  const SearchField({super.key, required this.controller, this.hintText});
+
+  final TextEditingController controller;
+  final String? hintText;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return TextField(
+          controller: controller,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: hintText,
+            prefixIcon: const Icon(Icons.search, size: 20, color: C.inkSoft),
+            suffixIcon: value.text.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    tooltip: 'Clear search',
+                    onPressed: controller.clear,
+                  ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// A screen that is doing nothing yet, or has nothing to show.
 ///
 /// Written as a statement rather than an apology — a dealership genuinely
@@ -160,10 +208,7 @@ class EmptyState extends StatelessWidget {
             Text(title, style: serif(24), textAlign: TextAlign.center),
             const SizedBox(height: Space.sm),
             Text(body, style: T.bodySmall, textAlign: TextAlign.center),
-            if (action != null) ...[
-              const SizedBox(height: Space.lg),
-              action!,
-            ],
+            if (action != null) ...[const SizedBox(height: Space.lg), action!],
           ],
         ),
       ),

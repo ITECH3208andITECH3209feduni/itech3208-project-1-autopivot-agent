@@ -32,9 +32,7 @@ class TokenStore {
       // resetOnError so a corrupt entry clears itself rather than bricking
       // sign-in.
       aOptions: AndroidOptions(),
-      iOptions: IOSOptions(
-        accessibility: KeychainAccessibility.first_unlock,
-      ),
+      iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
     ),
   );
 

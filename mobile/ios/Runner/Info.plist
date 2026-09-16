@@ -30,6 +30,8 @@
 	<string>AutoPivot uses the camera to photograph vehicles for a listing.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>AutoPivot reads the phone's tilt to help you hold the camera at the right angle for each shot.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>AutoPivot can use Face ID to unlock the app instead of asking you to sign in again — turn it on in Settings.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

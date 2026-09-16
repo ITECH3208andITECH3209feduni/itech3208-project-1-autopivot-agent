@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'auth/auth_controller.dart';
+import 'settings/app_preferences.dart';
 
 class AppBootstrap extends ConsumerStatefulWidget {
   const AppBootstrap({super.key, required this.child});
@@ -35,6 +36,11 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
     // screen, so double-firing it, or missing the one guaranteed call, is not
     // safe to risk.
     ref.read(authProvider.notifier).restore();
+    // Same guarantee, for the same reason: whether biometric lock is on has
+    // to be known before app.dart's builder can decide whether to show the
+    // lock screen, not discovered a frame or two after signed-in content
+    // already flashed on screen.
+    ref.read(appPreferencesProvider.notifier).load();
   }
 
   @override

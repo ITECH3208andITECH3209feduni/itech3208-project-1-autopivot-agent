@@ -44,7 +44,9 @@ import '../../api/models/dealership_user.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../settings/app_preferences.dart';
 import '../../widgets/primitives.dart';
+import '../../widgets/skeleton.dart';
 
 // ── Load state ──────────────────────────────────────────────────────────────
 
@@ -106,10 +108,42 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
   /// on screen is still good.
   String? _errorMessage;
 
+  final _searchController = TextEditingController();
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
     _load();
+    _searchController.addListener(() {
+      setState(() => _query = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Matching users first, most-recently-relevant order — active before
+  /// deactivated, so a roster you actually manage day to day is not
+  /// interleaved with accounts that no longer sign in. Client-side, not a
+  /// server query: this screen already holds the whole team in memory, and
+  /// a dealership's roster is small enough that filtering it here costs
+  /// nothing worth a round trip to avoid.
+  List<DealershipUser> _visibleUsers(List<DealershipUser> users) {
+    final matching = _query.isEmpty
+        ? users
+        : users.where((u) {
+            final haystack = '${u.displayName} ${u.email}'.toLowerCase();
+            return haystack.contains(_query);
+          }).toList();
+
+    return [...matching]..sort((a, b) {
+      if (a.isActive != b.isActive) return a.isActive ? -1 : 1;
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
   }
 
   Future<void> _load() async {
@@ -235,6 +269,11 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
           _busyIds = {..._busyIds}..remove(target.id);
         });
       }
+      if (!mounted) return;
+      haptic(ref, HapticFeedbackType.medium);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${target.displayName} deactivated')),
+      );
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -276,7 +315,26 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
   Widget _loadingBody() => Column(
     children: [
       Align(alignment: Alignment.centerLeft, child: _backButton()),
-      const Expanded(child: Center(child: CircularProgressIndicator())),
+      Expanded(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            Space.lg,
+            Space.sm,
+            Space.lg,
+            Space.lg,
+          ),
+          child: ShimmerGroup(
+            child: Column(
+              children: [
+                for (var i = 0; i < 4; i++) ...[
+                  const SkeletonCard(lines: [0.45]),
+                  if (i < 3) const SizedBox(height: Space.sm),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     ],
   );
 
@@ -303,6 +361,7 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
 
   Widget _loadedBody(List<DealershipUser> users) {
     final currentUser = ref.watch(currentUserProvider);
+    final visible = _visibleUsers(users);
 
     return CustomScrollView(
       slivers: [
@@ -315,14 +374,19 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
           ),
           sliver: SliverToBoxAdapter(child: _header()),
         ),
+        if (users.length > 1)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.md),
+            sliver: SliverToBoxAdapter(
+              child: SearchField(
+                controller: _searchController,
+                hintText: 'Search by name or email',
+              ),
+            ),
+          ),
         if (_errorMessage != null)
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(
-              Space.lg,
-              0,
-              Space.lg,
-              Space.md,
-            ),
+            padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.md),
             sliver: SliverToBoxAdapter(child: AppErrorBanner(_errorMessage!)),
           ),
         SliverPadding(
@@ -334,12 +398,19 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
                     body: 'Add the first person on your team below.',
                   ),
                 )
+              : visible.isEmpty
+              ? const SliverToBoxAdapter(
+                  child: EmptyState(
+                    title: 'No one matches',
+                    body: 'Try a different name or email.',
+                  ),
+                )
               : SliverList.separated(
-                  itemCount: users.length,
+                  itemCount: visible.length,
                   separatorBuilder: (context, index) =>
                       const SizedBox(height: Space.sm),
                   itemBuilder: (context, index) {
-                    final target = users[index];
+                    final target = visible[index];
                     return _TeamMemberRow(
                       user: target,
                       isSelf: target.id == currentUser?.id,
@@ -594,18 +665,16 @@ class _AddTeamMemberSheetState extends State<_AddTeamMemberSheet> {
               controller: _firstNameController,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'First name'),
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Required'
-                  : null,
+              validator: (value) =>
+                  (value == null || value.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: Space.md),
             TextFormField(
               controller: _lastNameController,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'Last name'),
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Required'
-                  : null,
+              validator: (value) =>
+                  (value == null || value.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: Space.md),
             DropdownButtonFormField<String>(
@@ -628,7 +697,10 @@ class _AddTeamMemberSheetState extends State<_AddTeamMemberSheet> {
             const SizedBox(height: Space.lg),
             SizedBox(
               width: double.infinity,
-              child: FilledButton(onPressed: _confirm, child: const Text('Add')),
+              child: FilledButton(
+                onPressed: _confirm,
+                child: const Text('Add'),
+              ),
             ),
           ],
         ),

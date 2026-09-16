@@ -58,7 +58,11 @@ extension on VehicleGuideShape {
 /// verdict the shutter is already acting on, rather than having to read the
 /// text banner separately.
 class VehicleGuideOverlay extends StatelessWidget {
-  const VehicleGuideOverlay({super.key, required this.angle, this.aligned = false});
+  const VehicleGuideOverlay({
+    super.key,
+    required this.angle,
+    this.aligned = false,
+  });
 
   final CaptureAngle angle;
   final bool aligned;

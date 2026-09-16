@@ -13,9 +13,5 @@ import 'app.dart';
 import 'bootstrap.dart';
 
 void main() {
-  runApp(
-    const ProviderScope(
-      child: AppBootstrap(child: AutoPivotApp()),
-    ),
-  );
+  runApp(const ProviderScope(child: AppBootstrap(child: AutoPivotApp())));
 }

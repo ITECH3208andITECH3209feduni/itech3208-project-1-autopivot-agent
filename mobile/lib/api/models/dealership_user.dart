@@ -32,16 +32,15 @@ class DealershipUser {
 
   bool get isAdmin => role == 'dealership_admin';
 
-  factory DealershipUser.fromJson(Map<String, dynamic> json) =>
-      DealershipUser(
-        id: json['id'] as int,
-        email: json['email'] as String,
-        firstName: json['first_name'] as String,
-        lastName: json['last_name'] as String,
-        role: json['role'] as String,
-        isActive: json['is_active'] as bool,
-        mustChangePassword: json['must_change_password'] as bool,
-      );
+  factory DealershipUser.fromJson(Map<String, dynamic> json) => DealershipUser(
+    id: json['id'] as int,
+    email: json['email'] as String,
+    firstName: json['first_name'] as String,
+    lastName: json['last_name'] as String,
+    role: json['role'] as String,
+    isActive: json['is_active'] as bool,
+    mustChangePassword: json['must_change_password'] as bool,
+  );
 }
 
 /// A freshly created account — mirrors `DealershipUserProvisionedOut`.

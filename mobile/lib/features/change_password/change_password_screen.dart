@@ -200,9 +200,9 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                                 textInputAction: TextInputAction.next,
                                 autofillHints: const [AutofillHints.password],
                                 enabled: !_submitting,
-                                onSubmitted: (_) => FocusScope.of(
-                                  context,
-                                ).requestFocus(_newFocus),
+                                onSubmitted: (_) =>
+                                    FocusScope.of(context)
+                                        .requestFocus(_newFocus),
                               ),
                               const SizedBox(height: Space.md),
                               _PasswordField(
@@ -210,18 +210,17 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                                 focusNode: _newFocus,
                                 label: 'New password',
                                 obscured: _obscureNew,
-                                onToggleObscured: () => setState(
-                                  () => _obscureNew = !_obscureNew,
-                                ),
+                                onToggleObscured: () =>
+                                    setState(() => _obscureNew = !_obscureNew),
                                 validator: _validateNew,
                                 textInputAction: TextInputAction.next,
                                 autofillHints: const [
                                   AutofillHints.newPassword,
                                 ],
                                 enabled: !_submitting,
-                                onSubmitted: (_) => FocusScope.of(
-                                  context,
-                                ).requestFocus(_confirmFocus),
+                                onSubmitted: (_) =>
+                                    FocusScope.of(context)
+                                        .requestFocus(_confirmFocus),
                               ),
                               const SizedBox(height: Space.md),
                               _PasswordField(
@@ -326,7 +325,9 @@ class _PasswordField extends StatelessWidget {
           onPressed: enabled ? onToggleObscured : null,
           tooltip: obscured ? 'Show password' : 'Hide password',
           icon: Icon(
-            obscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+            obscured
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
             color: C.inkSoft,
           ),
         ),

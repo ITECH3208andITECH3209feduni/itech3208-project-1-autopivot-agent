@@ -148,9 +148,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                             AutofillHints.username,
                             AutofillHints.email,
                           ],
-                          decoration: const InputDecoration(
-                            labelText: 'Email',
-                          ),
+                          decoration: const InputDecoration(labelText: 'Email'),
                           onFieldSubmitted: (_) =>
                               _passwordFocus.requestFocus(),
                         ),
@@ -173,8 +171,8 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                               onPressed: _submitting
                                   ? null
                                   : () => setState(
-                                      () => _obscurePassword =
-                                          !_obscurePassword,
+                                      () =>
+                                          _obscurePassword = !_obscurePassword,
                                     ),
                               icon: Icon(
                                 _obscurePassword

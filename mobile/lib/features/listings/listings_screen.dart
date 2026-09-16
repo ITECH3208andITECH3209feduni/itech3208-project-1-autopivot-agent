@@ -1,28 +1,34 @@
-/// The vehicle listings screen — the home screen a signed-in dealership user
-/// lands on.
+/// The full, filterable vehicle list — reached from the dashboard
+/// (`features/dashboard/dashboard_screen.dart`) via "All vehicles", at
+/// [AppRoutes.vehicles]. Used to be this app's home screen at `/`; the
+/// dashboard took that role over once it existed, the same relationship the
+/// web platform's own "Overview" and "Vehicles" sidebar entries have.
 ///
-/// This sprint's story is "see your dealership's vehicles" and nothing more:
-/// no creating a listing, no opening a detail view, no camera capture. Those
-/// are separate, later stories, so a row here is informational only and
-/// carries no tap target — adding one now would promise a screen that does
-/// not exist yet.
+/// A row opens the listing detail screen; swiping one left archives it —
+/// see [_ArchiveConfirmDialog] — and the filter bar above the list narrows
+/// it to one [ProcessingState] at a time.
 ///
-/// Two axes matter for a listing and must not be conflated: [VehicleListing]
-/// carries a sales `status` (draft, active, sold, archived) and a separate
-/// `processingStatus` for where its photographs are in the pipeline. This
-/// screen shows only the latter, via [StatusPill], because the pipeline is
-/// what this sprint's story is about; the sales status has no screen of its
-/// own yet and showing half of it here would be worse than showing neither.
+/// Two axes matter for a listing and must not be conflated:
+/// [VehicleListing] carries a sales `status` (draft, active, sold,
+/// archived) and a separate `processingStatus` for where its photographs
+/// are in the pipeline. The filter bar and [StatusPill] both work in terms
+/// of the latter; the former only shows up here as the thing "archive"
+/// changes, not as a filterable dimension of its own — that would need a
+/// screen of its own to do properly, and showing half of it here would be
+/// worse than showing neither.
 ///
 /// [VehicleListing] also carries no image URL — only an `imageCount` — so
-/// there is nothing to fetch a thumbnail from. [AuthedImage] exists for the
-/// capture story this app grows into next, not for this screen.
+/// there is nothing to fetch a thumbnail from. Rows here stay text-only for
+/// that reason; the dashboard's own gallery cards fetch each listing's full
+/// detail to find a photograph, a cost this longer list deliberately does
+/// not pay per row.
 ///
 /// The dealership name and sign-out, both originally rendered here, now live
 /// in `AppShell` instead — persistent chrome that wraps this screen and the
 /// listing detail screen it leads to, rather than something each screen
 /// inside that shell would otherwise have to repeat. This screen keeps only
-/// what is specifically its own: the page title, and the list.
+/// what is specifically its own: the page title, the filter bar, and the
+/// list.
 library;
 
 import 'package:flutter/material.dart';
@@ -35,7 +41,9 @@ import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
 import '../../routes.dart';
+import '../../settings/app_preferences.dart';
 import '../../widgets/primitives.dart';
+import '../../widgets/skeleton.dart';
 
 /// What the screen currently has to show.
 ///
@@ -73,9 +81,19 @@ class ListingsScreen extends ConsumerStatefulWidget {
 class _ListingsScreenState extends ConsumerState<ListingsScreen> {
   _Load _state = const _Loading();
 
+  /// Null means "every pipeline state" — the one filter option that is not
+  /// itself a [ProcessingState] value, so it cannot be expressed as one.
+  String? _statusFilter;
+
   @override
   void initState() {
     super.initState();
+    _load();
+  }
+
+  void _setFilter(String? status) {
+    if (status == _statusFilter) return;
+    setState(() => _statusFilter = status);
     _load();
   }
 
@@ -104,7 +122,10 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
       // the server itself defaults to 20, so leaving this out would silently
       // truncate a larger dealership's inventory to that, with nothing on
       // screen to say the list was cut short.
-      final listings = await api.listings(limit: 100);
+      final listings = await api.listings(
+        limit: 100,
+        processingStatus: _statusFilter,
+      );
       if (!mounted) return;
       setState(() => _state = _Loaded(listings));
     } on ApiException catch (e) {
@@ -113,7 +134,45 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
     }
   }
 
-  void _openListing(int id) => context.push(AppRoutes.listingDetailPath(id));
+  void _openListing(VehicleListing listing) =>
+      context.push(AppRoutes.listingDetailPath(listing.id), extra: listing);
+
+  /// Confirms, then archives, one vehicle — the [Dismissible] wrapping each
+  /// row calls this as `confirmDismiss`, which is why it returns whether the
+  /// swipe should actually complete rather than performing the archive and
+  /// reporting nothing back. Returning `false` on either a decline or a
+  /// failed request animates the row back into place instead of leaving a
+  /// gap for a vehicle that, from the server's side, was never touched.
+  Future<bool> _confirmArchive(VehicleListing listing) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => _ArchiveConfirmDialog(listing: listing),
+    );
+    if (confirmed != true || !mounted) return false;
+
+    try {
+      await ref
+          .read(apiClientProvider)
+          .updateListingStatus(listing.id, 'archived');
+      haptic(ref, HapticFeedbackType.medium);
+      return true;
+    } on ApiException catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    }
+  }
+
+  void _removeFromList(int listingId) {
+    final current = _state;
+    if (current is! _Loaded) return;
+    setState(
+      () => _state = _Loaded(
+        current.listings.where((l) => l.id != listingId).toList(),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -132,6 +191,16 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
                 ),
                 sliver: SliverToBoxAdapter(child: _Header()),
               ),
+              SliverToBoxAdapter(
+                child: _StatusFilterBar(
+                  selected: _statusFilter,
+                  onSelect: _setFilter,
+                ),
+              ),
+              const SliverPadding(
+                padding: EdgeInsets.only(top: Space.md),
+                sliver: SliverToBoxAdapter(),
+              ),
               _content(_state),
             ],
           ),
@@ -141,9 +210,9 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
   }
 
   Widget _content(_Load state) => switch (state) {
-    _Loading() => const SliverFillRemaining(
-      hasScrollBody: false,
-      child: Center(child: CircularProgressIndicator()),
+    _Loading() => const SliverPadding(
+      padding: EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
+      sliver: SliverToBoxAdapter(child: _ListingsSkeleton()),
     ),
     _LoadFailed(:final message) => SliverFillRemaining(
       hasScrollBody: false,
@@ -151,29 +220,45 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
     ),
     // A dealership genuinely starting with nothing is a real, valid state —
     // not an error — which is why this reaches EmptyState's honest wording
-    // rather than the retry panel above.
-    _Loaded(:final listings) when listings.isEmpty => const SliverFillRemaining(
+    // rather than the retry panel above. A filter that simply has no matches
+    // is a different, equally real state from "no vehicles at all", and gets
+    // its own wording rather than implying the dealership's inventory is
+    // empty when it is only this one slice of it.
+    _Loaded(:final listings) when listings.isEmpty => SliverFillRemaining(
       hasScrollBody: false,
-      child: EmptyState(
-        title: 'No vehicles yet',
-        body: 'Vehicles added to your dealership will appear here.',
-      ),
+      child: _statusFilter == null
+          ? const EmptyState(
+              title: 'No vehicles yet',
+              body: 'Vehicles added to your dealership will appear here.',
+            )
+          : EmptyState(
+              title:
+                  'Nothing ${ProcessingState.parse(_statusFilter!).label.toLowerCase()}',
+              body: 'No vehicles currently match this filter.',
+            ),
     ),
     _Loaded(:final listings) => SliverPadding(
       padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
       sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) => Padding(
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final listing = listings[index];
+          return Padding(
             padding: EdgeInsets.only(
               bottom: index == listings.length - 1 ? 0 : Space.md,
             ),
-            child: _ListingRow(
-              listing: listings[index],
-              onTap: () => _openListing(listings[index].id),
+            child: Dismissible(
+              key: ValueKey(listing.id),
+              direction: DismissDirection.endToStart,
+              confirmDismiss: (_) => _confirmArchive(listing),
+              onDismissed: (_) => _removeFromList(listing.id),
+              background: const _ArchiveBackground(),
+              child: _ListingRow(
+                listing: listing,
+                onTap: () => _openListing(listing),
+              ),
             ),
-          ),
-          childCount: listings.length,
-        ),
+          );
+        }, childCount: listings.length),
       ),
     ),
   };
@@ -193,6 +278,91 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text('Vehicles', style: serif(32));
+  }
+}
+
+/// Which pipeline state the list is narrowed to — a horizontally scrolling
+/// row of pills rather than a dropdown, so switching filters is a single tap
+/// and the current choice stays visible without opening anything.
+class _StatusFilterBar extends StatelessWidget {
+  const _StatusFilterBar({required this.selected, required this.onSelect});
+
+  /// Null means "All".
+  final String? selected;
+  final ValueChanged<String?> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 34,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: Space.lg),
+        children: [
+          _FilterChip(
+            label: 'All',
+            selected: selected == null,
+            onTap: () => onSelect(null),
+          ),
+          for (final state in ProcessingState.values) ...[
+            const SizedBox(width: Space.sm),
+            _FilterChip(
+              label: state.label,
+              selected: selected == state.wireValue,
+              onTap: () => onSelect(state.wireValue),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      excludeSemantics: true,
+      label: label,
+      child: Material(
+        color: selected ? C.forestTint : C.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: Radii.controlAll,
+          side: BorderSide(color: selected ? C.forest : C.line),
+        ),
+        child: InkWell(
+          borderRadius: Radii.controlAll,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Space.md,
+              vertical: 6,
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: T.label.copyWith(
+                  fontSize: 13,
+                  color: selected ? C.forest : C.inkSoft,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -220,6 +390,28 @@ class _RetryPanel extends StatelessWidget {
             FilledButton(onPressed: onRetry, child: const Text('Try again')),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Placeholder rows shaped like [_ListingRow] itself, shown while the first
+/// fetch is in flight. Five rows regardless of how many the dealership
+/// actually has — nothing on screen yet says how many are coming, so this is
+/// a guess at "a typical screenful", not a claim about the real count.
+class _ListingsSkeleton extends StatelessWidget {
+  const _ListingsSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ShimmerGroup(
+      child: Column(
+        children: [
+          for (var i = 0; i < 5; i++) ...[
+            const SkeletonCard(lines: [0.3]),
+            if (i < 4) const SizedBox(height: Space.md),
+          ],
+        ],
       ),
     );
   }
@@ -279,7 +471,10 @@ class _ListingRow extends StatelessWidget {
                     children: [
                       Expanded(child: Text(listing.title, style: T.label)),
                       const SizedBox(width: Space.sm),
-                      StatusPill(processing),
+                      Hero(
+                        tag: 'listing-status-${listing.id}',
+                        child: StatusPill(processing),
+                      ),
                     ],
                   ),
                   const SizedBox(height: Space.sm),
@@ -301,6 +496,89 @@ class _ListingRow extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Swipe to archive ─────────────────────────────────────────────────────────
+
+/// Revealed behind a row as it swipes left — the same rust used for every
+/// other destructive-leaning action in this app (delete a photograph,
+/// deactivate a teammate), even though archiving is not itself destructive:
+/// there is no "unarchive" in this app yet, so from here it reads the same
+/// as one-way.
+class _ArchiveBackground extends StatelessWidget {
+  const _ArchiveBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: Space.lg),
+      decoration: BoxDecoration(color: C.rustTint, borderRadius: Radii.cardAll),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.archive_outlined, size: 18, color: C.rust),
+          const SizedBox(width: Space.xs),
+          Text('Archive', style: T.label.copyWith(color: C.rust)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Confirms before archiving — called from [Dismissible.confirmDismiss],
+/// which is why declining has to leave the row exactly where it was rather
+/// than treating "cancel" as "dismiss anyway".
+class _ArchiveConfirmDialog extends StatelessWidget {
+  const _ArchiveConfirmDialog({required this.listing});
+
+  final VehicleListing listing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: C.white,
+      shape: const RoundedRectangleBorder(borderRadius: Radii.cardAll),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Archive ${listing.title}?', style: serif(24)),
+            const SizedBox(height: Space.sm),
+            const Text(
+              'It leaves this list. Photographs already processed are kept — '
+              'this only changes where the vehicle sits in the sales cycle.',
+              style: T.bodySmall,
+            ),
+            const SizedBox(height: Space.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: Space.sm),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: C.rust,
+                      minimumSize: const Size(0, 48),
+                    ),
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Archive'),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

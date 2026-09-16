@@ -30,11 +30,13 @@ import '../../api/api_exception.dart';
 import '../../api/models/listing_detail.dart';
 import '../../api/models/listing_image.dart';
 import '../../api/models/processing_summary.dart';
+import '../../api/models/vehicle_listing.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
 import '../../widgets/authed_image.dart';
 import '../../widgets/primitives.dart';
+import '../../widgets/skeleton.dart';
 
 // ── Load state ──────────────────────────────────────────────────────────────
 
@@ -97,9 +99,19 @@ String _exclusionReason(String? imageKind) => switch (imageKind) {
 // ── Screen ───────────────────────────────────────────────────────────────────
 
 class ListingDetailScreen extends ConsumerStatefulWidget {
-  const ListingDetailScreen({super.key, required this.listingId});
+  const ListingDetailScreen({super.key, required this.listingId, this.preview});
 
   final int listingId;
+
+  /// What the vehicles list already knew about this listing before it was
+  /// tapped — title, pipeline status, stock number. Optional: a deep link
+  /// or a stale bookmark reaches this screen with only an id and none of
+  /// this, which the plain loading skeleton in [_loadingBody] still covers.
+  /// When it is available, the header shows immediately instead of waiting
+  /// on this screen's own fetch, and carries the [Hero] flight from the
+  /// list row's status pill through to a real destination rather than one
+  /// that only exists after a round trip completes.
+  final VehicleListing? preview;
 
   @override
   ConsumerState<ListingDetailScreen> createState() =>
@@ -291,12 +303,68 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
     _Loaded(:final listing) => _loadedBody(listing),
   };
 
-  Widget _loadingBody() => Column(
-    children: [
-      Align(alignment: Alignment.centerLeft, child: _backButton()),
-      const Expanded(child: Center(child: CircularProgressIndicator())),
-    ],
-  );
+  Widget _loadingBody() {
+    final preview = widget.preview;
+
+    return Column(
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _backButton(),
+            // A real title and status pill — including the Hero this
+            // screen's own StatusPill is the destination half of — as soon
+            // as the list row that opened this screen already knew them,
+            // rather than making even that wait on this screen's fetch.
+            if (preview != null)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: Space.sm),
+                  child: _PreviewHeader(preview),
+                ),
+              ),
+          ],
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+              Space.lg,
+              Space.sm,
+              Space.lg,
+              Space.lg,
+            ),
+            child: ShimmerGroup(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (preview == null) ...[
+                    Row(
+                      children: [
+                        const Expanded(child: SkeletonBox(height: 26)),
+                        const SizedBox(width: Space.sm),
+                        SkeletonBox(
+                          width: 72,
+                          height: 22,
+                          borderRadius: Radii.controlAll,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Space.lg),
+                  ],
+                  const SkeletonBox(height: 11, width: 90),
+                  const SizedBox(height: Space.sm),
+                  for (var i = 0; i < 2; i++) ...[
+                    const _BeforeAfterSkeletonTile(),
+                    if (i < 1) const SizedBox(height: Space.sm),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _failedBody(String message) => Column(
     children: [
@@ -433,7 +501,10 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                   children: [
                     Expanded(child: Text(listing.title, style: serif(28))),
                     const SizedBox(width: Space.sm),
-                    StatusPill(processing),
+                    Hero(
+                      tag: 'listing-status-${listing.id}',
+                      child: StatusPill(processing),
+                    ),
                   ],
                 ),
                 if (hasStockNumber) ...[
@@ -610,6 +681,71 @@ class _PhotoTile extends StatelessWidget {
 
 // ── Before / after ───────────────────────────────────────────────────────────
 
+/// The loading-state stand-in for [_BeforeAfterTile] — same card, same two
+/// square panes side by side, so the skeleton and the real content occupy
+/// exactly the same footprint and nothing jumps when the fetch resolves.
+/// The title-and-pill half of [_ListingDetailScreenState._header], built
+/// from a list row's own [VehicleListing] instead of the full
+/// [VehicleListingDetail] this screen otherwise waits on — used only in
+/// [_ListingDetailScreenState._loadingBody], while that fetch is still in
+/// flight. Carries the same `'listing-status-…'` [Hero] tag as [_header]
+/// itself, so the flight lands on whichever of the two actually ends up on
+/// screen once the fetch resolves; a stock number and description are no
+/// less real for the delay, so this does not attempt a second copy of them.
+class _PreviewHeader extends StatelessWidget {
+  const _PreviewHeader(this.listing);
+
+  final VehicleListing listing;
+
+  @override
+  Widget build(BuildContext context) {
+    final processing = ProcessingState.parse(listing.processingStatus);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: Text(listing.title, style: serif(28))),
+        const SizedBox(width: Space.sm),
+        Hero(
+          tag: 'listing-status-${listing.id}',
+          child: StatusPill(processing),
+        ),
+      ],
+    );
+  }
+}
+
+class _BeforeAfterSkeletonTile extends StatelessWidget {
+  const _BeforeAfterSkeletonTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: _pane()),
+          const SizedBox(width: Space.sm),
+          Expanded(child: _pane()),
+        ],
+      ),
+    );
+  }
+
+  Widget _pane() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SkeletonBox(height: 11, width: 44),
+        const SizedBox(height: Space.xs),
+        AspectRatio(
+          aspectRatio: 1,
+          child: SkeletonBox(borderRadius: Radii.controlAll),
+        ),
+      ],
+    );
+  }
+}
+
 /// One processed photograph beside the original it came from — shown
 /// regardless of the listing's overall processing status, so a set that
 /// still has one photograph outstanding does not hide every pair that
@@ -618,46 +754,196 @@ class _PhotoTile extends StatelessWidget {
 /// [original] is null for a processed image saved before `source_image_id`
 /// existed — rare, but real for anything processed early enough, and shown
 /// as the result alone rather than crashing on a pairing that cannot be made.
-class _BeforeAfterTile extends StatelessWidget {
+/// Drag (or tap) anywhere across the photograph to move the split — left of
+/// it shows the original, right of it shows the processed result. Replaces
+/// the side-by-side pair this tile used to show: comparing two separate
+/// squares means moving your eyes back and forth and holding the difference
+/// in memory, where a slider lets the same patch of the vehicle be either
+/// photograph on demand, which is what actually answers "what did the
+/// pipeline change here".
+class _BeforeAfterTile extends StatefulWidget {
   const _BeforeAfterTile({required this.processed, required this.original});
 
   final ListingImage processed;
   final ListingImage? original;
 
   @override
+  State<_BeforeAfterTile> createState() => _BeforeAfterTileState();
+}
+
+class _BeforeAfterTileState extends State<_BeforeAfterTile> {
+  /// 0 shows only the processed result, 1 shows only the original. Starts
+  /// at the midpoint — the same split point the old side-by-side layout
+  /// showed by default, just now adjustable instead of fixed.
+  double _split = 0.5;
+
+  void _setSplitFromDx(double dx, double width) {
+    if (width <= 0) return;
+    setState(() => _split = (dx / width).clamp(0.0, 1.0));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final original = widget.original;
+
+    // No pairing to compare — the single-pane fallback this tile has always
+    // had for a processed image saved before source_image_id existed.
+    if (original == null) {
+      return AppCard(
+        child: ClipRRect(
+          borderRadius: Radii.controlAll,
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: AuthedImage(
+              storagePath: widget.processed.imageUrl,
+              semanticLabel: 'Processed photograph',
+              fit: BoxFit.cover,
+            ),
+          ),
+        ),
+      );
+    }
+
     return AppCard(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.all(Space.sm),
+      child: Semantics(
+        label:
+            'Before and after comparison, ${(_split * 100).round()}% '
+            'original. Drag across the photograph to compare.',
+        child: ClipRRect(
+          borderRadius: Radii.controlAll,
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                return GestureDetector(
+                  onHorizontalDragUpdate: (details) =>
+                      _setSplitFromDx(details.localPosition.dx, width),
+                  onTapUp: (details) =>
+                      _setSplitFromDx(details.localPosition.dx, width),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      AuthedImage(
+                        storagePath: widget.processed.imageUrl,
+                        semanticLabel: 'Processed photograph',
+                        fit: BoxFit.cover,
+                      ),
+                      ClipRect(
+                        clipper: _SplitClipper(fraction: _split),
+                        child: AuthedImage(
+                          storagePath: original.imageUrl,
+                          semanticLabel: 'Original photograph',
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      const Positioned(
+                        top: Space.xs,
+                        right: Space.xs,
+                        child: _CompareTag('AFTER'),
+                      ),
+                      Positioned(
+                        top: Space.xs,
+                        left: Space.xs,
+                        child: const _CompareTag('BEFORE'),
+                      ),
+                      Positioned(
+                        left: (width * _split - 1).clamp(0, width - 2),
+                        top: 0,
+                        bottom: 0,
+                        child: const IgnorePointer(child: _SplitHandle()),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Clips to the left fraction of the box — the region the original photo
+/// occupies, to the left of the drag handle.
+class _SplitClipper extends CustomClipper<Rect> {
+  const _SplitClipper({required this.fraction});
+
+  final double fraction;
+
+  @override
+  Rect getClip(Size size) =>
+      Rect.fromLTRB(0, 0, size.width * fraction, size.height);
+
+  @override
+  bool shouldReclip(_SplitClipper oldClipper) =>
+      fraction != oldClipper.fraction;
+}
+
+/// The vertical line and grip at the current split position. Wrapped in
+/// [IgnorePointer] by its caller — the drag is handled by the
+/// [GestureDetector] beneath the whole tile, not by this line specifically,
+/// so it must never itself intercept the gesture.
+class _SplitHandle extends StatelessWidget {
+  const _SplitHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 2,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          Expanded(child: _labelledPhoto('BEFORE', original)),
-          const SizedBox(width: Space.sm),
-          Expanded(child: _labelledPhoto('AFTER', processed)),
+          const DecoratedBox(decoration: BoxDecoration(color: C.white)),
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: -11,
+            child: Center(
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: C.white,
+                  shape: BoxShape.circle,
+                  boxShadow: cardShadow,
+                ),
+                child: const Icon(
+                  Icons.drag_indicator,
+                  size: 16,
+                  color: C.inkSoft,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _labelledPhoto(String label, ListingImage? image) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: T.caption),
-        const SizedBox(height: Space.xs),
-        ClipRRect(
-          borderRadius: Radii.controlAll,
-          child: AspectRatio(
-            aspectRatio: 1,
-            child: image == null
-                ? const DecoratedBox(decoration: BoxDecoration(color: C.bone))
-                : AuthedImage(
-                    storagePath: image.imageUrl,
-                    semanticLabel: '$label photograph',
-                    fit: BoxFit.cover,
-                  ),
-          ),
-        ),
-      ],
+/// A small "BEFORE"/"AFTER" corner label, legible over any photograph
+/// regardless of its own colours — the reason for the dark scrim rather
+/// than relying on the photo behind it for contrast.
+class _CompareTag extends StatelessWidget {
+  const _CompareTag(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: Radii.controlAll,
+      ),
+      child: Text(
+        label,
+        style: T.caption.copyWith(color: C.white, letterSpacing: 0.6),
+      ),
     );
   }
 }

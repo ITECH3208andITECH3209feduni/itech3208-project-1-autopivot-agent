@@ -15,17 +15,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'api/models/vehicle_listing.dart';
 import 'auth/auth_controller.dart';
 import 'design/theme.dart';
 import 'design/tokens.dart';
 import 'design/typography.dart';
 import 'features/change_password/change_password_screen.dart';
+import 'features/dashboard/dashboard_screen.dart';
 import 'features/listing_detail/listing_detail_screen.dart';
 import 'features/listings/listings_screen.dart';
+import 'features/settings/app_settings_screen.dart';
 import 'features/settings/dealerships_screen.dart';
 import 'features/settings/team_screen.dart';
+import 'features/settings/welcome_tour_screen.dart';
 import 'features/sign_in/sign_in_screen.dart';
 import 'routes.dart';
+import 'settings/app_lock.dart';
 import 'widgets/app_shell.dart';
 
 /// Rebuilds the router's redirect decision whenever [AuthState] changes.
@@ -49,7 +54,7 @@ final _routerRefreshProvider = Provider<_RouterRefreshListenable>((ref) {
 
 final _routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
-    initialLocation: AppRoutes.listings,
+    initialLocation: AppRoutes.home,
     refreshListenable: ref.watch(_routerRefreshProvider),
     routes: [
       GoRoute(
@@ -61,18 +66,25 @@ final _routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ChangePasswordScreen(),
       ),
       // Outside the shell deliberately: this is a drill-down from the
-      // account sheet's Settings row, not part of the shell's own
-      // navigation, and a team roster has no business under a floating
-      // camera action. Unlike AppRoutes.dealerships below, this is never
-      // anyone's home screen — a dealership_admin's home is still the
-      // vehicles list — so it has no need of the shell's header either. Any
-      // signed-in user can reach the route itself — the actual gate is that
-      // nothing links here for anyone but a dealership_admin
-      // (app_shell.dart), and every request the screen makes is
-      // independently re-checked server-side regardless.
+      // account sheet's Team row, not part of the shell's own navigation,
+      // and a team roster has no business under a floating camera action.
+      // Unlike AppRoutes.dealerships below, this is never anyone's home
+      // screen — a dealership_admin's home is still the dashboard — so it
+      // has no need of the shell's header either. Any signed-in user can
+      // reach the route itself — the actual gate is that nothing links here
+      // for anyone but a dealership_admin (app_shell.dart), and every
+      // request the screen makes is independently re-checked server-side
+      // regardless.
       GoRoute(
         path: AppRoutes.team,
         builder: (context, state) => const TeamScreen(),
+      ),
+      // Every role reaches this one, unlike the two rows above — it is app
+      // preferences, not administration, so who is signed in decides
+      // nothing about whether the row is offered.
+      GoRoute(
+        path: AppRoutes.settings,
+        builder: (context, state) => const AppSettingsScreen(),
       ),
       // A drill-down from AppRoutes.dealerships, not Settings directly — see
       // that route's own doc comment. The dealership's name rides along as
@@ -108,13 +120,17 @@ final _routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) => AppShell(child: child),
         routes: [
           GoRoute(
-            path: AppRoutes.listings,
+            path: AppRoutes.home,
+            builder: (context, state) => const DashboardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.vehicles,
             builder: (context, state) => const ListingsScreen(),
           ),
           // Unlike AppRoutes.team, this one IS inside the shell: it is
           // platform_admin's home screen (see the redirect below), not only
           // a Settings drill-down, so it needs the header for account access
-          // and sign-out the same as the vehicles list does for every other
+          // and sign-out the same as the dashboard does for every other
           // role. app_shell.dart already hides the camera FAB for this role.
           GoRoute(
             path: AppRoutes.dealerships,
@@ -134,7 +150,12 @@ final _routerProvider = Provider<GoRouter>((ref) {
                   message: 'That vehicle could not be found.',
                 );
               }
-              return ListingDetailScreen(listingId: id);
+              return ListingDetailScreen(
+                listingId: id,
+                preview: state.extra is VehicleListing
+                    ? state.extra as VehicleListing
+                    : null,
+              );
             },
           ),
         ],
@@ -172,21 +193,22 @@ final _routerProvider = Provider<GoRouter>((ref) {
                 : AppRoutes.changePassword;
           }
           // A platform administrator belongs to no dealership, so the
-          // vehicles list — every other role's home screen — has nothing in
-          // it for them and its own API call refuses them outright
-          // (`_dealership_id` in routes_listings.py). Dealerships is the
-          // equivalent home screen for that role instead, the same swap
-          // app_shell.dart's own nav already makes.
-          if (target == AppRoutes.listings && user.role == 'platform_admin') {
+          // dashboard — every other role's home screen — has nothing in it
+          // for them and its own API calls refuse them outright
+          // (`_dealership_id` in routes_dashboard.py / routes_listings.py).
+          // Dealerships is the equivalent home screen for that role instead,
+          // the same swap app_shell.dart's own nav already makes.
+          if (target == AppRoutes.home && user.role == 'platform_admin') {
             return AppRoutes.dealerships;
           }
           // A signed-in user with nothing left to do on sign-in or
           // change-password is sent to their home screen; anywhere else
           // they were already headed is left alone.
-          if (target == AppRoutes.signIn || target == AppRoutes.changePassword) {
+          if (target == AppRoutes.signIn ||
+              target == AppRoutes.changePassword) {
             return user.role == 'platform_admin'
                 ? AppRoutes.dealerships
-                : AppRoutes.listings;
+                : AppRoutes.home;
           }
           return null;
       }
@@ -219,6 +241,18 @@ class AutoPivotApp extends ConsumerWidget {
           AuthUnavailable(:final message) => _UnavailableScreen(
             message: message,
           ),
+          // Only a signed-in session has anything a lock screen is
+          // protecting — AuthSignedOut falls through to the sign-in screen
+          // itself below, which needs no gate of its own. The welcome tour
+          // sits inside the lock, not outside it: a locked phone has no
+          // business showing anything about how to use the app yet, and
+          // only shows itself at all once mustChangePassword is behind
+          // them — a screen they cannot leave is not the moment for it.
+          AuthSignedIn(:final mustChangePassword) => AppLockGate(
+            child: mustChangePassword
+                ? (child ?? const SizedBox.shrink())
+                : WelcomeTourGate(child: child ?? const SizedBox.shrink()),
+          ),
           _ => child ?? const SizedBox.shrink(),
         };
       },
@@ -247,7 +281,11 @@ class _InvalidRouteScreen extends StatelessWidget {
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(Space.xl),
-            child: Text(message, style: T.bodySmall, textAlign: TextAlign.center),
+            child: Text(
+              message,
+              style: T.bodySmall,
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
       ),
@@ -268,9 +306,7 @@ class _SplashScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Scaffold(
       backgroundColor: C.paper,
-      body: Center(
-        child: CircularProgressIndicator(color: C.forest),
-      ),
+      body: Center(child: CircularProgressIndicator(color: C.forest)),
     );
   }
 }

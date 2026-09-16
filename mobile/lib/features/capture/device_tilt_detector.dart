@@ -95,20 +95,20 @@ class DeviceTiltDetector {
   static const double _smoothingWeight = 0.15;
 
   void start(void Function(TiltReading reading) onReading) {
-    _subscription = accelerometerEventStream(
-      samplingPeriod: SensorInterval.uiInterval,
-    ).listen((event) {
-      final rawPitch =
-          _degrees(math.atan2(event.z, event.y)) * invertPitch;
-      final rawRoll = _degrees(math.atan2(event.x, event.y)) * invertRoll;
+    _subscription =
+        accelerometerEventStream(
+          samplingPeriod: SensorInterval.uiInterval,
+        ).listen((event) {
+          final rawPitch = _degrees(math.atan2(event.z, event.y)) * invertPitch;
+          final rawRoll = _degrees(math.atan2(event.x, event.y)) * invertRoll;
 
-      _smoothedPitch = _ema(_smoothedPitch, rawPitch);
-      _smoothedRoll = _ema(_smoothedRoll, rawRoll);
+          _smoothedPitch = _ema(_smoothedPitch, rawPitch);
+          _smoothedRoll = _ema(_smoothedRoll, rawRoll);
 
-      onReading(
-        TiltReading(pitchDeg: _smoothedPitch!, rollDeg: _smoothedRoll!),
-      );
-    });
+          onReading(
+            TiltReading(pitchDeg: _smoothedPitch!, rollDeg: _smoothedRoll!),
+          );
+        });
   }
 
   double _ema(double? previous, double sample) {

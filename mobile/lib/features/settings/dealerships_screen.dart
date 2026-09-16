@@ -33,6 +33,7 @@ import '../../design/tokens.dart';
 import '../../design/typography.dart';
 import '../../routes.dart';
 import '../../widgets/primitives.dart';
+import '../../widgets/skeleton.dart';
 
 // ── Load state ──────────────────────────────────────────────────────────────
 
@@ -80,10 +81,39 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
 
   bool _creating = false;
 
+  final _searchController = TextEditingController();
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
     _load();
+    _searchController.addListener(() {
+      setState(() => _query = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Client-side, the same reasoning as `team_screen.dart`'s own
+  /// `_visibleUsers`: the platform holds every dealership in memory already
+  /// once loaded, and the list is nowhere near large enough yet to need a
+  /// server-side search instead.
+  List<Dealership> _visibleDealerships(List<Dealership> dealerships) {
+    if (_query.isEmpty) return dealerships;
+    return dealerships.where((d) {
+      final haystack = [
+        d.name,
+        d.location,
+        d.contactName,
+        d.contactEmail,
+      ].whereType<String>().join(' ').toLowerCase();
+      return haystack.contains(_query);
+    }).toList();
   }
 
   Future<void> _load() async {
@@ -178,7 +208,26 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
   Widget _loadingBody() => Column(
     children: [
       Align(alignment: Alignment.centerLeft, child: _backButton()),
-      const Expanded(child: Center(child: CircularProgressIndicator())),
+      Expanded(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            Space.lg,
+            Space.sm,
+            Space.lg,
+            Space.lg,
+          ),
+          child: ShimmerGroup(
+            child: Column(
+              children: [
+                for (var i = 0; i < 4; i++) ...[
+                  const SkeletonCard(lines: [0.55]),
+                  if (i < 3) const SizedBox(height: Space.sm),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     ],
   );
 
@@ -204,6 +253,8 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
   );
 
   Widget _loadedBody(List<Dealership> dealerships) {
+    final visible = _visibleDealerships(dealerships);
+
     return CustomScrollView(
       slivers: [
         SliverPadding(
@@ -215,14 +266,19 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
           ),
           sliver: SliverToBoxAdapter(child: _header()),
         ),
+        if (dealerships.length > 1)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.md),
+            sliver: SliverToBoxAdapter(
+              child: SearchField(
+                controller: _searchController,
+                hintText: 'Search by name, location or contact',
+              ),
+            ),
+          ),
         if (_errorMessage != null)
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(
-              Space.lg,
-              0,
-              Space.lg,
-              Space.md,
-            ),
+            padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.md),
             sliver: SliverToBoxAdapter(child: AppErrorBanner(_errorMessage!)),
           ),
         SliverPadding(
@@ -234,12 +290,19 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
                     body: 'Create the first one below.',
                   ),
                 )
+              : visible.isEmpty
+              ? const SliverToBoxAdapter(
+                  child: EmptyState(
+                    title: 'No dealerships match',
+                    body: 'Try a different name, location or contact.',
+                  ),
+                )
               : SliverList.separated(
-                  itemCount: dealerships.length,
+                  itemCount: visible.length,
                   separatorBuilder: (context, index) =>
                       const SizedBox(height: Space.sm),
                   itemBuilder: (context, index) =>
-                      _DealershipRow(dealership: dealerships[index]),
+                      _DealershipRow(dealership: visible[index]),
                 ),
         ),
       ],
@@ -288,7 +351,10 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
                   excludeSemantics: true,
                   child: IconButton(
                     onPressed: _openCreateSheet,
-                    icon: const Icon(Icons.add_business_outlined, color: C.forest),
+                    icon: const Icon(
+                      Icons.add_business_outlined,
+                      color: C.forest,
+                    ),
                     tooltip: 'Create dealership',
                   ),
                 ),
@@ -395,8 +461,7 @@ class _CreateDealershipSheet extends StatefulWidget {
   const _CreateDealershipSheet();
 
   @override
-  State<_CreateDealershipSheet> createState() =>
-      _CreateDealershipSheetState();
+  State<_CreateDealershipSheet> createState() => _CreateDealershipSheetState();
 }
 
 class _CreateDealershipSheetState extends State<_CreateDealershipSheet> {

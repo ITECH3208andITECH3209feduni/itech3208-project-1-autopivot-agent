@@ -169,8 +169,7 @@ logging.config.dictConfig(_LOGGING_CONFIG)
 logger = logging.getLogger("autopivot")
 
 # ── Shared Segmentation Transform ──────────────────────────────────────────────
-# Both RMBG-2.0 and BiRefNet use the same ImageNet normalisation and 1024×1024
-# input resolution, so one transform covers both models.
+# BiRefNet uses ImageNet normalisation and a 1024×1024 input resolution.
 
 _SEG_SIZE = (1024, 1024)
 _seg_transform = transforms.Compose([
@@ -181,20 +180,28 @@ _seg_transform = transforms.Compose([
 
 # ── Model Registry ─────────────────────────────────────────────────────────────
 # Developed by Vadim Rudoi — centralised registry with:
-#   • RMBG-2.0 as primary background removal model
-#   • BiRefNet as automatic fallback if RMBG-2.0 is unavailable
+#   • BiRefNet as the background removal model
 #   • Independent health tracking per model
 #   • Lazy loading for vehicle and plate detectors
+#
+# BRIA's RMBG-2.0 was the original background removal model here, and was
+# removed — not merely deprioritised — because its free weights are licensed
+# CC BY-NC 4.0 (non-commercial only; see huggingface.co/briaai/RMBG-2.0's own
+# license terms). This product is commercial, so that model was never legally
+# usable in production regardless of which position it held in a fallback
+# chain. BiRefNet's general-purpose checkpoint (ZhengPeng7/BiRefNet, not the
+# -portrait variant, which trains partly on the academic P3M-10k dataset) is
+# MIT-licensed and was already integrated here as the fallback, so promoting
+# it to the only model was the smallest change that actually fixes the
+# problem, rather than reaching for an unfamiliar third model.
 
 
 class ModelRegistry:
     """Centralised model registry with lazy loading and per-model health tracking."""
 
     def __init__(self) -> None:
-        # Background removal — primary + fallback
-        self._rmbg: Optional[AutoModelForImageSegmentation] = None
+        # Background removal
         self._birefnet: Optional[AutoModelForImageSegmentation] = None
-        self._rmbg_ok = False
         self._birefnet_ok = False
 
         # Detection models (lazy)
@@ -216,9 +223,9 @@ class ModelRegistry:
         # first mid-inference.
         self._vehicle_lock = threading.RLock()
         self._plates_lock = threading.RLock()
-        # Background models load at startup, which is single-threaded, but
-        # _remove_background also promotes BiRefNet mid-request when RMBG-2.0
-        # raises during inference. That path is concurrent.
+        # The background model loads once at startup, which is
+        # single-threaded — kept for the same reason the other two locks
+        # exist, in case a future change makes it lazy or reloadable.
         self._bg_lock = threading.RLock()
 
     # ── Read-only properties ──
@@ -239,45 +246,20 @@ class ModelRegistry:
             self._load_plates()
         return self._plates
 
-    # ── Background model loaders ──
-
-    def _load_rmbg(self) -> None:
-        """
-        Developed by Vadim Rudoi — load BRIA RMBG-2.0 as the primary
-        background removal model. Requires a HuggingFace token from an account
-        that has accepted the BRIA license on https://huggingface.co/briaai/RMBG-2.0
-        """
-        logger.info("Loading primary background model — briaai/RMBG-2.0")
-        try:
-            self._rmbg = (
-                AutoModelForImageSegmentation.from_pretrained(
-                    "briaai/RMBG-2.0",
-                    trust_remote_code=True,
-                    torch_dtype=torch.float32,
-                    token=HF_AUTH_TOKEN or True,
-                )
-                .eval()
-                .to(self._device)
-            )
-            self._rmbg_ok = True
-            logger.info("RMBG-2.0 loaded on %s", self._device)
-        except Exception as exc:
-            logger.warning(
-                "RMBG-2.0 failed to load: %s. Falling back to BiRefNet.",
-                exc,
-                exc_info=True,
-            )
+    # ── Background model loader ──
 
     def _load_birefnet(self) -> None:
         """
-        Developed by Vadim Rudoi — load BiRefNet as the fallback background
-        removal model, used whenever RMBG-2.0 is unavailable.
+        Developed by Vadim Rudoi — load BiRefNet, the background removal
+        model. No HuggingFace authentication required — unlike RMBG-2.0
+        (removed; see this file's Model Registry doc comment), BiRefNet's
+        general-purpose checkpoint carries no license gate to accept.
         """
         with self._bg_lock:
             if self._birefnet_ok:
                 return
 
-            logger.info("Loading fallback background model — ZhengPeng7/BiRefNet")
+            logger.info("Loading background model — ZhengPeng7/BiRefNet")
             try:
                 self._birefnet = (
                     AutoModelForImageSegmentation.from_pretrained(
@@ -369,28 +351,20 @@ class ModelRegistry:
     # ── Active model resolution ──
 
     def active_bg_model(self):
-        """Return the active background removal model and its identifier."""
-        if self._rmbg_ok:
-            return self._rmbg, "briaai/RMBG-2.0"
+        """Return the background removal model and its identifier."""
         if self._birefnet_ok:
             return self._birefnet, "ZhengPeng7/BiRefNet"
         raise RuntimeError(
             "No background removal model is loaded. "
-            "Check startup logs for RMBG-2.0 / BiRefNet errors."
+            "Check startup logs for a BiRefNet error."
         )
 
     def health(self) -> dict:
-        if self._rmbg_ok:
-            active_bg = "briaai/RMBG-2.0"
-        elif self._birefnet_ok:
-            active_bg = "ZhengPeng7/BiRefNet (fallback)"
-        else:
-            active_bg = "none"
+        active_bg = "ZhengPeng7/BiRefNet" if self._birefnet_ok else "none"
 
         return {
             "device": self._device,
             "active_bg_model": active_bg,
-            "rmbg_loaded": self._rmbg_ok,
             "birefnet_loaded": self._birefnet_ok,
             "active_yolo_model": self.active_yolo,
             "active_yolo_role": self.active_yolo_role,
@@ -504,10 +478,10 @@ class PipelineProcessor:
 
 # ── Application Lifespan ───────────────────────────────────────────────────────
 # Developed by Vadim Rudoi — startup sequence:
-#   1. HuggingFace authentication (required for RMBG-2.0 and BiRefNet)
-#   2. Attempt RMBG-2.0 (primary) — failure is non-fatal, logged as WARNING
-#   3. If RMBG-2.0 failed, load BiRefNet (fallback) — failure IS fatal
-#   4. Detection models load lazily on first request
+#   1. HuggingFace authentication (raises YOLO26's download rate limit; not
+#      required by anything here, since BiRefNet needs no token)
+#   2. Load BiRefNet — failure IS fatal, there is no fallback background model
+#   3. Detection models load lazily on first request
 
 
 @asynccontextmanager
@@ -525,20 +499,13 @@ async def lifespan(app: FastAPI):
     elif HF_AUTH_TOKEN:
         logger.info("Using HuggingFace token from local hf auth login cache")
     else:
-        # Fixed by Vadim Rudoi — silent skip replaced with actionable warning.
-        logger.warning(
-            "HF_TOKEN is not set. RMBG-2.0 requires authentication — "
-            "BiRefNet will be used as the fallback. Set HF_TOKEN and accept "
-            "the BRIA license at https://huggingface.co/briaai/RMBG-2.0 "
-            "to enable the primary model."
+        logger.info(
+            "HF_TOKEN is not set — downloading YOLO26 anonymously, subject to "
+            "Hugging Face's unauthenticated rate limit. No model this pipeline "
+            "uses requires authentication."
         )
 
-    # Step 1 — try primary model
-    registry._load_rmbg()
-
-    # Step 2 — if primary failed, load fallback (fatal if also fails)
-    if not registry._rmbg_ok:
-        registry._load_birefnet()
+    registry._load_birefnet()
 
     # Hands the pipeline to the job orchestrator in api/processing.py. Until
     # this runs, POST /api/listings/{id}/process answers 503 rather than
@@ -662,9 +629,8 @@ def _resolve_yolo_model_path(model_ref: str) -> str:
 
 def _run_segmentation(model, image: Image.Image) -> Image.Image:
     """
-    Developed by Vadim Rudoi — shared inference path for both RMBG-2.0 and
-    BiRefNet. Both models use the same ImageNet normalisation and produce a
-    single-channel sigmoid output that is used directly as an alpha mask.
+    Developed by Vadim Rudoi — inference path for BiRefNet, which produces a
+    single-channel sigmoid output used directly as an alpha mask.
     """
     rgb = image.convert("RGB")
     tensor = _seg_transform(rgb).unsqueeze(0).to(registry.device)
@@ -688,26 +654,14 @@ def _run_segmentation(model, image: Image.Image) -> Image.Image:
 
 def _remove_background(image: Image.Image) -> tuple[Image.Image, str]:
     """
-    Developed by Vadim Rudoi — attempt RMBG-2.0 (primary). If it raises at
-    inference time (e.g. a runtime error after a successful load), fall back to
-    BiRefNet automatically and log a warning. Returns the result image and the
-    name of the model that was actually used.
+    Developed by Vadim Rudoi — run BiRefNet. Returns the result image and the
+    model identifier, kept as a tuple rather than a bare image for the same
+    reason it always was: every caller logs and records which model actually
+    produced a result, which mattered more when there were two candidates but
+    costs nothing to keep now that there is one.
     """
     model, name = registry.active_bg_model()
-
-    # Primary attempt
-    try:
-        return _run_segmentation(model, image), name
-    except Exception as exc:
-        # Only falls through to fallback if the primary was RMBG-2.0
-        if name == "briaai/RMBG-2.0":
-            logger.warning(
-                "RMBG-2.0 inference failed (%s) — retrying with BiRefNet fallback.", exc
-            )
-            if not registry._birefnet_ok:
-                registry._load_birefnet()
-            return _run_segmentation(registry._birefnet, image), "ZhengPeng7/BiRefNet"
-        raise
+    return _run_segmentation(model, image), name
 
 
 def _detect_vehicle(image_rgb: Image.Image, conf: float = 0.35) -> Optional[dict]:
@@ -1127,8 +1081,7 @@ async def api_status() -> dict:
         "status": "online",
         "models": {
             "vehicle": f"YOLO ({registry.active_yolo})",
-            "background_primary": "briaai/RMBG-2.0",
-            "background_fallback": "ZhengPeng7/BiRefNet",
+            "background": "ZhengPeng7/BiRefNet",
             "plate": "nickmuchi/yolos-small-finetuned-license-plate-detection",
         },
         **registry.health(),
@@ -1138,8 +1091,8 @@ async def api_status() -> dict:
 @app.post("/remove-background", tags=["Processing"])
 async def api_remove_background(file: UploadFile = File(...)) -> dict:
     """
-    Remove image background using the active model (RMBG-2.0 or BiRefNet
-    fallback). No vehicle detection or plate treatment is performed.
+    Remove image background using BiRefNet. No vehicle detection or plate
+    treatment is performed.
     """
     content = await file.read()
     _validate_upload(file, content)
@@ -1173,7 +1126,7 @@ async def api_process_vehicle(
 
       Step 1  YOLO vehicle detection — abort early if no vehicle found.
       Step 2  Crop vehicle region with padding.
-      Step 3  Background removal via RMBG-2.0 (primary) → BiRefNet (fallback).
+      Step 3  Background removal via BiRefNet.
       Step 4  Composite background-removed crop back onto full-size canvas.
       Step 4  YOLOS licence-plate detection on the crop, filtered by geometry
               and by how much of each box lands on the vehicle cutout.
@@ -1221,7 +1174,7 @@ async def api_process_vehicle(
         vehicle["class"], vehicle["score"],
     )
 
-    # ── Step 3: Background removal (RMBG-2.0 → BiRefNet fallback) ──
+    # ── Step 3: Background removal (BiRefNet) ──
     crop, coords = _crop_with_padding(image, vehicle["box"])
     bg_removed, model_used = _remove_background(crop)
     logger.info("Background removed — model=%s", model_used)
@@ -1393,8 +1346,7 @@ else:
 
 if __name__ == "__main__":
     logger.info("Starting AutoPivot — http://%s:%d", HOST, PORT)
-    logger.info("Primary BG model  : briaai/RMBG-2.0")
-    logger.info("Fallback BG model : ZhengPeng7/BiRefNet")
+    logger.info("Background model  : ZhengPeng7/BiRefNet")
     logger.info("YOLO model        : %s", YOLO_MODEL_PATH)
     logger.info("Device            : %s", "cuda" if torch.cuda.is_available() else "cpu")
     uvicorn.run(

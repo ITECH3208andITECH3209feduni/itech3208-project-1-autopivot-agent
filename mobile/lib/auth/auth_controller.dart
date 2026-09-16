@@ -107,10 +107,7 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  Future<void> signIn({
-    required String email,
-    required String password,
-  }) async {
+  Future<void> signIn({required String email, required String password}) async {
     final result = await _api.login(email: email.trim(), password: password);
     await _tokens.write(result.accessToken);
     _api.token = result.accessToken;

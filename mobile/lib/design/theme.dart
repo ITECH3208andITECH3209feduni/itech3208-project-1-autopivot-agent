@@ -119,11 +119,7 @@ ThemeData buildTheme() {
       ),
     ),
 
-    dividerTheme: const DividerThemeData(
-      color: C.line,
-      thickness: 1,
-      space: 1,
-    ),
+    dividerTheme: const DividerThemeData(color: C.line, thickness: 1, space: 1),
 
     cardTheme: const CardThemeData(
       color: C.white,

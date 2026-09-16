@@ -44,6 +44,7 @@ dependencies:
   google_mlkit_object_detection: ^0.17.1
   sensors_plus: ^7.1.0
   path_provider: ^2.1.5
+  local_auth: ^3.0.2
 
 dev_dependencies:
   flutter_test:

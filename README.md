@@ -5,7 +5,7 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 ## Features
 
 - Upload a vehicle image and process it through the full pipeline.
-- Remove image backgrounds with an RMBG-2.0 primary model and BiRefNet version 11 fallback.
+- Remove image backgrounds with BiRefNet (MIT-licensed — RMBG-2.0 was dropped as CC BY-NC 4.0, non-commercial only).
 - Detect vehicles with YOLO26.
 - Detect and hide license plates with nickmuchi/yolos-small-finetuned-license-plate-detection.
 - Upload optional custom backgrounds and numberplate overlays.
@@ -46,7 +46,7 @@ AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a we
 
 - Python 3.10+
 - A machine with enough RAM/VRAM for the selected vision models.
-- **Required**: `HF_TOKEN` for Hugging Face authentication. RMBG-2.0 requires access to the BRIA model license; BiRefNet is used as fallback when the primary model is unavailable.
+- **Optional**: `HF_TOKEN` for Hugging Face authentication. Nothing in this pipeline requires it — BiRefNet needs no auth at all — but it raises YOLO26's anonymous download rate limit.
 
 Install dependencies. There are two sets:
 
@@ -70,7 +70,7 @@ useful.
 The backend uses environment variables:
 
 ```bash
-HF_TOKEN=your_huggingface_token        # required for RMBG-2.0
+HF_TOKEN=your_huggingface_token        # optional — raises YOLO26's download rate limit
 HOST=0.0.0.0                           # default
 PORT=8000                              # default
 MAX_FILE_MB=20                         # default upload limit

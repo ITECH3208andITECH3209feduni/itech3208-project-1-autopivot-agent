@@ -12,6 +12,7 @@ import 'package:dio/dio.dart';
 
 import 'api_exception.dart';
 import 'models/backdrop.dart';
+import 'models/dashboard_stats.dart';
 import 'models/dealership.dart';
 import 'models/dealership_provisioned.dart';
 import 'models/dealership_user.dart';
@@ -184,6 +185,24 @@ class ApiClient {
     return VehicleListingDetail.fromJson(json);
   }
 
+  /// Moves a listing's sales status — currently only used to archive one
+  /// from a swipe on the vehicles list. `status` is one of 'draft', 'active',
+  /// 'sold', 'archived', matching `VehicleListingUpdate.status` server-side;
+  /// this is a thin wrapper around that same PATCH, not a dedicated endpoint.
+  Future<VehicleListing> updateListingStatus(
+    int listingId,
+    String status,
+  ) async {
+    final json = await _send(
+      () => _dio.patch(
+        '/api/listings/$listingId',
+        data: {'status': status},
+        options: _options(),
+      ),
+    );
+    return VehicleListing.fromJson(json);
+  }
+
   /// Creates a new listing. `make`, `model` and `year` are the server's own
   /// minimum — they are `NOT NULL` columns, so a listing genuinely cannot
   /// exist from photographs alone, which is why the capture screen asks for
@@ -328,6 +347,16 @@ class ApiClient {
       () => _dio.get('/api/dashboard/counts', options: _options()),
     );
     return NavCounts.fromJson(json);
+  }
+
+  /// This month's figures for the dashboard's own masthead — see
+  /// [DashboardStats]'s own doc comment for why this is a separate call
+  /// from [counts] rather than the same numbers reused.
+  Future<DashboardStats> dashboardStats() async {
+    final json = await _send(
+      () => _dio.get('/api/dashboard/stats', options: _options()),
+    );
+    return DashboardStats.fromJson(json);
   }
 
   // ── Dealership team ─────────────────────────────────────────────────────
