@@ -11,12 +11,16 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import 'api_exception.dart';
+import 'models/backdrop.dart';
 import 'models/dealership.dart';
 import 'models/dealership_provisioned.dart';
 import 'models/dealership_user.dart';
 import 'models/listing_detail.dart';
 import 'models/listing_image.dart';
 import 'models/nav_counts.dart';
+import 'models/processing_summary.dart';
+import 'models/url_import_result.dart';
+import 'models/url_vehicle_guess.dart';
 import 'models/user.dart';
 import 'models/vehicle_listing.dart';
 
@@ -211,9 +215,7 @@ class ApiClient {
   ) async {
     final formData = FormData();
     for (final path in filePaths) {
-      formData.files.add(
-        MapEntry('files', await MultipartFile.fromFile(path)),
-      );
+      formData.files.add(MapEntry('files', await MultipartFile.fromFile(path)));
     }
     final json = await _sendList(
       () => _dio.post(
@@ -238,6 +240,87 @@ class ApiClient {
         options: _options(),
       ),
     );
+  }
+
+  /// Guesses year/make/model/variant from a listing URL's own slug — see
+  /// `UrlVehicleGuess`'s own doc comment. Never fetches the far page itself,
+  /// so this is cheap enough to call as soon as a dealer pastes a URL, before
+  /// any listing exists to attach it to.
+  Future<UrlVehicleGuess> parseListingUrl(String url) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/listings/parse-url',
+        data: {'url': url},
+        options: _options(),
+      ),
+    );
+    return UrlVehicleGuess.fromJson(json);
+  }
+
+  /// Imports photographs found on a listing page directly onto [listingId].
+  /// Not every site can be read this way — see `api/url_import.py`'s own
+  /// doc comment for the two known failure shapes — and a refusal surfaces
+  /// as an ordinary [ApiRequestException] whose message names the reason.
+  Future<UrlImportResult> importImagesFromUrl(int listingId, String url) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/listings/$listingId/images/from-url',
+        data: {'url': url},
+        options: _options(),
+      ),
+    );
+    return UrlImportResult.fromJson(json);
+  }
+
+  /// Overrides the classifier's exclusion for one original photograph — see
+  /// the server route's own doc comment for why this is a one-way door
+  /// rather than a toggle.
+  Future<ListingImage> includeImage(int listingId, int imageId) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/listings/$listingId/images/$imageId/include',
+        options: _options(),
+      ),
+    );
+    return ListingImage.fromJson(json);
+  }
+
+  /// The dealership's backdrop library, to offer as a choice before queueing
+  /// a listing for processing. Empty for a dealership that has not added one
+  /// yet — there is no shipped default set (see `routes_backdrops.py`).
+  Future<List<Backdrop>> backdrops() async {
+    final json = await _sendList(
+      () => _dio.get('/api/backdrops', options: _options()),
+    );
+    return json
+        .map((e) => Backdrop.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Queues every unprocessed photograph on a listing. [backdropId] is
+  /// optional — without one the vehicle comes back on a transparent
+  /// background, per `ProcessRequest`'s own doc comment.
+  Future<ProcessingSummary> processListing(
+    int listingId, {
+    int? backdropId,
+  }) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/listings/$listingId/process',
+        data: {'backdrop_id': ?backdropId},
+        options: _options(),
+      ),
+    );
+    return ProcessingSummary.fromJson(json);
+  }
+
+  /// Progress for a listing already queued — what a polling results screen
+  /// asks for. See `ProcessingSummary.isInProgress` for when to stop.
+  Future<ProcessingSummary> listingJobs(int listingId) async {
+    final json = await _send(
+      () => _dio.get('/api/listings/$listingId/jobs', options: _options()),
+    );
+    return ProcessingSummary.fromJson(json);
   }
 
   Future<NavCounts> counts() async {
@@ -388,10 +471,7 @@ class ApiClient {
     try {
       response = await _dio.get(
         path,
-        options: Options(
-          headers: _headers,
-          responseType: ResponseType.bytes,
-        ),
+        options: Options(headers: _headers, responseType: ResponseType.bytes),
       );
     } on DioException catch (e) {
       throw _fromDio(e);
@@ -431,9 +511,7 @@ class ApiClient {
   /// For a 204 with no body — deletion, mainly. `_send`/`_sendList` both
   /// throw on exactly this response shape, since a missing body is normally
   /// a sign something went wrong; here it is the success case.
-  Future<void> _guardVoid(
-    Future<Response<dynamic>> Function() request,
-  ) async {
+  Future<void> _guardVoid(Future<Response<dynamic>> Function() request) async {
     final response = await _guard(request);
     _throwForStatus(response, null);
   }

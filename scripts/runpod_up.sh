@@ -102,11 +102,19 @@ if [ -z "${SEED_ADMIN_PASSWORD:-}" ]; then
   SEED_ADMIN_PASSWORD="autopivot-demo-2026"
   remember SEED_ADMIN_PASSWORD "$SEED_ADMIN_PASSWORD"
 fi
+if [ -z "${SEED_PLATFORM_PASSWORD:-}" ]; then
+  # Same reasoning as SEED_ADMIN_PASSWORD above, and deliberately a different
+  # word from it — the two accounts sit at different roles (one dealership's
+  # admin vs. the whole platform's), and a shared password makes it easy to
+  # sign into the wrong one without noticing.
+  SEED_PLATFORM_PASSWORD="autopivot-platform-2026"
+  remember SEED_PLATFORM_PASSWORD "$SEED_PLATFORM_PASSWORD"
+fi
 if [ -z "${STORAGE_ROOT:-}" ]; then
   STORAGE_ROOT="$VOLUME/autopivot-storage"
   remember STORAGE_ROOT "$STORAGE_ROOT"
 fi
-export JWT_SECRET SEED_ADMIN_PASSWORD STORAGE_ROOT
+export JWT_SECRET SEED_ADMIN_PASSWORD SEED_PLATFORM_PASSWORD STORAGE_ROOT
 mkdir -p "$STORAGE_ROOT"
 
 mountpoint -q "$VOLUME" 2>/dev/null \
@@ -274,8 +282,12 @@ printf '  URL       %s\n' "$URL"
 if [ "$PROXY_READY" = true ]; then
   printf '  Stable    %s  (verified — this one survives a pod restart)\n' "$PROXY_URL"
 fi
-printf '  Email     ana.reid@northshore.co.nz\n'
-printf '  Password  %s\n' "$SEED_ADMIN_PASSWORD"
+printf '  Dealership admin\n'
+printf '    Email     ana.reid@northshore.co.nz\n'
+printf '    Password  %s\n' "$SEED_ADMIN_PASSWORD"
+printf '  Platform admin (belongs to no dealership — for testing dealership creation)\n'
+printf '    Email     team@autopivot.app\n'
+printf '    Password  %s\n' "$SEED_PLATFORM_PASSWORD"
 printf '\033[1m════════════════════════════════════════════════════════\033[0m\n\n'
 if [ -n "$PROXY_URL" ] && [ "$PROXY_READY" != true ]; then
   cat <<PROXY

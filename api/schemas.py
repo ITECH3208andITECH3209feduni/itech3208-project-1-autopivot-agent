@@ -185,6 +185,18 @@ class UrlImportResult(BaseModel):
     note: Optional[str] = None
 
 
+class UrlVehicleGuess(BaseModel):
+    """What url_import.guess_vehicle_from_url read out of a pasted URL's own
+    slug — every field is optional because a URL that does not match a known
+    shape yields nothing, not a wrong guess.
+    """
+
+    year: Optional[int] = None
+    make: Optional[str] = None
+    model: Optional[str] = None
+    variant: Optional[str] = None
+
+
 class ProcessingJobOut(BaseModel):
     id: int
     status: str

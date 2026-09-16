@@ -31,6 +31,7 @@ from api.schemas import (
     ProcessRequest,
     UrlImportRequest,
     UrlImportResult,
+    UrlVehicleGuess,
     VehicleListingCreate,
     VehicleListingDetail,
     VehicleListingOut,
@@ -215,6 +216,22 @@ def create_listing(
         **_serialise(listing, 0).model_dump(),
         description=listing.description,
         images=[],
+    )
+
+
+@router.post("/parse-url", response_model=UrlVehicleGuess)
+def parse_listing_url(body: UrlImportRequest, user: CurrentUser) -> UrlVehicleGuess:
+    """
+    Guess year/make/model/variant from a listing URL, before a listing exists
+    to attach it to — see url_import.guess_vehicle_from_url for which sites
+    this works against. Never fetches the page, so an empty guess back is
+    immediate, not a timeout.
+    """
+    guess = url_import.guess_vehicle_from_url(body.url)
+    if guess is None:
+        return UrlVehicleGuess()
+    return UrlVehicleGuess(
+        year=guess.year, make=guess.make, model=guess.model, variant=guess.variant
     )
 
 
@@ -680,6 +697,49 @@ def listing_jobs(
     """Progress for a listing — what the Processing screen polls."""
     listing = _owned_listing(session, user, listing_id)
     return _summarise(session, listing)
+
+
+@router.post("/{listing_id}/images/{image_id}/include", response_model=ImageOut)
+def include_image(
+    listing_id: int, image_id: int, user: CurrentUser, session: DbSession
+) -> ImageOut:
+    """
+    Override the classifier's exclusion for one original photograph.
+
+    Until now, deleting was the only action available for a photograph the
+    classifier decided was not usable — an interior shot, a close-up,
+    something it could not identify. A dealer looking at their own vehicle
+    knows more about it than a model that guessed wrong, and should be able
+    to say "use it anyway" instead of only "get rid of it".
+
+    Sets image_kind to 'exterior' directly rather than adding a separate
+    override flag — the smallest change that makes ListingImage.isExcluded
+    false everywhere that field is already read, both here and on the web
+    client. The trade-off is real and worth naming: the classifier's original
+    guess for this photograph is overwritten, not merely superseded. That is
+    an acceptable cost for a manual override a dealer chose on purpose, but it
+    does mean this is a one-way door — there is no "undo" back to the
+    original classification once this has been called.
+    """
+    listing = _owned_listing(session, user, listing_id)
+    image = session.scalar(
+        select(Image).where(
+            Image.id == image_id, Image.vehicle_listing_id == listing.id
+        )
+    )
+    if image is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found.")
+    if image.image_type != "original":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only an original photograph can be included this way.",
+        )
+
+    image.image_kind = "exterior"
+    session.commit()
+    session.refresh(image)
+    logger.info("Image included despite classification — listing=%s image=%s", listing_id, image_id)
+    return _serialise_image(image)
 
 
 @router.delete(

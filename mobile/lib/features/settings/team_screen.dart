@@ -453,9 +453,9 @@ class _TeamMemberRow extends StatelessWidget {
 /// What the add sheet hands back — plain data, not a network call. The
 /// sheet's only job is collecting and validating; `_TeamScreenState`
 /// performs the actual request afterward and owns whatever it does with the
-/// result, the same split `capture_screen.dart`'s `_VehicleDetailsSheet`
-/// uses for the same reason: a sheet mid-close is not somewhere to be
-/// juggling a request's error state.
+/// result, the same split `review_screen.dart`'s overview step uses for the
+/// same reason: a sheet or screen mid-close is not somewhere to be juggling
+/// a request's error state.
 class _NewTeamMemberForm {
   const _NewTeamMemberForm({
     required this.email,

@@ -98,10 +98,16 @@ import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
 import 'capture_angles.dart';
+import 'capture_draft.dart';
 import 'device_tilt_detector.dart';
 import 'image_quality_detector.dart';
+import 'review_screen.dart';
 import 'vehicle_frame_detector.dart';
 import 'vehicle_silhouette_painter.dart';
+
+/// What the exit-confirmation dialog in [_CaptureScreenState._handleCloseRequest]
+/// was answered with.
+enum _QuitAction { discard, saveDraft }
 
 // ── Camera lifecycle state ──────────────────────────────────────────────────
 
@@ -314,6 +320,54 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         _updateHoldSteady();
       });
     });
+    // After the first frame, not inline here: offering to resume a draft
+    // means showing a dialog, which needs a BuildContext already attached to
+    // the tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _offerDraftResume());
+  }
+
+  /// Checks for a draft saved by a previous "Save Draft" (see
+  /// [_handleCloseRequest]) and, if one exists, asks whether to pick up where
+  /// it left off. Declining discards it outright rather than leaving it to be
+  /// silently overwritten by whatever gets saved next — an abandoned draft
+  /// sitting around unseen is worse than none at all.
+  Future<void> _offerDraftResume() async {
+    final draft = await loadCaptureDraft();
+    if (draft == null || !mounted) return;
+
+    final resume = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Resume your last capture?'),
+        content: Text(
+          '${draft.shotCount} of ${CaptureAngle.values.length} photographs '
+          'were saved before you left the camera.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Discard'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Resume'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+
+    if (resume == true) {
+      setState(() {
+        for (final MapEntry(key: angle, value: file) in draft.files.entries) {
+          _captured[angle] = XFile(file.path);
+        }
+        _skipped.addAll(draft.skipped);
+      });
+    } else {
+      await clearCaptureDraft();
+    }
   }
 
   @override
@@ -605,10 +659,40 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// this story eventually wants (see the doc comment at the top of this
   /// file) is a separate, additive backend change, not a blocker for
   /// getting real photographs into a real listing now.
+  /// Opens the review screen (grid → vehicle details) and acts on whatever
+  /// it closes with — see [ReviewResult]'s own doc comment for why every
+  /// branch carries the current photo map: a photo deleted mid-review is
+  /// never lost, whether the review ends in a retake or a submit.
   Future<void> _submit() async {
-    final details = await _showVehicleDetailsSheet();
-    if (details == null || !mounted) return;
+    final result = await Navigator.of(context).push<ReviewResult>(
+      MaterialPageRoute(
+        builder: (_) => ReviewScreen(initialCaptured: Map.of(_captured)),
+      ),
+    );
+    if (result == null || !mounted) return;
 
+    setState(() {
+      _captured
+        ..clear()
+        ..addAll(result.photos);
+    });
+
+    switch (result) {
+      case ReviewClosed():
+        return;
+      case ReviewRetake(:final angle):
+        _selectAngle(angle);
+      case ReviewSubmit(:final details, :final backdropId):
+        await _submitListing(details, backdropId);
+    }
+  }
+
+  /// Creates the listing, uploads every captured photograph and queues it
+  /// for processing — the pipeline used to only start once someone opened
+  /// the listing on the platform and asked for it there; this is the whole
+  /// reason the review screen asks for a backdrop up front rather than
+  /// leaving it for later.
+  Future<void> _submitListing(VehicleDetails details, int? backdropId) async {
     setState(() => _submitting = true);
     final api = ref.read(apiClientProvider);
     try {
@@ -620,6 +704,18 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       );
       final paths = _orderedCaptures.map((e) => e.value.path).toList();
       await api.uploadImages(listing.id, paths);
+
+      // A processing failure here does not undo the upload above — the
+      // photographs and the listing both exist either way, which is why
+      // this is its own try block with its own message rather than folding
+      // into the outer catch and implying the whole submit failed.
+      String? processingWarning;
+      try {
+        await api.processListing(listing.id, backdropId: backdropId);
+      } on ApiException catch (e) {
+        processingWarning = e.message;
+      }
+      await clearCaptureDraft();
       if (!mounted) return;
 
       await showDialog<void>(
@@ -627,9 +723,12 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         builder: (dialogContext) => AlertDialog(
           title: const Text('Uploaded'),
           content: Text(
-            '${paths.length} photograph${paths.length == 1 ? '' : 's'} '
-            'added to "${listing.title}". Pull to refresh the vehicles list '
-            'to see it.',
+            processingWarning == null
+                ? '${paths.length} photograph${paths.length == 1 ? '' : 's'} '
+                      'added to "${listing.title}" and sent for processing.'
+                : '${paths.length} photograph${paths.length == 1 ? '' : 's'} '
+                      'added to "${listing.title}", but processing could not '
+                      'be started: $processingWarning',
           ),
           actions: [
             TextButton(
@@ -661,16 +760,58 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     }
   }
 
-  Future<_VehicleDetails?> _showVehicleDetailsSheet() {
-    return showModalBottomSheet<_VehicleDetails>(
+  /// The close button and the system back gesture both land here — a
+  /// half-shot set is real work a photographer can lose by backing out
+  /// without meaning to, so neither is allowed to close this screen
+  /// silently once anything has been captured or skipped.
+  Future<void> _handleCloseRequest() async {
+    if (_captured.isEmpty && _skipped.isEmpty) {
+      (widget.onClose ?? () => Navigator.of(context).pop()).call();
+      return;
+    }
+
+    final action = await showDialog<_QuitAction>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: C.paper,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Quit the camera?'),
+        content: Text(
+          '${_captured.length} of ${CaptureAngle.values.length} photographs '
+          'have been taken. Save a draft to pick this back up later, or '
+          'discard everything.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: C.rust),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_QuitAction.discard),
+            child: const Text('Discard'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_QuitAction.saveDraft),
+            child: const Text('Save Draft'),
+          ),
+        ],
       ),
-      builder: (context) => const _VehicleDetailsSheet(),
     );
+    if (action == null || !mounted) return;
+
+    if (action == _QuitAction.saveDraft) {
+      await saveCaptureDraft(
+        capturedPaths: _captured.map(
+          (angle, file) => MapEntry(angle, file.path),
+        ),
+        skipped: _skipped,
+      );
+    } else {
+      await clearCaptureDraft();
+    }
+    if (!mounted) return;
+    (widget.onClose ?? () => Navigator.of(context).pop()).call();
   }
 
   @override
@@ -681,100 +822,91 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     // shutter itself unlocks (see settled below) — so the photographer sees
     // "you've got it" and knows to hold rather than only finding out once
     // the shutter silently becomes tappable.
-    final instantaneouslyGood = blockingMessage == null && _currentAngle != null;
+    final instantaneouslyGood =
+        blockingMessage == null && _currentAngle != null;
     final goodSince = _allGoodSince;
     final settled =
         goodSince != null &&
         DateTime.now().difference(goodSince) >= _holdSteadyDuration;
     final canCapture = canAct && instantaneouslyGood && settled;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: switch (_state) {
-              _CameraInitializing() => const _CenteredMessage(
-                message: 'Starting camera…',
-                showSpinner: true,
-              ),
-              _CameraUnavailable(:final message) => _CenteredMessage(
-                message: message,
-                onRetry: _initCamera,
-              ),
-              _NoCameraHardware() => _CaptureBody(
-                controller: null,
-                currentAngle: _currentAngle,
-                captured: _captured,
-                skipped: _skipped,
-                capturing: _capturing,
-                submitting: _submitting,
-                blockingMessage: null,
-                aligned: false,
-                tiltReading: null,
-                exposureLocked: false,
-                onUnlockExposure: null,
-                onCapture: null,
-                onSelectAngle: canAct ? _selectAngle : null,
-                onSkip: (canAct && _currentAngle != null) ? _skip : null,
-                onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
-              ),
-              _CameraReady(:final controller) => _CaptureBody(
-                controller: controller,
-                currentAngle: _currentAngle,
-                captured: _captured,
-                skipped: _skipped,
-                capturing: _capturing,
-                submitting: _submitting,
-                blockingMessage: blockingMessage,
-                aligned: instantaneouslyGood,
-                tiltReading: _tiltReading,
-                exposureLocked: _exposureLocked,
-                onUnlockExposure: canAct ? _unlockExposure : null,
-                onCapture: canCapture ? _capture : null,
-                onSelectAngle: canAct ? _selectAngle : null,
-                onSkip: (canAct && _currentAngle != null) ? _skip : null,
-                onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
-              ),
-            },
-          ),
-          Positioned(
-            top: Space.sm,
-            left: Space.sm,
-            child: SafeArea(
-              child: _CloseButton(
-                onPressed: widget.onClose ?? () => Navigator.of(context).pop(),
-              ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleCloseRequest();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: switch (_state) {
+                _CameraInitializing() => const _CenteredMessage(
+                  message: 'Starting camera…',
+                  showSpinner: true,
+                ),
+                _CameraUnavailable(:final message) => _CenteredMessage(
+                  message: message,
+                  onRetry: _initCamera,
+                ),
+                _NoCameraHardware() => _CaptureBody(
+                  controller: null,
+                  currentAngle: _currentAngle,
+                  captured: _captured,
+                  skipped: _skipped,
+                  capturing: _capturing,
+                  submitting: _submitting,
+                  blockingMessage: null,
+                  aligned: false,
+                  tiltReading: null,
+                  exposureLocked: false,
+                  onUnlockExposure: null,
+                  onCapture: null,
+                  onSelectAngle: canAct ? _selectAngle : null,
+                  onSkip: (canAct && _currentAngle != null) ? _skip : null,
+                  onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+                ),
+                _CameraReady(:final controller) => _CaptureBody(
+                  controller: controller,
+                  currentAngle: _currentAngle,
+                  captured: _captured,
+                  skipped: _skipped,
+                  capturing: _capturing,
+                  submitting: _submitting,
+                  blockingMessage: blockingMessage,
+                  aligned: instantaneouslyGood,
+                  tiltReading: _tiltReading,
+                  exposureLocked: _exposureLocked,
+                  onUnlockExposure: canAct ? _unlockExposure : null,
+                  onCapture: canCapture ? _capture : null,
+                  onSelectAngle: canAct ? _selectAngle : null,
+                  onSkip: (canAct && _currentAngle != null) ? _skip : null,
+                  onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+                ),
+              },
             ),
-          ),
-          if (_availableCameras.length > 1 && _state is _CameraReady)
             Positioned(
               top: Space.sm,
-              right: Space.sm,
+              left: Space.sm,
               child: SafeArea(
-                child: _SwitchCameraButton(
-                  onPressed: canAct ? _switchCamera : null,
-                ),
+                child: _CloseButton(onPressed: _handleCloseRequest),
               ),
             ),
-        ],
+            if (_availableCameras.length > 1 && _state is _CameraReady)
+              Positioned(
+                top: Space.sm,
+                right: Space.sm,
+                child: SafeArea(
+                  child: _SwitchCameraButton(
+                    onPressed: canAct ? _switchCamera : null,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
-}
-
-class _VehicleDetails {
-  const _VehicleDetails({
-    required this.make,
-    required this.model,
-    required this.year,
-    this.variant,
-  });
-
-  final String make;
-  final String model;
-  final int year;
-  final String? variant;
 }
 
 // ── Initialising / unavailable ──────────────────────────────────────────────
@@ -1127,8 +1259,7 @@ class _LevelIndicatorState extends State<_LevelIndicator> {
     final reading = widget.tiltReading;
     final good =
         reading != null &&
-        evaluateLevel(reading, widget.targetElevationDeg) ==
-            LevelGuidance.good;
+        evaluateLevel(reading, widget.targetElevationDeg) == LevelGuidance.good;
 
     if (good && !_wasGood) {
       // Fires once, on the moment level is reached — not every frame it
@@ -1264,11 +1395,7 @@ class _ExposureLockBadge extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
-                    Icons.lock_outline,
-                    size: 14,
-                    color: Colors.amber,
-                  ),
+                  const Icon(Icons.lock_outline, size: 14, color: Colors.amber),
                   const SizedBox(width: Space.xs),
                   Text(
                     'Exposure locked — tap to reset',
@@ -1376,10 +1503,7 @@ class _NoCameraNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Glass(
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: Space.sm,
-          vertical: 6,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: 6),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1457,9 +1581,7 @@ class _ProgressDots extends StatelessWidget {
             height: 4,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: i <= current
-                  ? C.forestLift
-                  : Colors.white.withAlpha(70),
+              color: i <= current ? C.forestLift : Colors.white.withAlpha(70),
             ),
           ),
         ],
@@ -1584,8 +1706,7 @@ class _Filmstrip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             for (final angle in CaptureAngle.values) ...[
-              if (angle != CaptureAngle.values.first)
-                const SizedBox(height: 5),
+              if (angle != CaptureAngle.values.first) const SizedBox(height: 5),
               _FilmstripTile(
                 angle: angle,
                 file: captured[angle],
@@ -1726,7 +1847,9 @@ class _ShutterButton extends StatelessWidget {
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.fromBorderSide(BorderSide(color: ringColor, width: 4)),
+            border: Border.fromBorderSide(
+              BorderSide(color: ringColor, width: 4),
+            ),
           ),
           child: DecoratedBox(
             decoration: BoxDecoration(
@@ -1779,122 +1902,6 @@ class _SubmitButton extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2, color: C.white),
             )
           : Text(count == 0 ? 'Submit set' : 'Submit set ($count)'),
-    );
-  }
-}
-
-/// The vehicle-details step submit asks for — see [_CaptureScreenState._submit]
-/// for why this cannot be skipped: make/model/year are `NOT NULL` on the
-/// server, so no listing can exist without them.
-class _VehicleDetailsSheet extends StatefulWidget {
-  const _VehicleDetailsSheet();
-
-  @override
-  State<_VehicleDetailsSheet> createState() => _VehicleDetailsSheetState();
-}
-
-class _VehicleDetailsSheetState extends State<_VehicleDetailsSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _makeController = TextEditingController();
-  final _modelController = TextEditingController();
-  final _yearController = TextEditingController(
-    text: DateTime.now().year.toString(),
-  );
-  final _variantController = TextEditingController();
-
-  @override
-  void dispose() {
-    _makeController.dispose();
-    _modelController.dispose();
-    _yearController.dispose();
-    _variantController.dispose();
-    super.dispose();
-  }
-
-  void _confirm() {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    Navigator.of(context).pop(
-      _VehicleDetails(
-        make: _makeController.text.trim(),
-        model: _modelController.text.trim(),
-        year: int.parse(_yearController.text.trim()),
-        variant: _variantController.text.trim().isEmpty
-            ? null
-            : _variantController.text.trim(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        Space.lg,
-        Space.lg,
-        Space.lg,
-        Space.lg + MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Vehicle details', style: serif(24)),
-            const SizedBox(height: Space.xs),
-            Text(
-              'Needed to create the listing this set belongs to.',
-              style: T.bodySmall,
-            ),
-            const SizedBox(height: Space.lg),
-            TextFormField(
-              controller: _makeController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Make'),
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Required'
-                  : null,
-            ),
-            const SizedBox(height: Space.md),
-            TextFormField(
-              controller: _modelController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Model'),
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Required'
-                  : null,
-            ),
-            const SizedBox(height: Space.md),
-            TextFormField(
-              controller: _yearController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Year'),
-              validator: (value) {
-                final year = int.tryParse(value?.trim() ?? '');
-                if (year == null) return 'Enter a valid year';
-                if (year < 1886 || year > 2100) return 'Enter a valid year';
-                return null;
-              },
-            ),
-            const SizedBox(height: Space.md),
-            TextFormField(
-              controller: _variantController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Variant (optional)',
-              ),
-            ),
-            const SizedBox(height: Space.lg),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _confirm,
-                child: const Text('Continue'),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

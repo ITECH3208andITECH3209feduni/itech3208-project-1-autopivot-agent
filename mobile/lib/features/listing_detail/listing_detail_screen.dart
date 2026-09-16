@@ -21,12 +21,15 @@
 /// product.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/api_exception.dart';
 import '../../api/models/listing_detail.dart';
 import '../../api/models/listing_image.dart';
+import '../../api/models/processing_summary.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
@@ -80,13 +83,15 @@ String _exclusionReason(String? imageKind) => switch (imageKind) {
   'interior' =>
     'This is an interior shot, so there is no exterior to place on a '
         'backdrop.',
-  'detail' => 'This is a close-up of part of the vehicle rather than the '
-      'whole car.',
+  'detail' =>
+    'This is a close-up of part of the vehicle rather than the '
+        'whole car.',
   'unknown' =>
     "This could not be identified as a photograph of the vehicle's "
         'exterior.',
-  _ => 'This was not used because it could not be identified as a '
-      "photograph of the vehicle's exterior.",
+  _ =>
+    'This was not used because it could not be identified as a '
+        "photograph of the vehicle's exterior.",
 };
 
 // ── Screen ───────────────────────────────────────────────────────────────────
@@ -104,24 +109,38 @@ class ListingDetailScreen extends ConsumerStatefulWidget {
 class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   _Load _state = const _Loading();
 
-  /// Ids of images currently being deleted.
+  /// Ids of images currently being deleted or included.
   ///
   /// Keyed by image id rather than a single screen-wide flag so that, if a
-  /// dealer starts a second delete while the first is still in flight, only
-  /// the tile actually being deleted shows as busy — the rest of the grid
-  /// stays interactive.
+  /// dealer starts a second action while the first is still in flight, only
+  /// the tile actually busy shows as busy — the rest of the grid stays
+  /// interactive.
   Set<int> _deletingImageIds = const {};
+  Set<int> _includingImageIds = const {};
 
-  /// The most recent delete failure, already safe to show as-is per
-  /// [ApiException.message]. Cleared at the start of the next delete attempt
+  /// The most recent delete or include failure, already safe to show as-is
+  /// per [ApiException.message]. Cleared at the start of the next attempt
   /// rather than on a timer or a dismiss button, neither of which the brief
   /// asks for.
-  String? _deleteErrorMessage;
+  String? _actionErrorMessage;
+
+  /// Latest processing counts, polled while the pipeline still has work to
+  /// do — see [_pollWhileProcessing]. Null before the first load finishes,
+  /// and left at its last value once processing is done, since nothing
+  /// after that point invalidates it.
+  ProcessingSummary? _progress;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -131,10 +150,46 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       final listing = await api.listing(widget.listingId);
       if (!mounted) return;
       setState(() => _state = _Loaded(listing));
+      _pollWhileProcessing(listing.processingStatus);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _state = _LoadFailed(e.message));
     }
+  }
+
+  /// Polls `/jobs` for progress counts every few seconds while the pipeline
+  /// is still working, and re-fetches the full listing once it finishes —
+  /// otherwise a dealer who left this screen open would see the same
+  /// "processing" state indefinitely rather than the finished photographs
+  /// landing on their own.
+  ///
+  /// A plain fixed interval, not exponential backoff: this screen is only
+  /// polling while someone is actually looking at it (the timer is cancelled
+  /// in [dispose]), so the choice is between "check every few seconds while
+  /// visible" and "make the dealer pull to refresh" — not between that and
+  /// polling forever in the background.
+  void _pollWhileProcessing(String processingStatus) {
+    _pollTimer?.cancel();
+    if (processingStatus != 'pending' && processingStatus != 'processing') {
+      return;
+    }
+
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+      final api = ref.read(apiClientProvider);
+      try {
+        final summary = await api.listingJobs(widget.listingId);
+        if (!mounted) return;
+        setState(() => _progress = summary);
+        if (!summary.isInProgress) {
+          _pollTimer?.cancel();
+          await _load();
+        }
+      } on ApiException {
+        // A transient failure on a background poll is not worth surfacing —
+        // the next tick tries again, and a dealer actively looking at the
+        // screen can still pull to refresh if it never recovers.
+      }
+    });
   }
 
   /// Confirms, then deletes, one photograph.
@@ -153,13 +208,11 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
 
     setState(() {
       _deletingImageIds = {..._deletingImageIds, image.id};
-      _deleteErrorMessage = null;
+      _actionErrorMessage = null;
     });
 
     try {
-      await ref
-          .read(apiClientProvider)
-          .deleteImage(widget.listingId, image.id);
+      await ref.read(apiClientProvider).deleteImage(widget.listingId, image.id);
       if (!mounted) return;
 
       // Re-read the current state rather than closing over the listing this
@@ -180,7 +233,43 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       if (!mounted) return;
       setState(() {
         _deletingImageIds = {..._deletingImageIds}..remove(image.id);
-        _deleteErrorMessage = e.message;
+        _actionErrorMessage = e.message;
+      });
+    }
+  }
+
+  /// Overrides the classifier's exclusion for one photograph — see the
+  /// server route's own doc comment for why this is one-way, not a toggle
+  /// back to the original classification.
+  Future<void> _handleInclude(ListingImage image) async {
+    if (_includingImageIds.contains(image.id)) return;
+
+    setState(() {
+      _includingImageIds = {..._includingImageIds, image.id};
+      _actionErrorMessage = null;
+    });
+
+    try {
+      final updated = await ref
+          .read(apiClientProvider)
+          .includeImage(widget.listingId, image.id);
+      if (!mounted) return;
+
+      final current = _state;
+      if (current is _Loaded) {
+        final images = current.listing.images
+            .map((i) => i.id == updated.id ? updated : i)
+            .toList();
+        setState(() {
+          _state = _Loaded(current.listing.copyWithImages(images));
+          _includingImageIds = {..._includingImageIds}..remove(image.id);
+        });
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _includingImageIds = {..._includingImageIds}..remove(image.id);
+        _actionErrorMessage = e.message;
       });
     }
   }
@@ -231,14 +320,28 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   );
 
   Widget _loadedBody(VehicleListingDetail listing) {
-    // Two axes on every image: pipeline stage (original vs. processed) and,
-    // for an original, whether the classifier decided it was usable. These
-    // three groups are disjoint by construction — isProcessed and isOriginal
-    // partition [images], and isExcluded further splits the originals — so
-    // there is no image counted in more than one section below.
+    // Every processed image that traces back to an original via
+    // sourceImageId becomes a before/after pair — regardless of the
+    // listing's overall processingStatus, so a set that is otherwise
+    // "needs_review" (because one photograph needed a second look) still
+    // shows every pair that did complete rather than hiding all of them
+    // behind that one outstanding job.
     final processed = listing.processed.where((i) => !i.isExcluded).toList();
+    final originalsById = {for (final o in listing.originals) o.id: o};
+    final pairedOriginalIds = <int>{};
+    final pairs = <(ListingImage, ListingImage?)>[];
+    for (final result in processed) {
+      final original = result.sourceImageId != null
+          ? originalsById[result.sourceImageId]
+          : null;
+      if (original != null) pairedOriginalIds.add(original.id);
+      pairs.add((result, original));
+    }
+
     final originals = listing.originals;
-    final activeOriginals = originals.where((i) => !i.isExcluded).toList();
+    final awaitingOriginals = originals
+        .where((i) => !i.isExcluded && !pairedOriginalIds.contains(i.id))
+        .toList();
     final excludedOriginals = originals.where((i) => i.isExcluded).toList();
 
     return CustomScrollView(
@@ -252,16 +355,11 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
           ),
           sliver: SliverToBoxAdapter(child: _header(listing)),
         ),
-        if (_deleteErrorMessage != null)
+        if (_actionErrorMessage != null)
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(
-              Space.lg,
-              0,
-              Space.lg,
-              Space.md,
-            ),
+            padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.md),
             sliver: SliverToBoxAdapter(
-              child: AppErrorBanner(_deleteErrorMessage!),
+              child: AppErrorBanner(_actionErrorMessage!),
             ),
           ),
         SliverPadding(
@@ -270,34 +368,38 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sectionHeading('PROCESSED (${processed.length})'),
+                _sectionHeading('BEFORE / AFTER (${pairs.length})'),
                 const SizedBox(height: Space.sm),
-                // The results a dealer would actually use. An empty grid with
-                // no explanation would read as a bug rather than "still
-                // waiting on the pipeline", so this says so plainly instead.
-                if (processed.isEmpty)
-                  Text(
-                    'No processed photographs yet.',
-                    style: T.bodySmall,
-                  )
+                // An empty list with no explanation would read as a bug
+                // rather than "still waiting on the pipeline", so this says
+                // so plainly instead.
+                if (pairs.isEmpty)
+                  Text('No processed photographs yet.', style: T.bodySmall)
                 else
-                  _plainGrid(processed, semanticRole: 'Processed photograph'),
-                if (originals.isNotEmpty) ...[
+                  Column(
+                    children: [
+                      for (final (result, original) in pairs) ...[
+                        _BeforeAfterTile(processed: result, original: original),
+                        const SizedBox(height: Space.sm),
+                      ],
+                    ],
+                  ),
+                if (awaitingOriginals.isNotEmpty) ...[
                   const SizedBox(height: Space.xl),
-                  _sectionHeading('ORIGINALS (${originals.length})'),
+                  _sectionHeading(
+                    'AWAITING PROCESSING (${awaitingOriginals.length})',
+                  ),
                   const SizedBox(height: Space.sm),
-                  if (activeOriginals.isNotEmpty)
-                    _plainGrid(
-                      activeOriginals,
-                      semanticRole: 'Original photograph',
-                    ),
-                  if (excludedOriginals.isNotEmpty) ...[
-                    if (activeOriginals.isNotEmpty)
-                      const SizedBox(height: Space.md),
-                    Text('EXCLUDED', style: T.caption),
-                    const SizedBox(height: Space.sm),
-                    _excludedWrap(excludedOriginals),
-                  ],
+                  _plainGrid(
+                    awaitingOriginals,
+                    semanticRole: 'Original photograph',
+                  ),
+                ],
+                if (excludedOriginals.isNotEmpty) ...[
+                  const SizedBox(height: Space.xl),
+                  _sectionHeading('EXCLUDED (${excludedOriginals.length})'),
+                  const SizedBox(height: Space.sm),
+                  _excludedWrap(excludedOriginals),
                 ],
               ],
             ),
@@ -337,6 +439,15 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                 if (hasStockNumber) ...[
                   const SizedBox(height: Space.xs),
                   Text('#$stockNumber', style: T.figure),
+                ],
+                if (_progress case final progress?
+                    when progress.isInProgress) ...[
+                  const SizedBox(height: Space.xs),
+                  Text(
+                    'Processing — ${progress.completed} of '
+                    '${progress.total} done',
+                    style: T.bodySmall,
+                  ),
                 ],
                 if (hasDescription) ...[
                   const SizedBox(height: Space.sm),
@@ -398,16 +509,17 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       children: images.map((image) {
         final reason = _exclusionReason(image.imageKind);
         return SizedBox(
-          width: 128,
-          child: _PhotoTile(
+          width: 148,
+          child: _ExcludedTile(
             image: image,
-            dimmed: true,
-            caption: reason,
+            reason: reason,
             semanticLabel:
                 'Excluded original photograph: ${image.originalFilename}. '
                 '$reason',
             isDeleting: _deletingImageIds.contains(image.id),
+            isIncluding: _includingImageIds.contains(image.id),
             onDelete: () => _handleDelete(image),
+            onInclude: () => _handleInclude(image),
           ),
         );
       }).toList(),
@@ -418,15 +530,15 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
 // ── Tile ─────────────────────────────────────────────────────────────────────
 
 /// One photograph: the image itself, a delete button overlaid in a corner,
-/// and — for an excluded original — a reason caption underneath it.
+/// Used for processed results and usable originals; an excluded original
+/// uses [_ExcludedTile] instead, which needs a reason caption and a second
+/// action this tile does not.
 class _PhotoTile extends StatelessWidget {
   const _PhotoTile({
     required this.image,
     required this.semanticLabel,
     required this.isDeleting,
     required this.onDelete,
-    this.dimmed = false,
-    this.caption,
   });
 
   final ListingImage image;
@@ -434,33 +546,19 @@ class _PhotoTile extends StatelessWidget {
   final bool isDeleting;
   final VoidCallback onDelete;
 
-  /// True for an excluded original. Only the image itself is faded — never
-  /// the caption below it — because dimming label text alongside an image is
-  /// exactly how a contrast failure quietly happens: the image can afford to
-  /// lose contrast against its background, the sentence explaining why a
-  /// dealer should not use it cannot.
-  final bool dimmed;
-
-  /// The reason sentence, shown under the tile. Null for a processed or
-  /// active-original tile, which need no caption.
-  final String? caption;
-
   @override
   Widget build(BuildContext context) {
-    final photo = ClipRRect(
+    return ClipRRect(
       borderRadius: Radii.controlAll,
       child: AspectRatio(
         aspectRatio: 1,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Opacity(
-              opacity: dimmed ? 0.45 : 1,
-              child: AuthedImage(
-                storagePath: image.imageUrl,
-                semanticLabel: semanticLabel,
-                fit: BoxFit.cover,
-              ),
+            AuthedImage(
+              storagePath: image.imageUrl,
+              semanticLabel: semanticLabel,
+              fit: BoxFit.cover,
             ),
             Positioned(
               top: Space.xs,
@@ -507,16 +605,162 @@ class _PhotoTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
 
-    if (caption == null) return photo;
+// ── Before / after ───────────────────────────────────────────────────────────
+
+/// One processed photograph beside the original it came from — shown
+/// regardless of the listing's overall processing status, so a set that
+/// still has one photograph outstanding does not hide every pair that
+/// already finished.
+///
+/// [original] is null for a processed image saved before `source_image_id`
+/// existed — rare, but real for anything processed early enough, and shown
+/// as the result alone rather than crashing on a pairing that cannot be made.
+class _BeforeAfterTile extends StatelessWidget {
+  const _BeforeAfterTile({required this.processed, required this.original});
+
+  final ListingImage processed;
+  final ListingImage? original;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: _labelledPhoto('BEFORE', original)),
+          const SizedBox(width: Space.sm),
+          Expanded(child: _labelledPhoto('AFTER', processed)),
+        ],
+      ),
+    );
+  }
+
+  Widget _labelledPhoto(String label, ListingImage? image) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: T.caption),
+        const SizedBox(height: Space.xs),
+        ClipRRect(
+          borderRadius: Radii.controlAll,
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: image == null
+                ? const DecoratedBox(decoration: BoxDecoration(color: C.bone))
+                : AuthedImage(
+                    storagePath: image.imageUrl,
+                    semanticLabel: '$label photograph',
+                    fit: BoxFit.cover,
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Excluded tile ────────────────────────────────────────────────────────────
+
+/// An excluded original: the image, dimmed, a reason underneath it, and two
+/// actions — Include (overrides the classifier) or Delete. Until now Delete
+/// was the only action available here, which meant a photograph the
+/// classifier misjudged — an interior shot a dealer actually wanted, say —
+/// had no way back in except leaving it out entirely.
+class _ExcludedTile extends StatelessWidget {
+  const _ExcludedTile({
+    required this.image,
+    required this.reason,
+    required this.semanticLabel,
+    required this.isDeleting,
+    required this.isIncluding,
+    required this.onDelete,
+    required this.onInclude,
+  });
+
+  final ListingImage image;
+  final String reason;
+  final String semanticLabel;
+  final bool isDeleting;
+  final bool isIncluding;
+  final VoidCallback onDelete;
+  final VoidCallback onInclude;
+
+  @override
+  Widget build(BuildContext context) {
+    final busy = isDeleting || isIncluding;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        photo,
+        ClipRRect(
+          borderRadius: Radii.controlAll,
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Opacity(
+                  opacity: 0.45,
+                  child: AuthedImage(
+                    storagePath: image.imageUrl,
+                    semanticLabel: semanticLabel,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                if (busy)
+                  Semantics(
+                    label: isIncluding
+                        ? 'Including this photograph'
+                        : 'Deleting this photograph',
+                    child: const Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Opacity(opacity: 0.55, child: ColoredBox(color: C.ink)),
+                        Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: C.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: Space.xs),
-        Text(caption!, style: T.bodySmall),
+        Text(reason, style: T.bodySmall),
+        const SizedBox(height: Space.xs),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton(
+                onPressed: busy ? null : onInclude,
+                style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                child: Text(
+                  'Include',
+                  style: T.caption.copyWith(color: C.forest),
+                ),
+              ),
+            ),
+            Expanded(
+              child: TextButton(
+                onPressed: busy ? null : onDelete,
+                style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                child: Text('Delete', style: T.caption.copyWith(color: C.rust)),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
