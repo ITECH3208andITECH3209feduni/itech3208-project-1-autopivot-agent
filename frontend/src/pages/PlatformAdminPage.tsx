@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { ApiError, api, type Dealership, type DealershipOnboardRequest, type DealershipProvisioned } from '../api/client'
+import DealershipTeamPanel from '../components/DealershipTeamPanel'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 
 const EMPTY_FORM: DealershipOnboardRequest = {
@@ -15,6 +16,7 @@ export default function PlatformAdminPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   async function load() {
     try { setDealerships(await api.platformDealerships()) }
@@ -76,11 +78,35 @@ export default function PlatformAdminPage() {
       </section>
       <section>
         <h2 style={{ ...serif(26), color: C.ink }}>Dealerships</h2>
+        <p style={{ fontFamily: SANS, fontSize: 13, color: C.inkSoft, margin: '-10px 0 16px' }}>
+          Click a dealership's name to see and manage its team.
+        </p>
         {loading ? <p style={{ fontFamily: SANS }}>Loading…</p> : <div style={{ display: 'grid', gap: 10 }}>
-          {dealerships.map(dealership => <article key={dealership.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 20, padding: 18, background: C.white, border: `1px solid ${C.line}` }}>
-            <div><strong style={{ fontFamily: SANS, color: C.ink }}>{dealership.name}</strong><div style={{ fontFamily: SANS, fontSize: 13, color: C.inkSoft, marginTop: 4 }}>{[dealership.location, dealership.contact_name, dealership.contact_email, dealership.contact_phone].filter(Boolean).join(' · ')}</div></div>
-            <div style={{ textAlign: 'right', fontFamily: MONO, fontSize: 12, color: C.inkSoft }}><div>{dealership.status}</div><div>{dealership.user_count} user{dealership.user_count === 1 ? '' : 's'}</div></div>
-          </article>)}
+          {dealerships.map(dealership => {
+            const open = expandedId === dealership.id
+            return (
+              <div key={dealership.id}>
+                <article style={{ display: 'flex', justifyContent: 'space-between', gap: 20, padding: 18, background: C.white, border: `1px solid ${C.line}`, borderBottom: open ? 0 : undefined }}>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(open ? null : dealership.id)}
+                      aria-expanded={open}
+                      style={{
+                        fontFamily: SANS, fontSize: 15, fontWeight: 600, color: C.ink,
+                        background: 'none', border: 0, padding: 0, cursor: 'pointer', textAlign: 'left',
+                      }}
+                    >
+                      {dealership.name} {open ? '▾' : '▸'}
+                    </button>
+                    <div style={{ fontFamily: SANS, fontSize: 13, color: C.inkSoft, marginTop: 4 }}>{[dealership.location, dealership.contact_name, dealership.contact_email, dealership.contact_phone].filter(Boolean).join(' · ')}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', fontFamily: MONO, fontSize: 12, color: C.inkSoft }}><div>{dealership.status}</div><div>{dealership.user_count} user{dealership.user_count === 1 ? '' : 's'}</div></div>
+                </article>
+                {open && <DealershipTeamPanel dealershipId={dealership.id} dealershipName={dealership.name} />}
+              </div>
+            )
+          })}
           {!dealerships.length && <p style={{ fontFamily: SANS, color: C.inkSoft }}>No dealerships have been created.</p>}
         </div>}
       </section>

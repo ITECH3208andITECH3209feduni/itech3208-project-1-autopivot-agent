@@ -26,5 +26,14 @@ abstract final class AppRoutes {
   /// team of their own to manage (they belong to no dealership at all).
   static const dealerships = '/dealerships';
 
+  /// One dealership's team, as a `platform_admin` sees it — reached by
+  /// tapping a row on [dealerships], not from Settings directly. Distinct
+  /// from [team]: that path always means "my own dealership" and takes no
+  /// id, this one is always about a dealership the caller does not belong
+  /// to, which is why it needs one.
+  static const dealershipTeam = '/dealerships/:id/team';
+
   static String listingDetailPath(int id) => '/listings/$id';
+
+  static String dealershipTeamPath(int id) => '/dealerships/$id/team';
 }

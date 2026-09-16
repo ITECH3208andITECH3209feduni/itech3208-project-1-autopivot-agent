@@ -1,29 +1,37 @@
 /// Platform administration: every dealership on AutoPivot, and onboarding a
 /// new one.
 ///
-/// Reached only from the account sheet's Settings row, and only ever
-/// offered there to a `platform_admin` — see `widgets/app_shell.dart`. That
-/// role check is a UX convenience, not the real security boundary: both
+/// A `platform_admin`'s home screen (`app.dart`'s redirect sends them here
+/// instead of the vehicles list, which has nothing for a role attached to no
+/// dealership) — reached both as that home and, same as `team_screen.dart`,
+/// as a drill-down from the account sheet's Settings row; either way it is
+/// only ever offered to a `platform_admin` — see `widgets/app_shell.dart`.
+/// That role check is a UX convenience, not the real security boundary: both
 /// endpoints this screen calls are independently gated the same way
 /// server-side (`require_roles("platform_admin")` in
 /// `api/routes_platform_admin.py`).
 ///
 /// Ported from the web platform's `PlatformAdminPage.tsx` — same fields,
-/// same one-time password reveal for the dealership's first account. Unlike
-/// `team_screen.dart`'s equivalent, there is nothing to do to a dealership
-/// once created — no reset, no deactivate, no edit — because the platform
-/// page itself offers none either; onboarding is the whole feature today.
+/// same one-time password reveal for the dealership's first account, and
+/// the same thing a row's name now does: tapping it opens that dealership's
+/// team (`team_screen.dart`, reached via `AppRoutes.dealershipTeam`), the
+/// mobile equivalent of the platform's expandable panel under each row.
+/// There is nothing else to do to a dealership itself once created — no
+/// reset, no deactivate, no edit — because the platform page offers none of
+/// those either; onboarding and team management are the whole feature today.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../api/api_exception.dart';
 import '../../api/models/dealership.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../routes.dart';
 import '../../widgets/primitives.dart';
 
 // ── Load state ──────────────────────────────────────────────────────────────
@@ -142,11 +150,19 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
     }
   }
 
-  IconButton _backButton() => IconButton(
-    onPressed: () => Navigator.of(context).pop(),
-    icon: const Icon(Icons.arrow_back, color: C.inkSoft),
-    tooltip: 'Back',
-  );
+  /// Empty when there is nothing to pop to — true when this screen is
+  /// platform_admin's home rather than a Settings drill-down (see
+  /// `app.dart`'s route registration for [AppRoutes.dealerships]), the same
+  /// way `listings_screen.dart` has never needed a back button for the same
+  /// reason.
+  Widget _backButton() {
+    if (!Navigator.of(context).canPop()) return const SizedBox.shrink();
+    return IconButton(
+      onPressed: () => Navigator.of(context).pop(),
+      icon: const Icon(Icons.arrow_back, color: C.inkSoft),
+      tooltip: 'Back',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -298,41 +314,50 @@ class _DealershipRow extends StatelessWidget {
       dealership.contactPhone,
     ].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
 
-    return AppCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: Space.md,
-        vertical: Space.sm,
+    return InkWell(
+      borderRadius: Radii.cardAll,
+      onTap: () => context.push(
+        AppRoutes.dealershipTeamPath(dealership.id),
+        extra: dealership.name,
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(dealership.name, style: T.label),
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: T.bodySmall),
+      child: AppCard(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Space.md,
+          vertical: Space.sm,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(dealership.name, style: T.label),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: T.bodySmall),
+                  ],
                 ],
+              ),
+            ),
+            const SizedBox(width: Space.sm),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(dealership.status, style: T.caption),
+                const SizedBox(height: 2),
+                Text(
+                  '${dealership.userCount} user'
+                  '${dealership.userCount == 1 ? '' : 's'}',
+                  style: T.caption,
+                ),
               ],
             ),
-          ),
-          const SizedBox(width: Space.sm),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(dealership.status, style: T.caption),
-              const SizedBox(height: 2),
-              Text(
-                '${dealership.userCount} user'
-                '${dealership.userCount == 1 ? '' : 's'}',
-                style: T.caption,
-              ),
-            ],
-          ),
-        ],
+            const SizedBox(width: Space.xs),
+            const Icon(Icons.chevron_right, size: 18, color: C.lineStrong),
+          ],
+        ),
       ),
     );
   }

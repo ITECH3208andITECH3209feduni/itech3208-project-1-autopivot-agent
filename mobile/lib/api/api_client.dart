@@ -455,6 +455,73 @@ class ApiClient {
     return DealershipProvisioned.fromJson(json);
   }
 
+  // The platform-administrator equivalents of the four dealership-team
+  // methods above — same shapes, scoped by an explicit dealership id rather
+  // than the caller's own, since a platform administrator belongs to none.
+  // See api/routes_platform_dealership_users.py's own doc comment for why
+  // this is a separate route family rather than the existing one accepting
+  // a second actor.
+
+  Future<List<DealershipUser>> platformDealershipUsers(int dealershipId) async {
+    final json = await _sendList(
+      () => _dio.get(
+        '/api/platform/dealerships/$dealershipId/users',
+        options: _options(),
+      ),
+    );
+    return json
+        .map((e) => DealershipUser.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<DealershipUserProvisioned> addPlatformDealershipUser(
+    int dealershipId, {
+    required String email,
+    required String firstName,
+    required String lastName,
+    required String role,
+  }) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/platform/dealerships/$dealershipId/users',
+        data: {
+          'email': email,
+          'first_name': firstName,
+          'last_name': lastName,
+          'role': role,
+        },
+        options: _options(),
+      ),
+    );
+    return DealershipUserProvisioned.fromJson(json);
+  }
+
+  Future<String> resetPlatformDealershipUserPassword(
+    int dealershipId,
+    int userId,
+  ) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/platform/dealerships/$dealershipId/users/$userId/reset-password',
+        options: _options(),
+      ),
+    );
+    return json['initial_password'] as String;
+  }
+
+  Future<DealershipUser> deactivatePlatformDealershipUser(
+    int dealershipId,
+    int userId,
+  ) async {
+    final json = await _send(
+      () => _dio.post(
+        '/api/platform/dealerships/$dealershipId/users/$userId/deactivate',
+        options: _options(),
+      ),
+    );
+    return DealershipUser.fromJson(json);
+  }
+
   // ── Files ───────────────────────────────────────────────────────────────
 
   /// Raw bytes for a stored image.

@@ -259,6 +259,27 @@ export const api = {
   deactivateDealershipUser: (userId: number) =>
     request<DealershipUser>(`/api/dealership/users/${userId}/deactivate`, { method: 'POST' }),
 
+  // The platform-administrator equivalents of the four above — same shapes,
+  // scoped by an explicit dealership id in the path instead of the caller's
+  // own, since a platform administrator belongs to no dealership at all.
+  platformDealershipUsers: (dealershipId: number) =>
+    request<DealershipUser[]>(`/api/platform/dealerships/${dealershipId}/users`),
+
+  addPlatformDealershipUser: (dealershipId: number, payload: DealershipUserCreate) =>
+    request<DealershipUserProvisioned>(`/api/platform/dealerships/${dealershipId}/users`, {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+
+  resetPlatformDealershipUser: (dealershipId: number, userId: number) =>
+    request<{ initial_password: string }>(
+      `/api/platform/dealerships/${dealershipId}/users/${userId}/reset-password`, { method: 'POST' },
+    ),
+
+  deactivatePlatformDealershipUser: (dealershipId: number, userId: number) =>
+    request<DealershipUser>(
+      `/api/platform/dealerships/${dealershipId}/users/${userId}/deactivate`, { method: 'POST' },
+    ),
+
   dashboardStats: () => request<DashboardStats>('/api/dashboard/stats'),
 
   navCounts: () => request<NavCounts>('/api/dashboard/counts'),

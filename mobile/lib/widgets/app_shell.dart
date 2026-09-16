@@ -108,7 +108,13 @@ class _AppShellState extends ConsumerState<AppShell> {
           ],
         ),
       ),
-      floatingActionButton: const _CameraBubble(),
+      // No dealership to attach a photograph to means no camera action — a
+      // platform administrator belongs to none at all, and the capture
+      // screen's own first step (creating a listing) would refuse them
+      // outright server-side regardless.
+      floatingActionButton: user?.role == 'platform_admin'
+          ? null
+          : const _CameraBubble(),
     );
   }
 }

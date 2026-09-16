@@ -60,22 +60,42 @@ final _routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.changePassword,
         builder: (context, state) => const ChangePasswordScreen(),
       ),
-      // Outside the shell deliberately, like changePassword above: this is a
-      // drill-down from the account sheet's Settings row, not part of the
-      // shell's own navigation, and a team roster has no business under a
-      // floating camera action. Any signed-in user can reach the route
-      // itself — the actual gate is that nothing links here for anyone but
-      // a dealership_admin (app_shell.dart), and every request the screen
-      // makes is independently re-checked server-side regardless.
+      // Outside the shell deliberately: this is a drill-down from the
+      // account sheet's Settings row, not part of the shell's own
+      // navigation, and a team roster has no business under a floating
+      // camera action. Unlike AppRoutes.dealerships below, this is never
+      // anyone's home screen — a dealership_admin's home is still the
+      // vehicles list — so it has no need of the shell's header either. Any
+      // signed-in user can reach the route itself — the actual gate is that
+      // nothing links here for anyone but a dealership_admin
+      // (app_shell.dart), and every request the screen makes is
+      // independently re-checked server-side regardless.
       GoRoute(
         path: AppRoutes.team,
         builder: (context, state) => const TeamScreen(),
       ),
-      // Same reasoning as AppRoutes.team just above, offered instead of it
-      // to a platform_admin rather than a dealership_admin.
+      // A drill-down from AppRoutes.dealerships, not Settings directly — see
+      // that route's own doc comment. The dealership's name rides along as
+      // `extra` rather than a query parameter purely so the header can show
+      // it immediately, before the team list itself has loaded; the id in
+      // the path is what every request actually uses. Outside the shell for
+      // the same reason AppRoutes.team is: it has its own back button, and
+      // nothing here needs the header or the (already hidden, for this
+      // role) camera action.
       GoRoute(
-        path: AppRoutes.dealerships,
-        builder: (context, state) => const DealershipsScreen(),
+        path: AppRoutes.dealershipTeam,
+        builder: (context, state) {
+          final id = int.tryParse(state.pathParameters['id'] ?? '');
+          if (id == null) {
+            return const _InvalidRouteScreen(
+              message: 'That dealership could not be found.',
+            );
+          }
+          return TeamScreen(
+            dealershipId: id,
+            dealershipName: state.extra as String?,
+          );
+        },
       ),
       // Everything a signed-in user with nothing forced on them can reach
       // shares one persistent shell — the dealership name and the camera
@@ -91,6 +111,15 @@ final _routerProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.listings,
             builder: (context, state) => const ListingsScreen(),
           ),
+          // Unlike AppRoutes.team, this one IS inside the shell: it is
+          // platform_admin's home screen (see the redirect below), not only
+          // a Settings drill-down, so it needs the header for account access
+          // and sign-out the same as the vehicles list does for every other
+          // role. app_shell.dart already hides the camera FAB for this role.
+          GoRoute(
+            path: AppRoutes.dealerships,
+            builder: (context, state) => const DealershipsScreen(),
+          ),
           GoRoute(
             path: AppRoutes.listingDetail,
             builder: (context, state) {
@@ -101,7 +130,9 @@ final _routerProvider = Provider<GoRouter>((ref) {
               // navigation goes through AppRoutes.listingDetailPath with a
               // genuine int.
               if (id == null) {
-                return const _InvalidListingScreen();
+                return const _InvalidRouteScreen(
+                  message: 'That vehicle could not be found.',
+                );
               }
               return ListingDetailScreen(listingId: id);
             },
@@ -134,17 +165,28 @@ final _routerProvider = Provider<GoRouter>((ref) {
         case AuthSignedOut():
           return target == AppRoutes.signIn ? null : AppRoutes.signIn;
 
-        case AuthSignedIn(:final mustChangePassword):
+        case AuthSignedIn(:final mustChangePassword, :final user):
           if (mustChangePassword) {
             return target == AppRoutes.changePassword
                 ? null
                 : AppRoutes.changePassword;
           }
+          // A platform administrator belongs to no dealership, so the
+          // vehicles list — every other role's home screen — has nothing in
+          // it for them and its own API call refuses them outright
+          // (`_dealership_id` in routes_listings.py). Dealerships is the
+          // equivalent home screen for that role instead, the same swap
+          // app_shell.dart's own nav already makes.
+          if (target == AppRoutes.listings && user.role == 'platform_admin') {
+            return AppRoutes.dealerships;
+          }
           // A signed-in user with nothing left to do on sign-in or
-          // change-password is sent to the listings screen; anywhere else
+          // change-password is sent to their home screen; anywhere else
           // they were already headed is left alone.
           if (target == AppRoutes.signIn || target == AppRoutes.changePassword) {
-            return AppRoutes.listings;
+            return user.role == 'platform_admin'
+                ? AppRoutes.dealerships
+                : AppRoutes.listings;
           }
           return null;
       }
@@ -188,8 +230,14 @@ class AutoPivotApp extends ConsumerWidget {
 /// hand-typed or stale URL, since every real navigation in this app goes
 /// through `AppRoutes.listingDetailPath`, which only ever builds one from a
 /// genuine int.
-class _InvalidListingScreen extends StatelessWidget {
-  const _InvalidListingScreen();
+/// Shown for a hand-typed or stale URL whose id parameter will not parse as
+/// an int — every real navigation in this app builds its path from a genuine
+/// int (`AppRoutes.listingDetailPath`, `AppRoutes.dealershipTeamPath`), so
+/// this is what reaching one some other way produces.
+class _InvalidRouteScreen extends StatelessWidget {
+  const _InvalidRouteScreen({required this.message});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -199,11 +247,7 @@ class _InvalidListingScreen extends StatelessWidget {
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(Space.xl),
-            child: Text(
-              'That vehicle could not be found.',
-              style: T.bodySmall,
-              textAlign: TextAlign.center,
-            ),
+            child: Text(message, style: T.bodySmall, textAlign: TextAlign.center),
           ),
         ),
       ),

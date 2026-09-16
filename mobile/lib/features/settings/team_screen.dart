@@ -1,14 +1,31 @@
-/// The dealership's own team roster: add a member, reset a password,
-/// deactivate an account.
+/// A dealership's team roster: add a member, reset a password, deactivate an
+/// account.
 ///
-/// Reached only from the account sheet's Settings row, and only ever offered
-/// there to a `dealership_admin` — see `widgets/app_shell.dart`. That role
-/// check is a UX convenience, not the real security boundary: every
-/// endpoint this screen calls is independently gated the same way
-/// server-side (`require_roles("dealership_admin")` in
-/// `api/routes_dealership_users.py`), so a stale or tampered client state
-/// still can't reach another dealership's accounts, only get a 403 shown as
-/// an ordinary [ApiException].
+/// Serves two different callers, distinguished only by whether
+/// [TeamScreen.dealershipId] is set:
+///
+///  * Null — a `dealership_admin` managing their own team, reached from the
+///    account sheet's Settings row. Calls the unscoped
+///    `/api/dealership/users` endpoints, which take the caller's own
+///    dealership from their token.
+///  * Set — a `platform_admin` managing one specific dealership's team,
+///    reached by tapping a row on `dealerships_screen.dart`. Calls the
+///    `/api/platform/dealerships/{id}/users` endpoints instead, which take
+///    the dealership explicitly since a platform administrator belongs to
+///    none of their own.
+///
+/// One screen rather than two near-identical copies: the interaction is
+/// genuinely identical either way (list, add, reset, deactivate), and the
+/// only thing that differs is which four endpoints back it — see
+/// [_TeamScreenState._forPlatform] for where that split actually happens.
+/// The role checks that gate reaching this screen at all (Settings row,
+/// dealership row) are a UX convenience, not the real security boundary:
+/// every endpoint here is independently gated server-side
+/// (`require_roles("dealership_admin")` / `require_roles("platform_admin")`
+/// in `api/routes_dealership_users.py` / `api/routes_platform_dealership_users.py`),
+/// so a stale or tampered client state still can't reach another
+/// dealership's accounts, only get a 403 shown as an ordinary
+/// [ApiException].
 ///
 /// Ported from the web platform's `DealershipUsersPage.tsx` rather than
 /// designed from scratch — same fields, same one-time password reveal, same
@@ -58,7 +75,15 @@ final class _LoadFailed extends _Load {
 // ── Screen ───────────────────────────────────────────────────────────────────
 
 class TeamScreen extends ConsumerStatefulWidget {
-  const TeamScreen({super.key});
+  const TeamScreen({super.key, this.dealershipId, this.dealershipName});
+
+  /// Set only when a platform administrator is viewing a dealership other
+  /// than their own (they have none) — see this file's own top doc comment.
+  final int? dealershipId;
+
+  /// Only meaningful alongside [dealershipId] — shown in the header in place
+  /// of "your dealership".
+  final String? dealershipName;
 
   @override
   ConsumerState<TeamScreen> createState() => _TeamScreenState();
@@ -66,6 +91,8 @@ class TeamScreen extends ConsumerStatefulWidget {
 
 class _TeamScreenState extends ConsumerState<TeamScreen> {
   _Load _state = const _Loading();
+
+  bool get _forPlatform => widget.dealershipId != null;
 
   /// Ids currently mid-action (reset or deactivate) — keyed per user, the
   /// same reason `listing_detail_screen.dart` keys its own busy set by image
@@ -89,7 +116,9 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
     setState(() => _state = const _Loading());
     final api = ref.read(apiClientProvider);
     try {
-      final users = await api.dealershipUsers();
+      final users = _forPlatform
+          ? await api.platformDealershipUsers(widget.dealershipId!)
+          : await api.dealershipUsers();
       if (!mounted) return;
       setState(() => _state = _Loaded(users));
     } on ApiException catch (e) {
@@ -112,14 +141,21 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
 
     setState(() => _errorMessage = null);
     try {
-      final created = await ref
-          .read(apiClientProvider)
-          .addDealershipUser(
-            email: form.email,
-            firstName: form.firstName,
-            lastName: form.lastName,
-            role: form.role,
-          );
+      final api = ref.read(apiClientProvider);
+      final created = _forPlatform
+          ? await api.addPlatformDealershipUser(
+              widget.dealershipId!,
+              email: form.email,
+              firstName: form.firstName,
+              lastName: form.lastName,
+              role: form.role,
+            )
+          : await api.addDealershipUser(
+              email: form.email,
+              firstName: form.firstName,
+              lastName: form.lastName,
+              role: form.role,
+            );
       if (!mounted) return;
       await _load();
       if (!mounted) return;
@@ -141,9 +177,13 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
     });
 
     try {
-      final password = await ref
-          .read(apiClientProvider)
-          .resetDealershipUserPassword(target.id);
+      final api = ref.read(apiClientProvider);
+      final password = _forPlatform
+          ? await api.resetPlatformDealershipUserPassword(
+              widget.dealershipId!,
+              target.id,
+            )
+          : await api.resetDealershipUserPassword(target.id);
       if (!mounted) return;
       setState(() => _busyIds = {..._busyIds}..remove(target.id));
       await _showInitialPassword(email: target.email, password: password);
@@ -171,9 +211,13 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
     });
 
     try {
-      final updated = await ref
-          .read(apiClientProvider)
-          .deactivateDealershipUser(target.id);
+      final api = ref.read(apiClientProvider);
+      final updated = _forPlatform
+          ? await api.deactivatePlatformDealershipUser(
+              widget.dealershipId!,
+              target.id,
+            )
+          : await api.deactivateDealershipUser(target.id);
       if (!mounted) return;
 
       // Re-read the current state rather than closing over the list this
@@ -324,10 +368,15 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Team', style: serif(28)),
+                Text(
+                  _forPlatform ? widget.dealershipName ?? 'Team' : 'Team',
+                  style: serif(28),
+                ),
                 const SizedBox(height: Space.xs),
                 Text(
-                  'Add, reset or deactivate accounts for your dealership.',
+                  _forPlatform
+                      ? 'Add, reset or deactivate accounts for this dealership.'
+                      : 'Add, reset or deactivate accounts for your dealership.',
                   style: T.bodySmall,
                 ),
               ],
