@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api import processing, storage, url_import
-from api.deps import CurrentUser, DbSession
+from api.deps import DbSession, ReadyUser
 from api.schemas import (
     ImageOut,
     ProcessingJobOut,
@@ -127,7 +127,7 @@ def _serialise(listing: VehicleListing, image_count: int) -> VehicleListingOut:
 
 @router.get("", response_model=list[VehicleListingOut])
 def list_vehicles(
-    user: CurrentUser,
+    user: ReadyUser,
     session: DbSession,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -179,7 +179,7 @@ def list_vehicles(
 
 @router.post("", response_model=VehicleListingDetail, status_code=status.HTTP_201_CREATED)
 def create_listing(
-    payload: VehicleListingCreate, user: CurrentUser, session: DbSession
+    payload: VehicleListingCreate, user: ReadyUser, session: DbSession
 ) -> VehicleListingDetail:
     dealership_id = _dealership_id(user)
 
@@ -220,7 +220,7 @@ def create_listing(
 
 
 @router.post("/parse-url", response_model=UrlVehicleGuess)
-def parse_listing_url(body: UrlImportRequest, user: CurrentUser) -> UrlVehicleGuess:
+def parse_listing_url(body: UrlImportRequest, user: ReadyUser) -> UrlVehicleGuess:
     """
     Guess year/make/model/variant from a listing URL, before a listing exists
     to attach it to — see url_import.guess_vehicle_from_url for which sites
@@ -236,7 +236,7 @@ def parse_listing_url(body: UrlImportRequest, user: CurrentUser) -> UrlVehicleGu
 
 
 @router.get("/{listing_id}", response_model=VehicleListingDetail)
-def get_listing(listing_id: int, user: CurrentUser, session: DbSession) -> VehicleListingDetail:
+def get_listing(listing_id: int, user: ReadyUser, session: DbSession) -> VehicleListingDetail:
     listing = _owned_listing(session, user, listing_id)
     images = session.scalars(
         select(Image)
@@ -254,7 +254,7 @@ def get_listing(listing_id: int, user: CurrentUser, session: DbSession) -> Vehic
 
 @router.patch("/{listing_id}", response_model=VehicleListingOut)
 def update_listing(
-    listing_id: int, payload: VehicleListingUpdate, user: CurrentUser, session: DbSession
+    listing_id: int, payload: VehicleListingUpdate, user: ReadyUser, session: DbSession
 ) -> VehicleListingOut:
     listing = _owned_listing(session, user, listing_id)
 
@@ -286,7 +286,7 @@ def update_listing(
 
 
 @router.delete("/{listing_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_listing(listing_id: int, user: CurrentUser, session: DbSession) -> None:
+def delete_listing(listing_id: int, user: ReadyUser, session: DbSession) -> None:
     listing = _owned_listing(session, user, listing_id)
 
     images = session.scalars(
@@ -342,7 +342,7 @@ def delete_listing(listing_id: int, user: CurrentUser, session: DbSession) -> No
 )
 async def upload_images(
     listing_id: int,
-    user: CurrentUser,
+    user: ReadyUser,
     session: DbSession,
     files: list[UploadFile] = File(...),
 ) -> list[ImageOut]:
@@ -417,7 +417,7 @@ async def upload_images(
 async def import_images_from_url(
     listing_id: int,
     body: UrlImportRequest,
-    user: CurrentUser,
+    user: ReadyUser,
     session: DbSession,
 ) -> UrlImportResult:
     """
@@ -640,7 +640,7 @@ def _summarise(session: Session, listing: VehicleListing) -> ProcessingSummary:
 def process_listing(
     listing_id: int,
     payload: ProcessRequest,
-    user: CurrentUser,
+    user: ReadyUser,
     session: DbSession,
     background: BackgroundTasks,
 ) -> ProcessingSummary:
@@ -692,7 +692,7 @@ def process_listing(
 
 @router.get("/{listing_id}/jobs", response_model=ProcessingSummary)
 def listing_jobs(
-    listing_id: int, user: CurrentUser, session: DbSession
+    listing_id: int, user: ReadyUser, session: DbSession
 ) -> ProcessingSummary:
     """Progress for a listing — what the Processing screen polls."""
     listing = _owned_listing(session, user, listing_id)
@@ -701,7 +701,7 @@ def listing_jobs(
 
 @router.post("/{listing_id}/images/{image_id}/include", response_model=ImageOut)
 def include_image(
-    listing_id: int, image_id: int, user: CurrentUser, session: DbSession
+    listing_id: int, image_id: int, user: ReadyUser, session: DbSession
 ) -> ImageOut:
     """
     Override the classifier's exclusion for one original photograph.
@@ -746,7 +746,7 @@ def include_image(
     "/{listing_id}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 def delete_image(
-    listing_id: int, image_id: int, user: CurrentUser, session: DbSession
+    listing_id: int, image_id: int, user: ReadyUser, session: DbSession
 ) -> None:
     listing = _owned_listing(session, user, listing_id)
 

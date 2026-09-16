@@ -92,6 +92,7 @@ def create_access_token(
     role: str,
     dealership_id: Optional[int],
     expires_minutes: Optional[int] = None,
+    token_version: int = 0,
 ) -> tuple[str, int]:
     """Return (token, expires_in_seconds)."""
     minutes = expires_minutes or ACCESS_TOKEN_EXPIRE_MINUTES
@@ -102,6 +103,7 @@ def create_access_token(
         "email": email,
         "role": role,
         "dealership_id": dealership_id,
+        "token_version": token_version,
         "iat": now,
         "exp": expires_at,
     }
