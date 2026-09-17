@@ -86,6 +86,7 @@
 /// animation.
 library;
 
+import 'dart:async' show unawaited;
 import 'dart:io';
 
 import 'package:camera/camera.dart';
@@ -250,6 +251,21 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// only exposure and focus mode/point exist in its API); exposure and
   /// focus are the two levers actually available.
   bool _exposureLocked = false;
+
+  /// 1x or 2x — deliberately not a third, ultra-wide option. The angle
+  /// guidance on screen is measured from the *composited photograph* (a
+  /// wheel's foreshortening ratio — see `elevation.py`'s `_chord_ratio`),
+  /// which depends on camera tilt, not focal length, so neither setting
+  /// disagrees with it. Ultra-wide was left out anyway: its barrel
+  /// distortion up close is a real, separate cost against the realism this
+  /// pipeline is built for, one this screen has no way to correct after the
+  /// fact. 2x on most phones is a digital crop of the main sensor rather
+  /// than a second lens — some resolution given up, not a lens actually
+  /// switched, which is also why this only ever calls [CameraController]'s
+  /// own continuous zoom rather than [_switchCamera]'s [CameraDescription]
+  /// cycling.
+  double _zoomLevel = 1.0;
+  double _maxZoomLevel = 1.0;
 
   /// Set by tapping a tile in the filmstrip — see [_selectAngle]. Overrides
   /// the normal "first missing angle" sequencing so a photographer can shoot
@@ -460,6 +476,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       imageFormatGroup: Platform.isIOS ? ImageFormatGroup.bgra8888 : null,
     );
     await controller.initialize();
+    // Queried once per camera opened, not assumed: the ceiling this reports
+    // varies by device and by which lens _switchCamera has landed on, and a
+    // front-facing camera in particular often cannot zoom at all.
+    final maxZoom = await controller.getMaxZoomLevel();
 
     if (!mounted) {
       await controller.dispose();
@@ -474,6 +494,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       // regardless of what the previous one was set to — nothing carries
       // over across a camera switch, so neither should this flag.
       _exposureLocked = false;
+      // Nor does zoom — a fresh controller always opens at 1x regardless of
+      // where the last one was left.
+      _zoomLevel = 1.0;
+      _maxZoomLevel = maxZoom;
     });
 
     if (Platform.isIOS) {
@@ -541,6 +565,22 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     }
   }
 
+  /// [CameraController]'s own continuous zoom — see the doc comment on
+  /// [_zoomLevel] for why this, and not a second [CameraDescription], is
+  /// what "1x/2x" means here. Clamped to what this camera actually reports
+  /// rather than trusting the caller's requested level, since [_maxZoomLevel]
+  /// can be lower than 2.0 on a camera with no optical or digital headroom
+  /// for it (most often the front-facing one).
+  Future<void> _setZoom(double level) async {
+    final state = _state;
+    if (state is! _CameraReady) return;
+    final clamped = level.clamp(1.0, _maxZoomLevel);
+    if (clamped == _zoomLevel) return;
+    await state.controller.setZoomLevel(clamped);
+    if (!mounted) return;
+    setState(() => _zoomLevel = clamped);
+  }
+
   String _messageFor(CameraException e) => switch (e.code) {
     'CameraAccessDenied' ||
     'CameraAccessDeniedWithoutPrompt' ||
@@ -579,6 +619,15 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       // actually being taken, the moment worth the most feedback in the
       // whole capture loop.
       haptic(ref, HapticFeedbackType.medium);
+      // Persists after every shot, not only on a deliberate exit — a draft
+      // that only saved when the photographer chose "Save Draft" protected
+      // against walking away, not against the app dying mid-shoot (a crash,
+      // the OS reclaiming memory). Unawaited: a file copy on every shutter
+      // press is not worth making the shutter itself feel slower for, and a
+      // save that loses a race with the very next one still leaves the
+      // draft at the most recent capture it finished writing, never a
+      // corrupt one.
+      unawaited(_saveDraftInBackground());
       // Locks in whatever auto exposure/focus metered for THIS shot — the
       // first one, specifically, since it's the first moment there was
       // actually a well-framed car to meter against. Every shot after it
@@ -595,6 +644,15 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       if (mounted) setState(() => _capturing = false);
     }
   }
+
+  /// The current set, written to disk — see [_capture]'s own call site for
+  /// why this runs after every shot rather than only at exit.
+  Future<void> _saveDraftInBackground() => saveCaptureDraft(
+    capturedPaths: _captured.map(
+      (angle, file) => MapEntry(angle, file.path),
+    ),
+    skipped: _skipped,
+  );
 
   /// Best-effort — not every camera on every device actually supports a
   /// lock (older or unusual hardware can reject the mode change), and
@@ -893,6 +951,9 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
                   onSelectAngle: canAct ? _selectAngle : null,
                   onSkip: (canAct && _currentAngle != null) ? _skip : null,
                   onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+                  zoomLevel: _zoomLevel,
+                  maxZoomLevel: 1.0,
+                  onSetZoom: null,
                 ),
                 _CameraReady(:final controller) => _CaptureBody(
                   controller: controller,
@@ -910,6 +971,9 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
                   onSelectAngle: canAct ? _selectAngle : null,
                   onSkip: (canAct && _currentAngle != null) ? _skip : null,
                   onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+                  zoomLevel: _zoomLevel,
+                  maxZoomLevel: _maxZoomLevel,
+                  onSetZoom: canAct ? _setZoom : null,
                 ),
               },
             ),
@@ -1031,6 +1095,9 @@ class _CaptureBody extends StatelessWidget {
     required this.onSelectAngle,
     required this.onSkip,
     required this.onSubmit,
+    required this.zoomLevel,
+    required this.maxZoomLevel,
+    required this.onSetZoom,
   });
 
   /// Null on a device with no camera to preview — see [_NoCameraHardware].
@@ -1087,6 +1154,19 @@ class _CaptureBody extends StatelessWidget {
   final ValueChanged<CaptureAngle>? onSelectAngle;
   final VoidCallback? onSkip;
   final VoidCallback? onSubmit;
+
+  /// Current zoom — see [_CaptureScreenState._zoomLevel].
+  final double zoomLevel;
+
+  /// What this camera actually supports — see
+  /// [_CaptureScreenState._maxZoomLevel]. Below 2.0 on a camera with no
+  /// headroom for it (most often the front-facing one), which is what
+  /// [_ZoomControl] reads to decide whether 2x is offered at all.
+  final double maxZoomLevel;
+
+  /// Null when there is no controller to zoom — the same condition
+  /// [onCapture] is null for.
+  final ValueChanged<double>? onSetZoom;
 
   @override
   Widget build(BuildContext context) {
@@ -1165,6 +1245,9 @@ class _CaptureBody extends StatelessWidget {
                     onCapture: onCapture,
                     onSkip: onSkip,
                     onSubmit: onSubmit,
+                    zoomLevel: zoomLevel,
+                    maxZoomLevel: maxZoomLevel,
+                    onSetZoom: onSetZoom,
                   ),
                 ],
               ),
@@ -1660,6 +1743,9 @@ class _BottomControls extends StatelessWidget {
     required this.onCapture,
     required this.onSkip,
     required this.onSubmit,
+    required this.zoomLevel,
+    required this.maxZoomLevel,
+    required this.onSetZoom,
   });
 
   final int capturedCount;
@@ -1668,12 +1754,23 @@ class _BottomControls extends StatelessWidget {
   final VoidCallback? onCapture;
   final VoidCallback? onSkip;
   final VoidCallback? onSubmit;
+  final double zoomLevel;
+  final double maxZoomLevel;
+  final ValueChanged<double>? onSetZoom;
 
   @override
   Widget build(BuildContext context) {
+    final onSetZoom = this.onSetZoom;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // 2x is offered only when this camera actually has the headroom for
+        // it — see _CaptureBody.maxZoomLevel's own doc comment. A control
+        // for a level this camera cannot reach is worse than no control.
+        if (onSetZoom != null && maxZoomLevel >= 2.0) ...[
+          _ZoomControl(level: zoomLevel, onSelect: onSetZoom),
+          const SizedBox(height: Space.sm),
+        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -1701,6 +1798,76 @@ class _BottomControls extends StatelessWidget {
           onPressed: onSubmit,
         ),
       ],
+    );
+  }
+}
+
+/// 1x / 2x, the way a phone's own camera app shows lens choice — pill
+/// buttons in a single translucent capsule, sitting right above the
+/// shutter it changes the input for.
+class _ZoomControl extends StatelessWidget {
+  const _ZoomControl({required this.level, required this.onSelect});
+
+  final double level;
+  final ValueChanged<double> onSelect;
+
+  static const _steps = [1.0, 2.0];
+
+  @override
+  Widget build(BuildContext context) {
+    return _Glass(
+      child: Padding(
+        padding: const EdgeInsets.all(3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final step in _steps)
+              _ZoomStepButton(
+                label: step == step.roundToDouble()
+                    ? '${step.round()}×'
+                    : '$step×',
+                selected: level == step,
+                onTap: () => onSelect(step),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ZoomStepButton extends StatelessWidget {
+  const _ZoomStepButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? C.white : Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: T.caption.copyWith(
+              color: selected ? C.ink : C.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

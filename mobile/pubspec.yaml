@@ -91,6 +91,7 @@ flutter:
   # vehicle_silhouette_painter.dart), not drawn.
   assets:
     - assets/silhouettes/
+    - assets/demo/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

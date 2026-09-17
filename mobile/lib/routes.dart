@@ -52,6 +52,18 @@ abstract final class AppRoutes {
   /// different thing this app happened to also reach from the same sheet.
   static const settings = '/settings';
 
+  /// The real-pipeline walkthrough with a bundled sample photograph — a
+  /// Settings row every role gets, same as [settings] itself.
+  static const demo = '/settings/demo';
+
+  /// A voluntary password change, reached from Settings — distinct from
+  /// [changePassword] above, which the router forces on anyone whose
+  /// account still carries a temporary one. Sharing that path would have
+  /// the redirect in `app.dart` bounce a voluntary visit straight back out,
+  /// since `mustChangePassword` is already false for anyone who can reach
+  /// Settings at all.
+  static const settingsChangePassword = '/settings/change-password';
+
   static String listingDetailPath(int id) => '/listings/$id';
 
   static String dealershipTeamPath(int id) => '/dealerships/$id/team';

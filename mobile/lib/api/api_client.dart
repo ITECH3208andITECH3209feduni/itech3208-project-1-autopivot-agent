@@ -261,6 +261,16 @@ class ApiClient {
     );
   }
 
+  /// Removes the whole listing — every photograph on it, originals and
+  /// processed results alike, in one call. The server refuses this with
+  /// [ApiRequestException] status 409 if anything still references it that
+  /// it could not clear on its own; see `routes_listings.delete_listing`.
+  Future<void> deleteListing(int listingId) async {
+    await _guardVoid(
+      () => _dio.delete('/api/listings/$listingId', options: _options()),
+    );
+  }
+
   /// Guesses year/make/model/variant from a listing URL's own slug — see
   /// `UrlVehicleGuess`'s own doc comment. Never fetches the far page itself,
   /// so this is cheap enough to call as soon as a dealer pastes a URL, before

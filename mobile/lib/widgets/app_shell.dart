@@ -266,23 +266,27 @@ class _AccountSheet extends StatelessWidget {
             ],
             const SizedBox(height: Space.lg),
             const Divider(height: 1, color: C.line),
-            _AccountSheetRow(
-              icon: canManagePlatform
-                  ? Icons.store_outlined
-                  : Icons.groups_outlined,
-              label: adminLabel,
-              trailing: adminDestination == null ? 'Coming soon' : null,
-              // Pop the sheet first, matching Sign out below — leaving it
-              // open underneath a pushed route looks like it belongs to
-              // whatever comes back, not to the screen actually navigating.
-              onTap: adminDestination == null
-                  ? null
-                  : () {
-                      Navigator.of(context).pop();
-                      context.push(adminDestination);
-                    },
-            ),
-            const Divider(height: 1, color: C.line),
+            // dealership_staff has nothing behind this row — neither a team
+            // nor a platform to administer — so it is left out of the sheet
+            // entirely rather than shown disabled with "Coming soon". A row
+            // that will never do anything for this role is not a feature
+            // that role is still waiting on.
+            if (adminDestination != null) ...[
+              _AccountSheetRow(
+                icon: canManagePlatform
+                    ? Icons.store_outlined
+                    : Icons.groups_outlined,
+                label: adminLabel,
+                // Pop the sheet first, matching Sign out below — leaving it
+                // open underneath a pushed route looks like it belongs to
+                // whatever comes back, not to the screen actually navigating.
+                onTap: () {
+                  Navigator.of(context).pop();
+                  context.push(adminDestination);
+                },
+              ),
+              const Divider(height: 1, color: C.line),
+            ],
             _AccountSheetRow(
               icon: Icons.settings_outlined,
               label: 'Settings',
@@ -316,20 +320,14 @@ class _AccountSheetRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
-    this.trailing,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback? onTap;
-  final String? trailing;
-
-  bool get _enabled => onTap != null;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final contentColor = _enabled ? C.ink : C.inkSoft;
-
     return Material(
       type: MaterialType.transparency,
       child: InkWell(
@@ -338,15 +336,14 @@ class _AccountSheetRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 14),
           child: Row(
             children: [
-              Icon(icon, size: 18, color: contentColor),
+              Icon(icon, size: 18, color: C.ink),
               const SizedBox(width: Space.sm),
               Expanded(
                 child: Text(
                   label,
-                  style: T.body.copyWith(fontSize: 15, color: contentColor),
+                  style: T.body.copyWith(fontSize: 15, color: C.ink),
                 ),
               ),
-              if (trailing != null) Text(trailing!, style: T.caption),
             ],
           ),
         ),

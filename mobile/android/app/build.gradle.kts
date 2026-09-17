@@ -6,7 +6,13 @@ plugins {
 
 android {
     namespace = "com.autopivot.autopivot"
-    compileSdk = flutter.compileSdkVersion
+    // flutter.compileSdkVersion (36, as of this Flutter release) is behind
+    // what flutter_secure_storage's own AAR now requires — Gradle refuses to
+    // compile the app against anything lower than a dependency's own floor.
+    // targetSdk/minSdk below are untouched: this only changes what API
+    // surface is visible at compile time, not what the app opts into at
+    // runtime or which devices it installs on.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

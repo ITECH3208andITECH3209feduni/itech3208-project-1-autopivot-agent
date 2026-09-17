@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Every request this app makes goes through the API client — sign-in,
+         listings, uploads, all of it. iOS has no equivalent declaration, so
+         this is easy to only discover missing the first time the app actually
+         runs on Android. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>

@@ -141,6 +141,7 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   Set<int> _deletingImageIds = const {};
   Set<int> _includingImageIds = const {};
   bool _retrying = false;
+  bool _deletingListing = false;
 
   /// The most recent delete or include failure, already safe to show as-is
   /// per [ApiException.message]. Cleared at the start of the next attempt
@@ -277,6 +278,36 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       if (!mounted) return;
       setState(() {
         _deletingImageIds = {..._deletingImageIds}..remove(image.id);
+        _actionErrorMessage = e.message;
+      });
+    }
+  }
+
+  /// Deletes the whole listing, not just one photograph — reached from the
+  /// header's overflow menu, deliberately a step further away than the
+  /// per-photograph delete button that sits right on every tile.
+  Future<void> _handleDeleteListing(VehicleListingDetail listing) async {
+    if (_deletingListing) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) =>
+          _DeleteListingConfirmDialog(title: listing.title),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deletingListing = true);
+    try {
+      await ref.read(apiClientProvider).deleteListing(widget.listingId);
+      if (!mounted) return;
+      // The listing this screen was showing no longer exists — back to
+      // wherever it was reached from, the same as every other screen in
+      // this app leaves once its own subject is gone.
+      Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deletingListing = false;
         _actionErrorMessage = e.message;
       });
     }
@@ -638,6 +669,26 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                 ],
               ],
             ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: Space.sm),
+          child: PopupMenuButton<void>(
+            enabled: !_deletingListing,
+            icon: Icon(
+              Icons.more_vert,
+              color: _deletingListing ? C.inkSoft : C.ink,
+            ),
+            tooltip: 'More',
+            itemBuilder: (context) => [
+              PopupMenuItem<void>(
+                onTap: () => _handleDeleteListing(listing),
+                child: Text(
+                  'Delete listing',
+                  style: T.body.copyWith(color: C.rust),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1332,6 +1383,62 @@ class _DeleteConfirmDialog extends StatelessWidget {
                     ),
                     onPressed: () => Navigator.of(context).pop(true),
                     child: const Text('Delete'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Confirms before deleting the whole listing — every photograph on it, not
+/// one at a time. Same shape as [_DeleteConfirmDialog], one level up.
+class _DeleteListingConfirmDialog extends StatelessWidget {
+  const _DeleteListingConfirmDialog({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: C.white,
+      shape: const RoundedRectangleBorder(borderRadius: Radii.cardAll),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Delete "$title"?', style: serif(24)),
+            const SizedBox(height: Space.sm),
+            Text(
+              'This removes the listing and every photograph on it — '
+              'originals and processed results alike. This cannot be undone.',
+              style: T.bodySmall,
+            ),
+            const SizedBox(height: Space.lg),
+            Row(
+              children: [
+                // See _DeleteConfirmDialog's own comment on this same shape
+                // for why both buttons are wrapped in Expanded.
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: Space.sm),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: C.rust,
+                      minimumSize: const Size(0, 48),
+                    ),
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Delete listing'),
                   ),
                 ),
               ],

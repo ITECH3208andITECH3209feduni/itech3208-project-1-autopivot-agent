@@ -1,20 +1,25 @@
-/// The forced password change, shown to any signed-in user whose account
-/// still carries a temporary, AutoPivot-generated password.
+/// The password-change form, in two modes that share everything except how
+/// they start and end.
 ///
-/// Accounts on this platform are never self-registered; every one is
-/// provisioned by AutoPivot with a generated password, and `User.
-/// mustChangePassword` stays true until that password has been rotated once.
-/// The router (built separately) is what actually enforces the redirect and
-/// keeps a user with `mustChangePassword == true` here — this screen's job is
-/// only to not undermine that: there is deliberately no app bar, no back
-/// button, no skip link and no way to pop the route, because a temporary
-/// password left in place is exactly the gap this screen exists to close.
+/// [dismissible] false is the forced change shown to any signed-in user
+/// whose account still carries a temporary, AutoPivot-generated password —
+/// accounts here are never self-registered, every one is provisioned with a
+/// generated password, and `User.mustChangePassword` stays true until it has
+/// been rotated once. The router enforces the redirect that keeps such a
+/// user here; this screen's job is only to not undermine that, which is why
+/// this mode has no app bar, no back button and no way to pop the route.
+/// [AuthController.changePassword] updates the signed-in user in place on
+/// success, `mustChangePassword` becomes false, and the router moves the
+/// user on by itself — this screen does not navigate anywhere in this mode.
 ///
-/// [AuthController.changePassword] does the actual work and, on success,
-/// updates the signed-in user in place so `mustChangePassword` becomes false;
-/// once that happens the router moves the user on by itself, so this screen
-/// does not navigate anywhere and does not need to look at the method's
-/// return value.
+/// [dismissible] true is a voluntary change reached from Settings, for
+/// everyone else who was never offered a way to rotate their own password
+/// again after that first forced one. Same form, same validation, same
+/// [AuthController.changePassword] call — the difference is purely that a
+/// back button exists, popping out on success is this screen's own job
+/// (nothing in the router reacts to a change that leaves `mustChangePassword`
+/// unchanged), and the copy does not open by telling a returning user their
+/// password is temporary, because for this mode it is not.
 library;
 
 import 'package:flutter/material.dart';
@@ -32,7 +37,10 @@ import '../../widgets/primitives.dart';
 const _minNewPasswordLength = 12;
 
 class ChangePasswordScreen extends ConsumerStatefulWidget {
-  const ChangePasswordScreen({super.key});
+  const ChangePasswordScreen({super.key, required this.dismissible});
+
+  /// See the library doc comment above.
+  final bool dismissible;
 
   @override
   ConsumerState<ChangePasswordScreen> createState() =>
@@ -141,9 +149,20 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
             currentPassword: _currentController.text,
             newPassword: _newController.text,
           );
-      // No navigation here: the auth controller has already updated the
-      // signed-in user, and once mustChangePassword reads false the router
-      // takes the user on from here by itself.
+      if (!mounted) return;
+      if (widget.dismissible) {
+        // Unlike the forced mode, nothing in the router reacts to this —
+        // mustChangePassword was already false and stays false — so leaving
+        // is this screen's own job, with its own confirmation since there is
+        // no state change elsewhere for the dealer to read as one.
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Password changed.')));
+        Navigator.of(context).pop();
+      }
+      // Forced mode: no navigation here. The auth controller has already
+      // updated the signed-in user, and once mustChangePassword reads false
+      // the router takes the user on from here by itself.
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _errorMessage = e.message);
@@ -154,118 +173,145 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // canPop is false and there is no app bar, so there is no gesture, button
-    // or route pop that leaves this screen while mustChangePassword is true.
+    // Forced mode: canPop false and no app bar, so there is no gesture,
+    // button or route pop that leaves this screen while mustChangePassword
+    // is true. Dismissible mode is an ordinary screen someone chose to open.
     return PopScope(
-      canPop: false,
+      canPop: widget.dismissible,
       child: Scaffold(
         body: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(Space.lg),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: AppCard(
-                  child: Form(
-                    key: _formKey,
-                    autovalidateMode: AutovalidateMode.onUserInteraction,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Set a new password', style: serif(28)),
-                        const SizedBox(height: Space.sm),
-                        Text(
-                          'Your account was created with a temporary '
-                          'password. Set your own before you can continue.',
-                          style: T.bodySmall,
-                        ),
-                        const SizedBox(height: Space.lg),
-                        if (_errorMessage != null) ...[
-                          AppErrorBanner(_errorMessage!),
-                          const SizedBox(height: Space.md),
-                        ],
-                        AutofillGroup(
+          child: Column(
+            children: [
+              if (widget.dismissible)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back, color: C.inkSoft),
+                    tooltip: 'Back',
+                  ),
+                ),
+              Expanded(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(Space.lg),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: AppCard(
+                        child: Form(
+                          key: _formKey,
+                          autovalidateMode: AutovalidateMode.onUserInteraction,
                           child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _PasswordField(
-                                controller: _currentController,
-                                focusNode: _currentFocus,
-                                label: 'Current password',
-                                obscured: _obscureCurrent,
-                                onToggleObscured: () => setState(
-                                  () => _obscureCurrent = !_obscureCurrent,
-                                ),
-                                validator: _validateCurrent,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: const [AutofillHints.password],
-                                enabled: !_submitting,
-                                onSubmitted: (_) =>
-                                    FocusScope.of(context)
-                                        .requestFocus(_newFocus),
+                              Text('Set a new password', style: serif(28)),
+                              const SizedBox(height: Space.sm),
+                              Text(
+                                widget.dismissible
+                                    ? 'Choose a new password for your '
+                                          'account.'
+                                    : 'Your account was created with a '
+                                          'temporary password. Set your own '
+                                          'before you can continue.',
+                                style: T.bodySmall,
                               ),
-                              const SizedBox(height: Space.md),
-                              _PasswordField(
-                                controller: _newController,
-                                focusNode: _newFocus,
-                                label: 'New password',
-                                obscured: _obscureNew,
-                                onToggleObscured: () =>
-                                    setState(() => _obscureNew = !_obscureNew),
-                                validator: _validateNew,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-                                enabled: !_submitting,
-                                onSubmitted: (_) =>
-                                    FocusScope.of(context)
-                                        .requestFocus(_confirmFocus),
-                              ),
-                              const SizedBox(height: Space.md),
-                              _PasswordField(
-                                formFieldKey: _confirmFieldKey,
-                                controller: _confirmController,
-                                focusNode: _confirmFocus,
-                                label: 'Confirm new password',
-                                obscured: _obscureConfirm,
-                                onToggleObscured: () => setState(
-                                  () => _obscureConfirm = !_obscureConfirm,
+                              const SizedBox(height: Space.lg),
+                              if (_errorMessage != null) ...[
+                                AppErrorBanner(_errorMessage!),
+                                const SizedBox(height: Space.md),
+                              ],
+                              AutofillGroup(
+                                child: Column(
+                                  children: [
+                                    _PasswordField(
+                                      controller: _currentController,
+                                      focusNode: _currentFocus,
+                                      label: 'Current password',
+                                      obscured: _obscureCurrent,
+                                      onToggleObscured: () => setState(
+                                        () =>
+                                            _obscureCurrent = !_obscureCurrent,
+                                      ),
+                                      validator: _validateCurrent,
+                                      textInputAction: TextInputAction.next,
+                                      autofillHints: const [
+                                        AutofillHints.password,
+                                      ],
+                                      enabled: !_submitting,
+                                      onSubmitted: (_) => FocusScope.of(
+                                        context,
+                                      ).requestFocus(_newFocus),
+                                    ),
+                                    const SizedBox(height: Space.md),
+                                    _PasswordField(
+                                      controller: _newController,
+                                      focusNode: _newFocus,
+                                      label: 'New password',
+                                      obscured: _obscureNew,
+                                      onToggleObscured: () => setState(
+                                        () => _obscureNew = !_obscureNew,
+                                      ),
+                                      validator: _validateNew,
+                                      textInputAction: TextInputAction.next,
+                                      autofillHints: const [
+                                        AutofillHints.newPassword,
+                                      ],
+                                      enabled: !_submitting,
+                                      onSubmitted: (_) => FocusScope.of(
+                                        context,
+                                      ).requestFocus(_confirmFocus),
+                                    ),
+                                    const SizedBox(height: Space.md),
+                                    _PasswordField(
+                                      formFieldKey: _confirmFieldKey,
+                                      controller: _confirmController,
+                                      focusNode: _confirmFocus,
+                                      label: 'Confirm new password',
+                                      obscured: _obscureConfirm,
+                                      onToggleObscured: () => setState(
+                                        () =>
+                                            _obscureConfirm = !_obscureConfirm,
+                                      ),
+                                      validator: _validateConfirm,
+                                      textInputAction: TextInputAction.done,
+                                      autofillHints: const [
+                                        AutofillHints.newPassword,
+                                      ],
+                                      enabled: !_submitting,
+                                      onSubmitted: (_) => _submit(),
+                                    ),
+                                  ],
                                 ),
-                                validator: _validateConfirm,
-                                textInputAction: TextInputAction.done,
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-                                enabled: !_submitting,
-                                onSubmitted: (_) => _submit(),
+                              ),
+                              const SizedBox(height: Space.lg),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton(
+                                  onPressed: _submitting ? null : _submit,
+                                  child: _submitting
+                                      ? const SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: C.white,
+                                          ),
+                                        )
+                                      : const Text('Change password'),
+                                ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: Space.lg),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            onPressed: _submitting ? null : _submit,
-                            child: _submitting
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: C.white,
-                                    ),
-                                  )
-                                : const Text('Change password'),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

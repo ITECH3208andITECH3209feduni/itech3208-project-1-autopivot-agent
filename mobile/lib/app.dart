@@ -25,6 +25,7 @@ import 'features/dashboard/dashboard_screen.dart';
 import 'features/listing_detail/listing_detail_screen.dart';
 import 'features/listings/listings_screen.dart';
 import 'features/settings/app_settings_screen.dart';
+import 'features/settings/demo_screen.dart';
 import 'features/settings/dealerships_screen.dart';
 import 'features/settings/team_screen.dart';
 import 'features/settings/welcome_tour_screen.dart';
@@ -63,7 +64,8 @@ final _routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.changePassword,
-        builder: (context, state) => const ChangePasswordScreen(),
+        builder: (context, state) =>
+            const ChangePasswordScreen(dismissible: false),
       ),
       // Outside the shell deliberately: this is a drill-down from the
       // account sheet's Team row, not part of the shell's own navigation,
@@ -85,6 +87,22 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.settings,
         builder: (context, state) => const AppSettingsScreen(),
+      ),
+      // A drill-down from Settings' own Help section, outside the shell for
+      // the same reason AppRoutes.team is: it has its own back button and
+      // ends by pushing into the shelled listing-detail route itself, not
+      // by returning here.
+      GoRoute(
+        path: AppRoutes.demo,
+        builder: (context, state) => const DemoScreen(),
+      ),
+      // Same screen as AppRoutes.changePassword, different mode and a
+      // different path — see that route constant's own doc comment for why
+      // it cannot be the same path.
+      GoRoute(
+        path: AppRoutes.settingsChangePassword,
+        builder: (context, state) =>
+            const ChangePasswordScreen(dismissible: true),
       ),
       // A drill-down from AppRoutes.dealerships, not Settings directly — see
       // that route's own doc comment. The dealership's name rides along as

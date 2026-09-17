@@ -25,27 +25,25 @@ final appLockProvider = NotifierProvider<AppLockController, bool>(
 
 class AppLockController extends Notifier<bool> {
   @override
-  bool build() {
-    // Without this, signing out and straight back in — on the same device,
-    // same app process, no restart — would carry the previous session's
-    // unlock forward: this provider is created once and outlives any one
-    // AuthState, so nothing else ever puts it back to locked for whoever
-    // signs in next. A cold start needs no such reset — the initial `false`
-    // below already covers it — this is specifically for the transition a
-    // fresh build() never sees.
-    ref.listen<AuthState>(authProvider, (previous, next) {
-      if (previous is AuthSignedOut && next is AuthSignedIn) relock();
-    });
-    return false;
-  }
+  bool build() => false;
 
   void unlock() => state = true;
 
   /// Called when the app is backgrounded — the actual point of a lock
   /// screen is to cover the case where the phone (already unlocked at the
   /// OS level) is picked up by someone else while this app is what was left
-  /// open, not only a fresh launch. Also called on a fresh sign-in
-  /// following a sign-out — see the comment in [build].
+  /// open.
+  ///
+  /// Deliberately *not* also called on a sign-out-then-sign-in: an earlier
+  /// version relocked there too, reasoning that the previous session's
+  /// unlock should not silently carry over to whoever signs in next. In
+  /// practice that makes the lock demand a face or fingerprint that has
+  /// nothing to do with the account just signed into — a company-assigned
+  /// or shared device, signed into with a password that just proved who is
+  /// there, then immediately refusing them because *this phone's* enrolled
+  /// biometric is someone else's. Backgrounding is the actual signal this
+  /// screen exists to react to; a fresh sign-in already reauthenticated the
+  /// person by password, which is not nothing.
   void relock() => state = false;
 }
 

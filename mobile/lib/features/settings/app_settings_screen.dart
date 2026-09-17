@@ -7,9 +7,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../routes.dart';
 import '../../settings/app_preferences.dart';
 import '../../settings/biometric_auth.dart';
 import '../../widgets/primitives.dart';
@@ -97,6 +99,19 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Text('ACCOUNT', style: T.caption),
+                          const SizedBox(height: Space.sm),
+                          _SettingsActionRow(
+                            icon: Icons.password_outlined,
+                            title: 'Change password',
+                            subtitle:
+                                'The forced change at first sign-in is the '
+                                'only chance for this today — this is the '
+                                'way back to it.',
+                            onTap: () =>
+                                context.push(AppRoutes.settingsChangePassword),
+                          ),
+                          const SizedBox(height: Space.xl),
                           Text('SECURITY', style: T.caption),
                           const SizedBox(height: Space.sm),
                           _SettingsToggleRow(
@@ -142,6 +157,16 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
                                     const WelcomeTourScreen(dismissible: true),
                               ),
                             ),
+                          ),
+                          const SizedBox(height: Space.sm),
+                          _SettingsActionRow(
+                            icon: Icons.auto_awesome_outlined,
+                            title: 'Sample car',
+                            subtitle:
+                                'Run a sample photograph through the real '
+                                'pipeline — handy for showing someone what '
+                                'it does.',
+                            onTap: () => context.push(AppRoutes.demo),
                           ),
                         ],
                       )
