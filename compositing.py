@@ -41,13 +41,15 @@ height normalisation, the angle profiles and the reflection extend them.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+
+import platform_placement
 
 logger = logging.getLogger("autopivot.compositing")
 
@@ -143,7 +145,7 @@ STUDIO_FULL = BackdropPreset(
     filename="studio-full.png",
     placement="ground",
     ground_y_ratio=0.755,
-    platform_box=(0.105, 0.598, 0.875, 0.820),
+    platform_box=(170/1448, 657/1086, 1286/1448, 881/1086),
     platform_contact_y_ratio=0.755,
     vehicle_width_ratio=0.86,
     vehicle_height_ratio=0.54,
@@ -151,7 +153,7 @@ STUDIO_FULL = BackdropPreset(
     # polished. Kept well under half strength: the platform top is mid-grey
     # concrete, not glass, and an over-bright mirror image reads as a second
     # car rather than as a reflection.
-    reflection_strength=0.30,
+    reflection_strength=0.06,
     output_size=(1280, 960),
 )
 
@@ -762,6 +764,30 @@ def match_colour(
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _recognise_studio(backdrop: Image.Image, preset: BackdropPreset) -> BackdropPreset:
+    """Recover measured stage geometry for studio images uploaded via listings.
+
+    The listing pipeline supplies the generic dealer preset. Only near-identical
+    copies of the bundled full studio qualify; unrelated scenes stay generic.
+    """
+    if preset != DEALER_BACKDROP:
+        return preset
+    try:
+        with Image.open(BACKGROUND_DIR / STUDIO_FULL.filename) as reference:
+            if abs((backdrop.width/backdrop.height)/(reference.width/reference.height)-1) > .01:
+                return preset
+            sample_size = (96,72)
+            actual = np.asarray(backdrop.convert('RGB').resize(sample_size,Image.Resampling.LANCZOS),dtype=float)
+            expected = np.asarray(reference.convert('RGB').resize(sample_size,Image.Resampling.LANCZOS),dtype=float)
+            difference = np.abs(actual-expected)
+            if difference.mean() <= 3 and np.percentile(difference,99) <= 18:
+                # Keep uploaded image resolution, as the dealer workflow expects.
+                return replace(STUDIO_FULL,output_size=None)
+    except OSError:
+        logger.warning('Studio reference unavailable; retaining generic backdrop placement')
+    return preset
+
+
 def compose(
     cutout: Image.Image,
     backdrop: Image.Image,
@@ -782,13 +808,20 @@ def compose(
     without the argument. It is keyword-only so that the two- and three-
     positional-argument calls that already exist keep working untouched.
     """
+    preset = _recognise_studio(backdrop, preset)
     cutout = trim_transparent(cutout.convert("RGBA"))
     size = _canvas_size(backdrop, preset)
     canvas = _fit_backdrop(backdrop, size)
     profile = _angle_profile(angle)
 
-    vehicle, normalised = _fit_vehicle(cutout, preset, size)
-    x, y, ground_y = _vehicle_position(vehicle, preset, size, profile)
+    tyre_points = []
+    if preset.platform_box and preset.placement == "ground":
+        vehicle, x, y, tyre_points = platform_placement.fit(cutout, preset.platform_box, size)
+        normalised = True
+        ground_y = y + max(py for _, py in tyre_points)
+    else:
+        vehicle, normalised = _fit_vehicle(cutout, preset, size)
+        x, y, ground_y = _vehicle_position(vehicle, preset, size, profile)
     vehicle = match_colour(vehicle, canvas, x, y)
 
     result = canvas.copy()
@@ -815,11 +848,20 @@ def compose(
                     _platform_mask(preset, size, feather=size[1] * 0.006),
                 )
                 reflected = True
-        for shadow, position in _shadows(vehicle.getchannel("A"), x, ground_y, profile):
-            _composite_clipped(result, shadow, position, clip)
+        if tyre_points:
+            pool = platform_placement.ground_shadow(size, vehicle, x, y, tyre_points)
+            _composite_clipped(result, pool, (0, 0), clip)
+        else:
+            for shadow, position in _shadows(vehicle.getchannel("A"), x, ground_y, profile):
+                _composite_clipped(result, shadow, position, clip)
+
+    if tyre_points:
+        contact = platform_placement.contact_shadow(size, vehicle, x, y, tyre_points)
+        _composite_clipped(result, contact, (0, 0), _platform_mask(preset, size))
 
     layer = Image.new("RGBA", size, (0, 0, 0, 0))
-    layer.paste(vehicle, (x, y), vehicle.getchannel("A"))
+    # Paste RGBA directly: using alpha as a paste mask would apply it twice.
+    layer.paste(vehicle, (x, y))
     result.alpha_composite(layer)
 
     return result, {
@@ -832,4 +874,8 @@ def compose(
         "shot_angle": angle,
         "height_normalised": normalised,
         "reflection_applied": reflected,
+        "platform_mask_applied": bool(tyre_points),
+        "tyre_contact_method": "lower_silhouette" if tyre_points else None,
+        "tyre_contacts": [{"x": x+px, "y": y+py} for px, py in tyre_points],
+        "vehicle_placement": {"x": x, "y": y, "width": vehicle.width, "height": vehicle.height},
     }

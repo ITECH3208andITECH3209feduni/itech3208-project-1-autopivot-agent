@@ -61,7 +61,6 @@ def login(payload: LoginRequest, session: DbSession) -> LoginResponse:
         email=user.email,
         role=user.role,
         dealership_id=user.dealership_id,
-        token_version=user.token_version,
     )
 
     logger.info("Login accepted — user_id=%s role=%s", user.id, user.role)

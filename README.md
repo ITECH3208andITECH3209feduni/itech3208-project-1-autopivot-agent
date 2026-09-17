@@ -1,236 +1,509 @@
 # AutoPivot Agent
 
-AutoPivot Agent is a FastAPI demo for vehicle image processing. It provides a web interface and API endpoints for vehicle detection, background removal, license plate detection, optional custom backgrounds and optional plate overlays.
+AutoPivot Agent is a FastAPI web application for preparing vehicle photographs
+for a dealership listing. A dealer uploads photographs of a car; the application
+detects the vehicle, cuts it out of its background, hides the licence plate, and
+places it on a studio backdrop.
+
+This guide takes you from a computer with nothing installed to a working site.
+**Follow it in order.** If you get stuck, there is a
+[troubleshooting section](#step-7--if-something-goes-wrong) at the end of the
+setup steps that diagnoses the common failures.
+
+---
+
+# Part 1 — Getting it running
+
+## What you need first
+
+Three things must be installed before anything else. If you already have them,
+skip to [Step 3](#step-3--run-the-installer).
+
+| | Download from | Notes |
+|---|---|---|
+| **Python 3.11 or 3.12** | [python.org/downloads](https://www.python.org/downloads/) | 3.10 and later all work; 3.11 or 3.12 is the best-tested. |
+| **Node.js (LTS version)** | [nodejs.org](https://nodejs.org/) | Runs the website half. Take the default options. |
+| **NVIDIA driver 527.41+** | [nvidia.com/drivers](https://www.nvidia.com/Download/index.aspx) | Only if you want the GPU. Without one, everything still works but image processing is slow. |
+
+You do **not** need PostgreSQL, Docker, or the CUDA Toolkit. The database is an
+ordinary file, and the CUDA runtime arrives inside the PyTorch package.
+
+### Step 1 — Install Python correctly
+
+Download Python 3.12 — 3.10 and later all work, but 3.12 is the safest
+choice — and run the installer.
+
+> **On the first screen, tick "Add python.exe to PATH" before clicking Install.**
+>
+> This is the single most common thing to get wrong. Without it, none of the
+> commands below will be found, and the error message — `'python' is not
+> recognized` — does not explain why.
+
+If you have already installed Python without ticking it, run the installer
+again, choose **Modify**, and it will let you add it.
+
+To confirm it worked, open a new terminal window
+(press `Win` + `R`, type `cmd`, press Enter) and run:
+
+```bat
+python --version
+```
+
+You should see `Python 3.12.x`. If you see an error, PATH is not set — run the
+installer again.
+
+### Step 2 — Check your GPU (optional)
+
+In the same terminal:
+
+```bat
+nvidia-smi
+```
+
+If a table appears listing your graphics card, you are set. The number in the
+top-right corner is your driver version; it needs to be 527.41 or higher.
+
+If the command is not found, you either have no NVIDIA card or no driver. The
+site still runs — it will process images on the CPU instead, which is far
+slower (expect tens of seconds per photograph rather than a few). Everything
+else behaves identically.
+
+---
+
+## Step 3 — Run the installer
+
+Unzip the project somewhere sensible — `C:\Projects\autopivot` is fine. Avoid
+OneDrive and Desktop folders with spaces or accented characters in the path;
+they cause odd failures in Python tooling.
+
+Then **double-click `setup.bat`**.
+
+A terminal window opens and works through the setup. It takes **10 to 20
+minutes**, almost all of it downloading PyTorch, which is about 2.5 GB.
+
+What it is doing, in order:
+
+1. Checks Python is installed and on your PATH.
+2. Creates a **virtual environment** in a `.venv` folder — a private copy of
+   Python for this project, so its packages cannot conflict with anything else
+   on your machine.
+3. Creates your **`.env`** configuration file and generates a login signing key
+   into it.
+4. Installs **the correct build of PyTorch** for your graphics driver. This is
+   its own step for a reason — see [below](#why-pytorch-needs-its-own-step).
+5. Installs the remaining Python packages, then the website's packages.
+6. Creates the **database** and one **sign-in account**.
+7. Runs a self-check and prints the result.
+
+> ### Copy the password
+>
+> The last thing `setup.bat` prints is an email address and a password:
+>
+> ```
+>   Sign in as : admin@demomotors.test
+>   Password   : xK3n-mQ8pR2v
+> ```
+>
+> **Copy that password now.** It is generated once and never shown again. If you
+> lose it, see [Resetting the sign-in account](#resetting-the-sign-in-account).
+
+Running `setup.bat` again later is safe — every step skips work already done.
+
+### Why PyTorch needs its own step
+
+On Windows, the ordinary `pip install torch` gives you a build with no GPU
+support compiled into it at all. It installs without complaint, imports without
+complaint, and then silently runs everything on the CPU. Nothing in the output
+tells you this has happened; the site simply feels slow forever.
+
+The GPU builds live on PyTorch's own package index and have to be requested by
+name. `scripts/install_torch.py` reads your driver version, picks the matching
+build, and then verifies that the GPU really is visible before finishing.
+
+To override its choice:
+
+```bat
+.venv\Scripts\activate
+python scripts\install_torch.py cu118    REM for an older driver
+python scripts\install_torch.py cpu      REM no GPU at all
+```
+
+---
+
+## Step 4 — Add a Hugging Face token (optional but recommended)
+
+The background removal uses one of two models. The better one, RMBG-2.0,
+requires a free account token.
+
+1. Sign up at [huggingface.co/join](https://huggingface.co/join).
+2. Create a token at
+   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) —
+   a **Read** token is enough.
+3. Accept the model licence at
+   [huggingface.co/briaai/RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0)
+   (open the page and click through the licence prompt).
+4. Open the file **`.env`** in the project folder with Notepad or VS Code, find
+   the `HF_TOKEN=` line, and paste your token after the `=`:
+
+   ```
+   HF_TOKEN=hf_abcdefghijklmnopqrstuvwxyz
+   ```
+
+5. Save the file.
+
+Without a token the application falls back to BiRefNet, which works but gives
+slightly rougher edges around the vehicle.
+
+---
+
+## Step 5 — Start the site
+
+**Double-click `run.bat`.**
+
+Two terminal windows open — one for the API, one for the website — and your
+browser opens at:
+
+```
+http://localhost:5173
+```
+
+The first time you process an image, the application downloads the vision
+models (about 4 GB) and loads them into your graphics card. That first image
+takes a minute or two. Every image after that is fast, because the models stay
+loaded.
+
+**To stop the site**, close the two terminal windows.
+
+### Signing in
+
+Use the email and password `setup.bat` printed in Step 3.
+
+You will be asked to change the password immediately. This is deliberate:
+accounts are provisioned rather than self-registered, so every new account
+starts with `must_change_password` set.
+
+---
+
+## Step 6 — Using it
+
+The application works in this order:
+
+1. **Backdrops** — upload the scenes you want vehicles placed onto. A new
+   dealership starts with none, so do this first.
+2. **New vehicle** — enter the make, model and year to create a listing.
+3. **Photographs** — attach photographs to that listing, by file or by pasting
+   a listing URL.
+4. **Process** — queues one job per photograph. Each is classified, the vehicle
+   is detected and cut out, the plate is hidden, and the result is placed on
+   your chosen backdrop.
+5. **Vehicles** — originals beside processed results.
+
+A photograph the pipeline finds no vehicle in is marked **needs review** rather
+than failed. The run was correct; the result needs a person to look at it.
+
+---
+
+## Step 7 — If something goes wrong
+
+The project ships a diagnostic that checks everything and tells you what to do.
+Open a terminal in the project folder and run:
+
+```bat
+.venv\Scripts\activate
+python -m scripts.check_setup
+```
+
+It verifies your Python version, every package, your GPU (including running a
+real calculation on it), your `.env`, the database, whether a sign-in account
+exists, and the website build — then prints the exact command to fix anything
+missing. It changes nothing, so it is always safe to run.
+
+### Common problems
+
+| What you see | What it means | Fix |
+|---|---|---|
+| `'python' is not recognized` | Python is not on your PATH. | Re-run the Python installer, tick "Add python.exe to PATH". |
+| `'npm' is not recognized` | Node.js is not installed. | Install it from [nodejs.org](https://nodejs.org/), then run `setup.bat` again. |
+| Processing is very slow | The CPU-only PyTorch got installed. Confirm with `check_setup`. | `.venv\Scripts\activate` then `python scripts\install_torch.py` |
+| You are signed out every restart | `JWT_SECRET` is blank in `.env`. | Run `setup.bat` again, or paste a value in yourself. |
+| Login rejects the password | No account exists, or the password was lost. | See [Resetting the sign-in account](#resetting-the-sign-in-account). |
+| `ModuleNotFoundError: No module named 'api'` | A command was run from a subfolder. | `cd` to the project folder first. |
+| `Port 8000 is already in use` | An old copy is still running. | Close the leftover terminal windows, or change `PORT` in `.env`. |
+| The browser shows "connection refused" | The API window closed or crashed. | Look at the API terminal window for the error. |
+| `403` or `429` when importing a listing URL | The site blocks automated requests. | Not fixable from here — see [Listing URL import](#listing-url-import). Download the photographs and upload them instead. |
+
+### Resetting the sign-in account
+
+If you lose the password, delete the account and make a new one:
+
+```bat
+.venv\Scripts\activate
+del autopivot.db
+python -m scripts.init_db
+python -m scripts.seed_dealership
+```
+
+This wipes all listings and jobs with it. To choose the password yourself
+instead of having one generated, set `SEED_ADMIN_PASSWORD` in `.env` before
+running the last command.
+
+### Starting completely over
+
+```bat
+del autopivot.db
+rmdir /s /q storage
+rmdir /s /q .venv
+setup.bat
+```
+
+---
+
+# Part 2 — Working on the code
+
+## Running it from VS Code
+
+Open the project folder in VS Code (**File → Open Folder**). It will offer to
+install the recommended extensions — accept, as the Python and Pylance ones are
+what make the Run button work.
+
+Press **F5**, or open the Run and Debug panel (`Ctrl` + `Shift` + `D`) and pick
+one of:
+
+| Configuration | What it does |
+|---|---|
+| **AutoPivot: full app (website + GPU API)** | Both halves together, with breakpoints working in the Python code. This is the usual one. |
+| **AutoPivot: website + light API (fast start)** | Same, but without loading the vision models: about a second to start instead of a minute, and no VRAM used. Everything works except **Process**, which returns 503. Use this while working on the website. |
+| **API: full (GPU processing)** | The API alone, with the models. |
+| **API: light (no models, auto-reload)** | The API alone, without them. Restarts on save. |
+| **Website only (Vite dev server)** | The website alone. |
+| **Setup: create database tables** | Same as `python -m scripts.init_db`. |
+| **Setup: create sign-in account** | Same as `python -m scripts.seed_dealership`. |
+| **Check setup (GPU, database, packages)** | The diagnostic from Step 7. |
+
+If VS Code asks which Python interpreter to use, choose the one inside `.venv`.
+It is already configured as the default, so usually it selects itself.
+
+`Ctrl` + `Shift` + `P` → **Tasks: Run Task** has the setup, database, build and
+test steps as well.
+
+## Running it from a terminal
+
+The two halves are separate programs and need a terminal each.
+
+**Terminal 1 — the API:**
+
+```bat
+.venv\Scripts\activate
+python autopivot_backend.py
+```
+
+For the fast-starting version with no vision models — the equivalent of the
+"light API" launch configuration:
+
+```bat
+.venv\Scripts\activate
+python -m uvicorn api.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+`--reload` restarts the server whenever you save a Python file.
+
+**Terminal 2 — the website:**
+
+```bat
+npm run dev --prefix frontend
+```
+
+Then open `http://localhost:5173`.
+
+### Serving everything from one port
+
+The Vite dev server on 5173 proxies API calls through to port 8000. If you
+would rather have a single address, build the website and let the API serve it:
+
+```bat
+npm run build --prefix frontend
+```
+
+Then start the API alone and open `http://127.0.0.1:8000`. Without a build,
+that address answers 503 and says so.
+
+## Running the tests
+
+```bat
+.venv\Scripts\activate
+python -m pytest tests -v
+```
+
+Or use the **Testing** panel in VS Code, which is already pointed at `tests/`.
+
+## Configuration
+
+Everything is set in **`.env`** in the project folder. `.env.example` is the
+template, and documents every available setting with comments. `setup.bat`
+creates `.env` for you by copying it.
+
+A real environment variable overrides the file, so a one-off change needs no
+editing:
+
+```bat
+set MAX_FILE_MB=50 && python autopivot_backend.py
+```
+
+The settings you are most likely to touch:
+
+```bash
+HF_TOKEN=                    # Hugging Face token, for the better BG model
+JWT_SECRET=                  # login signing key; blank = signed out on restart
+HOST=127.0.0.1               # 0.0.0.0 to expose it to your network
+PORT=8000
+MAX_FILE_MB=20               # upload size limit
+STORAGE_ROOT=storage         # where uploaded and processed images are written
+HF_HOME=./.cache/huggingface # where the ~4 GB of models are cached
+PLATE_TREATMENT=blur         # blur, pixelate or white
+CLASSIFY_IMAGES=true         # ask CLIP what each photograph is of first
+```
+
+Relative paths in `HF_HOME`, `TORCH_HOME` and `STORAGE_ROOT` are resolved
+against the project folder rather than whatever directory you started the
+server from — so running from VS Code and running from a terminal always use
+the same files.
+
+## The database
+
+By default this uses **SQLite**: one file, `autopivot.db`, in the project
+folder. Nothing to install and no server to start.
+
+```bat
+python -m scripts.init_db           REM create the tables
+python -m scripts.seed_dealership   REM create a dealership and an admin account
+```
+
+`init_db` is safe to run repeatedly. To inspect the data, install the **SQLite
+Viewer** extension VS Code recommends and click `autopivot.db` in the sidebar.
+
+### Using PostgreSQL instead
+
+Fully supported. Set `DATABASE_URL` in `.env` and nothing else changes:
+
+```bash
+DATABASE_URL=postgresql+psycopg://autopivot_user:password@localhost:5432/autopivot
+```
+
+`scripts/init_db.py` notices and runs `alembic upgrade head` rather than
+building the schema from the models. That difference is deliberate: the
+migrations in `migrations/versions/` are written in PostgreSQL's dialect —
+`UPDATE ... FROM`, bare `ALTER COLUMN`, `DROP CONSTRAINT` — none of which SQLite
+implements. Both paths end at the same schema, because the migrations and
+`database/models.py` describe the same tables.
+
+Three things in the model layer carry SQLite variants so one schema builds on
+both databases:
+
+- `text[]` becomes JSON.
+- `BIGINT` primary keys become `INTEGER`, which is the only form SQLite
+  auto-increments — a `BIGINT PRIMARY KEY` silently fails to generate ids.
+- Timestamps go through `UtcDateTime` in `database/base.py`, which keeps them
+  UTC-aware on both. SQLite has no timestamp type and returns naive values,
+  which a browser reads as local time and displays hours off.
+
+## Putting it on your network
+
+The defaults bind to `127.0.0.1`, so the site is reachable only from your own
+machine. To expose it, set `HOST=0.0.0.0` in `.env` and add the address you
+will use to `ALLOWED_ORIGINS`.
+
+For a temporary public URL, run the app and point a tunnel at port 8000 — for
+example [ngrok](https://ngrok.com/), which needs a free account and
+`ngrok config add-authtoken <token>` once. Add the tunnel's URL to
+`ALLOWED_ORIGINS` too, or the browser blocks the API calls.
+
+---
+
+# Part 3 — How it is built
+
+## Project structure
+
+```
+setup.bat / setup.sh      One-time setup. setup.sh is the macOS and Linux version.
+run.bat                   Starts the website and the API together.
+.env                      Your settings. Created by setup.bat from .env.example.
+autopivot.db              The SQLite database. Created by scripts/init_db.py.
+
+autopivot_backend.py      The full application: processing routes and the model registry.
+compositing.py            Places a cut-out vehicle into a scene: edges, shadows, colour.
+classification.py         Asks CLIP what each photograph is of before processing it.
+
+api/
+  app.py                  Application factory. No ML imports, so it runs anywhere.
+  env.py                  Loads .env before anything that reads it is imported.
+  config.py               Settings shared by both halves.
+  security.py             Password hashing and access tokens.
+  deps.py                 Database session and authenticated-user dependencies.
+  routes_auth.py          Login, current user, password change.
+  routes_dashboard.py     Dashboard statistics.
+  routes_listings.py      Listings, photograph upload, processing.
+  routes_backdrops.py     Backdrop library and authenticated file serving.
+  processing.py           Job orchestration, behind a protocol so the light API
+                          stays free of ML imports.
+  storage.py              Content-addressed file storage, scoped per dealership.
+  url_import.py           Fetching and parsing listing pages.
+  schemas.py              Request and response models.
+
+database/
+  base.py                 Model base, constraint naming, and the column types
+                          that keep the schema portable across both databases.
+  connection.py           Engine and session setup for SQLite and PostgreSQL.
+  models.py               Dealership, user, listing, image and job models.
+
+scripts/
+  init_db.py              Creates the schema. create_all on SQLite, Alembic on PostgreSQL.
+  seed_dealership.py      Provisions a dealership and its administrator.
+  install_torch.py        Installs the PyTorch build matching your NVIDIA driver.
+  check_setup.py          Diagnoses a broken setup and says what to run.
+
+frontend/                 React client. src/design.ts is the single source of truth
+                          for the visual system; src/Guidelines.tsx renders it as a
+                          living style guide at /guidelines.
+
+migrations/               Alembic migrations. Used only on the PostgreSQL path.
+assets/backgrounds/       The two measured studio scenes.
+tests/                    Test suite. Run with: python -m pytest tests -v
+.vscode/                  Run and Debug configurations, tasks, editor settings.
+```
+
+## The two halves
+
+The application can be served two ways, and both expose the same routes:
+
+- **`uvicorn api.app:app`** — the light API. Authentication, the dashboard,
+  listings and uploads, with no machine-learning import anywhere in the module
+  graph. Starts instantly on any machine. `POST /api/listings/{id}/process`
+  returns 503, because there are no models to run.
+- **`python autopivot_backend.py`** — the full application. Calls the same
+  application factory and adds the processing routes on top.
+
+There is therefore one set of auth routes, not two that can drift apart.
 
 ## Features
 
 - Upload a vehicle image and process it through the full pipeline.
-- Remove image backgrounds with an RMBG-2.0 primary model and BiRefNet version 11 fallback.
-- Detect vehicles with YOLO26.
-- Detect and hide license plates with nickmuchi/yolos-small-finetuned-license-plate-detection.
-- Upload optional custom backgrounds and numberplate overlays.
-
-## Project Structure
-
-- `autopivot_backend.py` - vehicle processing endpoints, model registry, and the full application.
-- `api/app.py` - application factory: CORS, error handling and auth, with no ML imports.
-- `api/config.py` - settings shared by both halves.
-- `api/security.py` - password hashing and access tokens.
-- `api/deps.py` - database session and authenticated-user dependencies.
-- `api/routes_auth.py` - login, current user and password change.
-- `api/routes_dealership_users.py` - dealership-scoped user creation, reset and deactivation.
-- `api/routes_dashboard.py` - dashboard statistics.
-- `api/routes_listings.py` - vehicle listings, photograph upload and processing.
-- `api/processing.py` - job orchestration, behind a processor protocol so the
-  light API stays free of ML imports.
-- `scripts/seed_dealership.py` - provisions a dealership and its administrator.
-- `scripts/seed_platform_admin.py` - provisions the initial AutoPivot administrator.
-- `api/storage.py` - content-addressed file storage, scoped per dealership.
-- `api/url_import.py` - fetching and parsing listing pages, shared by the light
-  API and the processing backend.
-- `compositing.py` - placing a cut-out vehicle into a scene: alpha refinement,
-  ground alignment, shadows and colour matching.
-- `assets/backgrounds/` - the two measured studio scenes.
-- `api/routes_backdrops.py` - backdrop library and authenticated file serving.
-- `scripts/runpod_setup.sh` - one-shot setup for a GPU test pod.
-- `frontend/` - React client. `src/design.ts` is the single source of truth for
-  the visual system; `src/Guidelines.tsx` renders it as a living style guide at
-  `/guidelines`.
-- `assets/` - sample images kept in the repository; no longer served over HTTP.
-- `database/base.py` - shared SQLAlchemy model base and constraint naming rules.
-- `database/connection.py` - PostgreSQL engine and database-session setup.
-- `database/models.py` - permanent dealership, user, listing, image and job models.
-- `requirements.txt` - Python dependencies.
-
-## Requirements
-
-- Python 3.10+
-- A machine with enough RAM/VRAM for the selected vision models.
-- **Required**: `HF_TOKEN` for Hugging Face authentication. RMBG-2.0 requires access to the BRIA model license; BiRefNet is used as fallback when the primary model is unavailable.
-
-Install dependencies. There are two sets:
-
-```bash
-pip install -r requirements.txt
-```
-
-Core only — server, auth and database. No machine learning, every package has a
-prebuilt Apple Silicon wheel, and it installs in seconds. Enough for
-authentication, the dashboard and Alembic.
-
-```bash
-pip install -r requirements-ml.txt
-```
-
-Everything above plus the vision stack. Several gigabytes, and a CUDA GPU to be
-useful.
-
-## Configuration
-
-The backend uses environment variables:
-
-```bash
-HF_TOKEN=your_huggingface_token        # required for RMBG-2.0
-HOST=0.0.0.0                           # default
-PORT=8000                              # default
-MAX_FILE_MB=20                         # default upload limit
-YOLO_HF_REPO=Ultralytics/YOLO26        # default YOLO26 Hugging Face repo
-YOLO_MODEL_PATH=yolo26n.pt             # default YOLO26 detector file
-ALLOWED_ORIGINS=http://localhost:8000  # comma-separated CORS origins
-DATABASE_URL=postgresql+psycopg://autopivot_user:password@localhost:5432/autopivot
-```
-
-Use `.env.example` as the template for setting `DATABASE_URL` in the local shell
-or deployment environment. Real database credentials must not be committed.
-
-For larger demo uploads, raise `MAX_FILE_MB`, for example:
-
-```bash
-MAX_FILE_MB=50 python autopivot_backend.py
-```
-
-## Run Locally
-
-Two ways to run, depending on whether you need vehicle processing.
-
-**Light API** — authentication and dealership data, no models loaded. Starts
-instantly on any machine, GPU or not:
-
-```bash
-uvicorn api.app:app --reload
-```
-
-**Full application** — the light API plus the processing pipeline:
-
-```bash
-python autopivot_backend.py
-```
-
-Both serve the same auth routes: `autopivot_backend.py` calls the same
-application factory and adds the processing routes on top, so there is one set
-of routes and no risk of the two drifting apart.
-
-**Frontend** — in a second terminal:
-
-```bash
-npm install --prefix frontend && npm run dev --prefix frontend
-```
-
-Opens on `http://localhost:5173` and proxies `/auth`, `/api` and `/health` to
-the API on port 8000, so the browser stays on one origin in development. Sign in
-with the account printed by the seed script.
-
-Open:
-
-```text
-http://127.0.0.1:8000
-```
-
-`/` serves the React client from `frontend/dist`, so a single port serves the
-application and the API on one origin and CORS never comes into it. Build the
-client first, or `/` answers 503 telling you so:
-
-```bash
-npm ci --prefix frontend && npm run build --prefix frontend
-```
-
-Nothing else is published as static files. Images belonging to a dealership are
-served through `/api/files/{path}`, which checks that the caller belongs to the
-dealership that owns them.
-
-## Database and accounts
-
-Apply the schema, then seed a demo dealership:
-
-```bash
-alembic upgrade head
-python -m scripts.seed_dealership
-```
-
-To use the platform administration area, provision its first AutoPivot
-administrator once:
-
-```bash
-python -m scripts.seed_platform_admin
-```
-
-The generated initial password is printed once and must be changed at first
-login. Platform administrators can then create dealerships and their first
-administrator from `/app/platform`.
-The default platform-administrator email is `admin@autopivot.example.com`;
-set `SEED_PLATFORM_ADMIN_EMAIL` before seeding to choose a different valid email.
-
-This provisions one dealership and one administrator, and nothing else — no
-vehicles, images or backdrops. A dealership fills up through the application.
-Name, location and admin details are configurable via `SEED_DEALERSHIP_NAME`,
-`SEED_DEALERSHIP_LOCATION`, `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`; the
-password is generated and printed once if unset. Re-running is safe.
-
-There is no registration endpoint by design: dealer accounts are provisioned by
-AutoPivot, which is why `users.must_change_password` defaults to true. Seeded
-accounts must change their password at first login via `/auth/change-password`.
-
-## APA-231 dealership user management
-
-The existing `users.dealership_id` links every dealership administrator and staff
-member to exactly one dealership. The available roles are `platform_admin`
-(no dealership), `dealership_admin` and `dealership_staff`. A dealership
-administrator can visit `/app/users` to list, add, reset or deactivate accounts
-in their own dealership. The API derives the dealership from the authenticated
-database user rather than trusting a client-supplied ID. Attempts to specify
-another dealership or manage another dealership's user are denied and recorded
-in `audit_logs` with the actor, path and action. The user's email remains unique
-across the platform, including deactivated accounts.
-
-Initial passwords are generated with `secrets`, hashed with bcrypt and returned
-once to the administrator for secure handover outside the platform. New and
-reset accounts must change their password before accessing application routes.
-JWTs carry `users.token_version`: reset increments it, invalidating all earlier
-tokens on their next request. Deactivation also increments the version and the
-existing `get_current_user` check refuses inactive users on every request.
-Deactivation leaves the user row and historical attribution intact. The added
-`f8d91a6b20e4` migration supplies `token_version` to existing users with a
-default of zero. No public registration or email-based reset endpoint exists.
-
-Run the focused two-dealership evidence with:
-
-```bash
-python -m pytest tests/test_dealership_user_management.py tests/test_platform_administration.py tests/test_migrations.py -q
-npm run build --prefix frontend
-```
-
-## Runpod / ngrok / remote access setup
-
-Run the app on Runpod / server as normal, then expose port `8000` with ngrok or your chosen tunnel.  
-
-Note: Ngrok requires auth token and this can be accessed via [official website](https://dashboard.ngrok.com/signup)
-
-Then open Terminal and prompt this:
-```bash
-pip install pyngrok
-
-ngrok config add-authtoken [YOUR TOKEN FROM NGROK GOES HERE]
-```
-
-Example:
-
-```bash
-HOST=0.0.0.0 PORT=8000 MAX_FILE_MB=20 python autopivot_backend.py
-```
-
-Then open the ngrok URL in your browser. If using browser requests from another origin, set `ALLOWED_ORIGINS` to include that URL.
+- Remove image backgrounds with RMBG-2.0, falling back to BiRefNet.
+- Detect vehicles with YOLO26, falling back to YOLO11.
+- Detect and hide licence plates with
+  `nickmuchi/yolos-small-finetuned-license-plate-detection`.
+- Upload custom backdrops and numberplate overlays.
 
 ## API Endpoints
 
 - `GET /health` — health and model readiness status.
+- `GET /health/api` — liveness for the non-ML half, so the light API can be
+  health-checked without models.
 - `GET /api/status` — API status and configured model names.
 - `POST /auth/login` — exchange email and password for a bearer token.
 - `GET /auth/me` — the authenticated user plus dealership context.
 - `POST /auth/change-password` — rotate the password and clear the
   `must_change_password` flag.
-- `GET /api/platform/dealerships` — list dealerships; platform administrator only.
-- `POST /api/platform/dealerships` — atomically provision a dealership, scoped
-  storage and its first administrator; platform administrator only.
+- `GET /api/dashboard/counts` — the totals beside the sidebar nav items.
 - `GET /api/dashboard/stats` — vehicles this month, images processed, and the
   number needing review.
 - `GET|POST /api/listings` — list and create vehicle listings. The list
@@ -257,6 +530,8 @@ view across every dealership.
 - `POST /remove-background` — remove background only.
 - `POST /process-vehicle` — full pipeline: vehicle detection, background removal, plate detection, plate treatment, optional custom background.
 - `POST /detect-and-hide` — detect and hide license plates only.
+- `POST /extract-images-from-url` — fetch the photographs on a listing page
+  and return them as base64. Stores nothing; unauthenticated.
 
 Upload fields:
 
@@ -264,22 +539,18 @@ Upload fields:
 - `background` — optional custom background for `/process-vehicle`.
 - `plate_overlay` — optional numberplate overlay for `/process-vehicle` and `/detect-and-hide`.
 
-## Application Flow
+## Data isolation
 
-Signing in is required; there is no public interface. A dealership's own data is
-the only data any account can reach.
+Signing in is required; there is no public interface, and a dealership's own
+data is the only data any account can reach. Every `/api` route is scoped to the
+authenticated user's dealership, and the composite foreign keys in the schema
+enforce the same rule in the database rather than relying on the queries alone.
 
-1. **Backdrops** — upload the scenes vehicles are composited onto. A new
-   dealership starts with none.
-2. **New vehicle** — make, model and year identify the listing; photographs are
-   attached to it.
-3. **Process** — queues one job per photograph. Vehicle detection, background
-   removal, plate masking, then the chosen backdrop.
-4. **Vehicles** — originals beside processed results, with per-image outcomes.
+Platform admins have no dealership of their own and receive 403 rather than an
+unscoped view across every dealership.
 
-A photograph the pipeline finds no vehicle in completes and is marked as needing
-review rather than being recorded as a failure: the run was correct, the result
-needs a person.
+The user-facing sequence — backdrops, then a vehicle, then processing — is in
+[Step 6](#step-6--using-it).
 
 ## What a photograph is of
 
@@ -454,5 +725,13 @@ reserved addresses, and re-checks after redirects.
 
 ## Notes
 
-This is a prototype. Keep the upload limit and model selection appropriate for
-the GPU and memory available in your instance.
+This is a prototype, and the defaults are sized for a development machine. If
+processing fails with an out-of-memory error, lower `MAX_FILE_MB` in `.env` —
+the segmentation models scale their working memory with the input image, so a
+smaller upload limit is the quickest way to fit a smaller card.
+
+`compositing.py` stands a vehicle on a ground line at 84% of the canvas height
+for any backdrop you upload yourself, because only the two built-in studio
+scenes have measured geometry. If your own backdrop has its horizon elsewhere,
+the vehicle will float or sink. Giving each backdrop its own ground-line setting
+is the fix, and is not built yet.

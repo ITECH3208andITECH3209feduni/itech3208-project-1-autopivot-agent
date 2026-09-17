@@ -18,7 +18,6 @@ type AuthState = {
   /** True until the stored token has been checked, so guards do not redirect early. */
   loading: boolean
   login: (email: string, password: string) => Promise<void>
-  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   logout: () => void
   refresh: () => Promise<void>
 }
@@ -64,13 +63,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
-  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
-    setUser(await api.changePassword(currentPassword, newPassword))
-  }, [])
-
   const value = useMemo(
-    () => ({ user, loading, login, changePassword, logout, refresh }),
-    [user, loading, login, changePassword, logout, refresh],
+    () => ({ user, loading, login, logout, refresh }),
+    [user, loading, login, logout, refresh],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

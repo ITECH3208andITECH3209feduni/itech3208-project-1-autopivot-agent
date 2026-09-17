@@ -1,15 +1,15 @@
 from logging.config import fileConfig
 
 from alembic import context
-from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
+from api.env import load_environment
 from database.base import Base
 import database.models
 from database.connection import get_database_url
 
 
-load_dotenv()
+load_environment()
 
 config = context.config
 
@@ -51,6 +51,13 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            # SQLite cannot ALTER or DROP a constraint in place; Alembic's batch
+            # mode works around it by rebuilding the table. The existing
+            # migrations still will not run on SQLite — they use PostgreSQL-only
+            # syntax such as UPDATE ... FROM — which is why
+            # `python -m scripts.init_db` builds the SQLite schema from the
+            # models instead. This keeps any *future* migration usable on both.
+            render_as_batch=connection.dialect.name == "sqlite",
         )
 
         with context.begin_transaction():

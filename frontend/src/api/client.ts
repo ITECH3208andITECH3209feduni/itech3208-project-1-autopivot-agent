@@ -9,42 +9,8 @@ export type Dealership = {
   id: number
   name: string
   location: string | null
-  contact_name: string | null
-  contact_email: string | null
-  contact_phone: string | null
   status: string
   user_count: number
-}
-
-export type DealershipOnboardRequest = {
-  name: string
-  location: string
-  contact_name: string
-  contact_email: string
-  contact_phone: string
-  admin_email: string
-  admin_first_name: string
-  admin_last_name: string
-}
-
-export type DealershipProvisioned = {
-  dealership: Dealership
-  administrator: User
-  initial_password: string
-}
-
-export type DealershipUser = Omit<User, 'dealership'>
-
-export type DealershipUserCreate = {
-  email: string
-  first_name: string
-  last_name: string
-  role: 'dealership_admin' | 'dealership_staff'
-}
-
-export type DealershipUserProvisioned = {
-  user: DealershipUser
-  initial_password: string
 }
 
 export type User = {
@@ -236,28 +202,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ current_password, new_password }),
     }),
-
-  platformDealerships: () =>
-    request<Dealership[]>('/api/platform/dealerships'),
-
-  onboardDealership: (payload: DealershipOnboardRequest) =>
-    request<DealershipProvisioned>('/api/platform/dealerships', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-
-  dealershipUsers: () => request<DealershipUser[]>('/api/dealership/users'),
-
-  addDealershipUser: (payload: DealershipUserCreate) =>
-    request<DealershipUserProvisioned>('/api/dealership/users', {
-      method: 'POST', body: JSON.stringify(payload),
-    }),
-
-  resetDealershipUser: (userId: number) =>
-    request<{ initial_password: string }>(`/api/dealership/users/${userId}/reset-password`, { method: 'POST' }),
-
-  deactivateDealershipUser: (userId: number) =>
-    request<DealershipUser>(`/api/dealership/users/${userId}/deactivate`, { method: 'POST' }),
 
   dashboardStats: () => request<DashboardStats>('/api/dashboard/stats'),
 

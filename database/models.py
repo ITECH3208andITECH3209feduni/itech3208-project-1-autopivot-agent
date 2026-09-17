@@ -11,32 +11,26 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
-    Index,
-    Integer,
     JSON,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
-    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from database.base import Base
+from database.base import Base, BigIntId, UtcDateTime
 
 
 class Dealership(Base):
     __tablename__ = "dealerships"
     __table_args__ = (
-        Index("uq_dealerships_name_lower", text("lower(name)"), unique=True),
         CheckConstraint(
             "length(trim(name)) > 0",
             name="name_not_blank",
@@ -47,23 +41,18 @@ class Dealership(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
-    )
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     # Shown beneath the dealership name in the application sidebar.
     location: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
-    contact_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    contact_email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
-    contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="active"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -74,32 +63,6 @@ class Dealership(Base):
         back_populates="dealership"
     )
     backdrops: Mapped[list[Backdrop]] = relationship(back_populates="dealership")
-
-
-class AuditLog(Base):
-    """Persistent record of sensitive administration actions and refusals."""
-
-    __tablename__ = "audit_logs"
-    __table_args__ = (
-        CheckConstraint("outcome IN ('success', 'denied', 'failed')", name="outcome_allowed"),
-    )
-
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
-    )
-    actor_user_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    dealership_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("dealerships.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    action: Mapped[str] = mapped_column(String(100), nullable=False)
-    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
-    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
 
 
 class Backdrop(Base):
@@ -129,9 +92,9 @@ class Backdrop(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     dealership_id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigIntId,
         ForeignKey("dealerships.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
@@ -143,21 +106,28 @@ class Backdrop(Base):
     # The angle vocabulary is deliberately unconstrained for now: how angles are
     # determined is still an open decision, and a CHECK written today would only
     # have to be migrated away later.
-    # PostgreSQL gets a real text[]; the SQLite variant exists so the test
-    # suite can build this schema without a PostgreSQL server.
+    # PostgreSQL gets a real text[]; the SQLite variant stores the same list as
+    # JSON, so the schema builds on a local developer machine with no
+    # PostgreSQL server and the test suite keeps working unchanged.
+    #
+    # default=list matters for SQLite. The server default below is PostgreSQL's
+    # array literal, which SQLite would hand back to the JSON type as the empty
+    # *object* {} rather than the empty list. Supplying the value from Python on
+    # every insert means the server default is never what gets read.
     suits_angles: Mapped[list[str]] = mapped_column(
         ARRAY(Text).with_variant(JSON(), "sqlite"),
         nullable=False,
+        default=list,
         server_default="{}",
     )
     is_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -202,11 +172,9 @@ class User(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
-    )
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     dealership_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
+        BigIntId,
         ForeignKey("dealerships.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
@@ -224,15 +192,11 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
-    # Every reset advances this value; JWTs issued before the reset are refused.
-    token_version: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="0"
-    )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -286,15 +250,15 @@ class VehicleListing(Base):
         UniqueConstraint("id", "dealership_id", name="listing_dealership_pair"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     dealership_id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigIntId,
         ForeignKey("dealerships.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     created_by_user_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, index=True
+        BigIntId, nullable=False, index=True
     )
     # The dealership's own reference for the vehicle, shown as "STOCK #4471".
     stock_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -318,10 +282,10 @@ class VehicleListing(Base):
         String(20), nullable=False, server_default="pending"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -382,9 +346,9 @@ class Image(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     vehicle_listing_id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigIntId,
         ForeignKey("vehicle_listings.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
@@ -400,11 +364,11 @@ class Image(Base):
         String(1000), nullable=False, unique=True
     )
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigIntId, nullable=False)
     width: Mapped[int] = mapped_column(nullable=False)
     height: Mapped[int] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, server_default=func.now()
     )
 
     vehicle_listing: Mapped[VehicleListing] = relationship(back_populates="images")
@@ -484,9 +448,9 @@ class ProcessingJob(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     vehicle_listing_id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigIntId,
         ForeignKey("vehicle_listings.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
@@ -494,13 +458,13 @@ class ProcessingJob(Base):
     # Denormalised from the listing so the composite foreign keys above can
     # enforce that a job, its listing and its backdrop share one dealership.
     dealership_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, index=True
+        BigIntId, nullable=False, index=True
     )
-    input_image_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    output_image_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    backdrop_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    input_image_id: Mapped[int] = mapped_column(BigIntId, nullable=False)
+    output_image_id: Mapped[Optional[int]] = mapped_column(BigIntId, nullable=True)
+    backdrop_id: Mapped[Optional[int]] = mapped_column(BigIntId, nullable=True)
     plate_overlay_image_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger, nullable=True
+        BigIntId, nullable=True
     )
     processing_type: Mapped[str] = mapped_column(String(40), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -525,13 +489,13 @@ class ProcessingJob(Base):
     model_used: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, server_default=func.now()
     )
 
     vehicle_listing: Mapped[VehicleListing] = relationship(
