@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+
+# Uploaded files (local storage backend)
+storage/
+.DS_Store

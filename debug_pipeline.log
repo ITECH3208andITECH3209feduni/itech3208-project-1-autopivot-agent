@@ -1,0 +1,663 @@
+2026-09-17T11:55:20 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T11:55:20 [INFO    ] autopivot — Starting AutoPivot — http://0.0.0.0:8000
+2026-09-17T11:55:20 [INFO    ] autopivot — Primary BG model  : briaai/RMBG-2.0
+2026-09-17T11:55:20 [INFO    ] autopivot — Fallback BG model : ZhengPeng7/BiRefNet
+2026-09-17T11:55:20 [INFO    ] autopivot — YOLO model        : yolo26n.pt
+2026-09-17T11:55:20 [INFO    ] autopivot — Device            : cpu
+2026-09-17T11:55:20 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T11:55:20 [INFO    ] autopivot — Using HuggingFace token from local hf auth login cache
+2026-09-17T11:55:20 [INFO    ] autopivot — Loading primary background model — briaai/RMBG-2.0
+2026-09-17T11:55:22 [INFO    ] autopivot — RMBG-2.0 loaded on cpu
+2026-09-17T11:55:22 [INFO    ] autopivot.processing — Vehicle processor registered: PipelineProcessor
+2026-09-17T11:55:22 [INFO    ] autopivot — AutoPivot ready — device=cpu  active_bg_model=briaai/RMBG-2.0  yolo=none
+2026-09-17T11:55:38 [INFO    ] autopivot.auth — Login accepted — user_id=1 role=dealership_admin
+2026-09-17T11:59:12 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/car/120618/2013-bmw-116i-sport-hatchback "HTTP/1.1 200 OK"
+2026-09-17T11:59:24 [INFO    ] autopivot.listings — Listing created — dealership=1 id=81
+2026-09-17T11:59:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/car/120618/2013-bmw-116i-sport-hatchback "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/2cc%20logo.svg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/from.svg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-1.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/pw.svg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/plusorc.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/save.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/bluecorner.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/text-was.svg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-3.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-2.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-8.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-4.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-7.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-6.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-5.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-9.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-10.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-11.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-12.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-14.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-13.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-15.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-16.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-17.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-18.jpg "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/pb3.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:26 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-calc.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-compare.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-download-blue.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/star.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/finance-dollar.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/rating/star-5.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/check.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/people/5.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/vehicle-icon/e.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/vehicle-icon/phone.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/star_filled.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/4/Tiles%20Update_About%20Us.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/9/Tiles%20Update_Trade-Ins.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/5/Tiles%20Update_Finance.png "HTTP/1.1 200 OK"
+2026-09-17T11:59:27 [INFO    ] autopivot.url_import — URL import — host=www.2cheapcars.co.nz candidates=40 imported=20 vehicle=True
+2026-09-17T11:59:27 [INFO    ] autopivot.listings — URL import — listing=81 imported=16 skipped=0 duplicates=4
+2026-09-17T11:59:27 [INFO    ] autopivot.listings — Processing queued — listing=81 jobs=16
+2026-09-17T11:59:27 [INFO    ] autopivot.classification — Loading CLIP classifier — openai/clip-vit-base-patch32
+2026-09-17T11:59:32 [INFO    ] autopivot.classification — CLIP classifier loaded on cpu
+2026-09-17T11:59:33 [INFO    ] autopivot — Loading YOLO vehicle detector — yolo26n.pt
+2026-09-17T11:59:33 [INFO    ] autopivot — Downloading YOLO vehicle detector from Hugging Face — repo=Ultralytics/YOLO26 file=yolo26n.pt
+2026-09-17T11:59:34 [INFO    ] autopivot — YOLO loaded: C:\Users\akhan\.cache\huggingface\hub\models--Ultralytics--YOLO26\snapshots\070ac3c51435984d992ba92eb3f234daf4e4500d\yolo26n.pt
+2026-09-17T12:00:48 [INFO    ] autopivot — Loading YOLOS plate detector
+2026-09-17T12:00:50 [INFO    ] autopivot — YOLOS plate detector loaded
+2026-09-17T12:00:52 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T12:00:52 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:00:52 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.3882287132924113
+2026-09-17T12:00:56 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=284 vehicle_size=(501, 285) columns_with_contact=496/501
+2026-09-17T12:00:56 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:02:14 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:02:14 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.699976437201733
+2026-09-17T12:02:18 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=284 vehicle_size=(370, 285) columns_with_contact=366/370
+2026-09-17T12:02:18 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:03:29 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:03:29 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.38759246409195824
+2026-09-17T12:03:33 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=284 vehicle_size=(506, 285) columns_with_contact=502/506
+2026-09-17T12:03:33 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:04:53 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:04:53 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.6364199004482906
+2026-09-17T12:04:56 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=281 naive_bottom=283 vehicle_size=(746, 284) columns_with_contact=741/746
+2026-09-17T12:04:56 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=281 ground_y=725 paste_y=444 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:06:16 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:06:16 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.44832012176039915
+2026-09-17T12:06:18 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.45 below bar
+2026-09-17T12:06:18 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(487, 285) columns_with_contact=483/487
+2026-09-17T12:06:18 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:07:39 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:07:39 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.3625979694948485
+2026-09-17T12:07:39 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.36 below bar
+2026-09-17T12:07:39 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(362, 285) columns_with_contact=358/362
+2026-09-17T12:07:39 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:08:31 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:08:31 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.41536913891589927
+2026-09-17T12:08:31 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.42 below bar
+2026-09-17T12:08:31 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(467, 285) columns_with_contact=463/467
+2026-09-17T12:08:31 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:08:33 [INFO    ] autopivot.processing — Listing 81 — 16 jobs processed
+2026-09-17T12:08:33 [INFO    ] autopivot — AutoPivot shutting down
+2026-09-17T12:09:07 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T12:09:07 [INFO    ] autopivot — Starting AutoPivot — http://0.0.0.0:8000
+2026-09-17T12:09:07 [INFO    ] autopivot — Primary BG model  : briaai/RMBG-2.0
+2026-09-17T12:09:07 [INFO    ] autopivot — Fallback BG model : ZhengPeng7/BiRefNet
+2026-09-17T12:09:07 [INFO    ] autopivot — YOLO model        : yolo26n.pt
+2026-09-17T12:09:07 [INFO    ] autopivot — Device            : cpu
+2026-09-17T12:09:07 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T12:09:07 [INFO    ] autopivot — Using HuggingFace token from local hf auth login cache
+2026-09-17T12:09:07 [INFO    ] autopivot — Loading primary background model — briaai/RMBG-2.0
+2026-09-17T12:09:11 [INFO    ] autopivot — RMBG-2.0 loaded on cpu
+2026-09-17T12:09:11 [INFO    ] autopivot.processing — Vehicle processor registered: PipelineProcessor
+2026-09-17T12:09:11 [INFO    ] autopivot — AutoPivot ready — device=cpu  active_bg_model=briaai/RMBG-2.0  yolo=none
+2026-09-17T12:09:42 [INFO    ] autopivot.auth — Login accepted — user_id=1 role=dealership_admin
+2026-09-17T12:09:51 [INFO    ] autopivot.listings — Listing deleted — id=81 images=23
+2026-09-17T12:10:12 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/car/120618/2013-bmw-116i-sport-hatchback "HTTP/1.1 200 OK"
+2026-09-17T12:10:22 [INFO    ] autopivot.listings — Listing created — dealership=1 id=82
+2026-09-17T12:10:23 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/car/120618/2013-bmw-116i-sport-hatchback "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/2cc%20logo.svg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/from.svg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/pw.svg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-2.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/plusorc.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/bluecorner.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/text-was.svg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/save.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-3.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-7.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-4.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-8.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-9.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-6.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-10.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-11.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-12.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-13.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-14.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-15.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-16.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-17.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:24 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-18.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-calc.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-compare.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/pb3.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-download-blue.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/check.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/star.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/rating/star-5.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/finance-dollar.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/star_filled.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/vehicle-icon/phone.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/vehicle-icon/e.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/people/5.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/4/Tiles%20Update_About%20Us.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/5/Tiles%20Update_Finance.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/9/Tiles%20Update_Trade-Ins.png "HTTP/1.1 200 OK"
+2026-09-17T12:10:25 [INFO    ] autopivot.url_import — URL import — host=www.2cheapcars.co.nz candidates=40 imported=20 vehicle=True
+2026-09-17T12:10:25 [INFO    ] autopivot.listings — URL import — listing=82 imported=16 skipped=0 duplicates=4
+2026-09-17T12:10:25 [INFO    ] autopivot.listings — Processing queued — listing=82 jobs=16
+2026-09-17T12:10:25 [INFO    ] autopivot.classification — Loading CLIP classifier — openai/clip-vit-base-patch32
+2026-09-17T12:10:31 [INFO    ] autopivot.classification — CLIP classifier loaded on cpu
+2026-09-17T12:10:31 [INFO    ] autopivot — Loading YOLO vehicle detector — yolo26n.pt
+2026-09-17T12:10:31 [INFO    ] autopivot — Downloading YOLO vehicle detector from Hugging Face — repo=Ultralytics/YOLO26 file=yolo26n.pt
+2026-09-17T12:10:31 [INFO    ] autopivot — YOLO loaded: C:\Users\akhan\.cache\huggingface\hub\models--Ultralytics--YOLO26\snapshots\070ac3c51435984d992ba92eb3f234daf4e4500d\yolo26n.pt
+2026-09-17T12:11:41 [INFO    ] autopivot — Loading YOLOS plate detector
+2026-09-17T12:11:42 [INFO    ] autopivot — YOLOS plate detector loaded
+2026-09-17T12:11:44 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T12:11:44 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:11:44 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.3882287132924113
+2026-09-17T12:11:48 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=284 vehicle_size=(501, 285) columns_with_contact=496/501
+2026-09-17T12:11:48 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:13:04 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:13:04 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.699976437201733
+2026-09-17T12:13:08 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=283 naive_bottom=284 vehicle_size=(364, 284) columns_with_contact=360/364
+2026-09-17T12:13:08 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:14:16 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:14:16 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.38759246409195824
+2026-09-17T12:14:20 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=284 vehicle_size=(506, 285) columns_with_contact=502/506
+2026-09-17T12:14:20 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:15:32 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:15:32 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.6364199004482906
+2026-09-17T12:15:35 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=283 naive_bottom=285 vehicle_size=(790, 286) columns_with_contact=784/790
+2026-09-17T12:15:35 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:16:55 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:16:55 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.44832012176039915
+2026-09-17T12:16:57 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.45 below bar
+2026-09-17T12:16:57 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(487, 285) columns_with_contact=483/487
+2026-09-17T12:16:57 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:18:03 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:18:03 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.3625979694948485
+2026-09-17T12:18:04 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.36 below bar
+2026-09-17T12:18:04 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=280 naive_bottom=284 vehicle_size=(363, 285) columns_with_contact=359/363
+2026-09-17T12:18:04 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=280 ground_y=725 paste_y=445 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:19:23 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:19:23 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.41536913891589927
+2026-09-17T12:19:23 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.42 below bar
+2026-09-17T12:19:23 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(468, 285) columns_with_contact=464/468
+2026-09-17T12:19:23 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:19:26 [INFO    ] autopivot.processing — Listing 82 — 16 jobs processed
+2026-09-17T12:20:48 [INFO    ] autopivot.listings — Listing deleted — id=75 images=24
+2026-09-17T12:21:06 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-white-2020-hyundai-kona-s4008795 "HTTP/1.1 200 OK"
+2026-09-17T12:21:13 [INFO    ] autopivot.listings — Listing created — dealership=1 id=83
+2026-09-17T12:21:14 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-white-2020-hyundai-kona-s4008795 "HTTP/1.1 200 OK"
+2026-09-17T12:21:15 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/uploads/image/image/39184/Booran_Motors_Ver2.png "HTTP/1.1 200 OK"
+2026-09-17T12:21:15 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540934/photo/medium-b7cdb6438bfd6774e9c6bb9768a30960.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540930/photo/medium-a1c32aaefdf1b6858df2a6d64c09a10b.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540931/photo/medium-54d104c869f582983096ccc9bb5621e1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540933/photo/medium-ac913c028c509bc8740fbe5ff975a0f5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540935/photo/medium-2dd318944f205600e5146f6fc7a998a7.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540932/photo/medium-2adf6ea5aaf80a53b0925ac690611bbd.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540937/photo/medium-30bbfe4756619f4875bcef1c3db853b9.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540939/photo/medium-813fa875cc040fef6dc4e5631a507f65.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540938/photo/medium-b3f4f7e85edde30ff2324373cbcd8b3f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540943/photo/medium-882cbf52a61fd34e1d6334f3deb41c99.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540940/photo/medium-9ff467dfcedfcecdd14804b4625bf968.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540941/photo/medium-5cf646b44c9b33ffdcd55682c137e44c.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540944/photo/medium-c51ea17aeeb1bc8fa505e90a5fa26d8b.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540942/photo/medium-6628daf077d520cd2f07b86c0674d07e.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540946/photo/medium-e1a76c9baeee09c158bd376b82fb8e5f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540945/photo/medium-4521e946545887226939a0db622f8f05.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540951/photo/medium-03d1eb9e12be25410a3874fa115194dd.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540949/photo/medium-c4f96534135c50a494c8a4c21ae07f82.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540947/photo/medium-ab297ed2acbf201eae22d75c3628b7f3.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540948/photo/medium-6294b554fa753d92ba0df01f95dec38a.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540950/photo/medium-e93a321ead1d074dbe5b3489308fbfa9.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540934/photo/thumb-0d63af8a3eefafaab836d3252d742c44.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540952/photo/medium-127fb56ddcece99d66beed43dd49537b.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540953/photo/medium-0bd1116c32543f7a6d9a87a1646dec4b.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540935/photo/thumb-0a7690d8af1664ea1b319190c68dac56.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540936/photo/medium-d46902dd67814686e929364187718031.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540933/photo/thumb-8adede41fc093edd0171bc8c7f87860e.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540931/photo/thumb-7fb6b80bf7266f37192ee8eeac292b98.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540930/photo/thumb-30149cda0ce06e6769d93baad0dbe884.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540932/photo/thumb-2c20ad4b5deea74cb3b58ef9ff7649cb.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540937/photo/thumb-c06d4936e25488d645f11dd8c27f0d61.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540938/photo/thumb-290fedbb85592c10065cae5c4dd0e487.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540939/photo/thumb-a718d6027932c85b0c66965b77d4c237.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540940/photo/thumb-825d3dccb71754b760323873e1041006.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540943/photo/thumb-9ecea74682dad0e7461f879357a3198e.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540941/photo/thumb-baafc0ffb8300311159bd421289fff23.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540946/photo/thumb-8325eeb62335f78c008d3b43a5974ac5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540944/photo/thumb-dc13aa33b1f449dddc1d5f38b428bdea.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62540942/photo/thumb-d2b92fb9b3b2747df7db3028769b070f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:21:16 [INFO    ] autopivot.url_import — URL import — host=www.booran.com.au candidates=40 imported=20 vehicle=True
+2026-09-17T12:21:17 [INFO    ] autopivot.listings — URL import — listing=83 imported=19 skipped=0 duplicates=1
+2026-09-17T12:21:17 [INFO    ] autopivot.listings — Processing queued — listing=83 jobs=19
+2026-09-17T12:22:29 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:22:29 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.517947124845064
+2026-09-17T12:22:43 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=283 vehicle_size=(534, 284) columns_with_contact=530/534
+2026-09-17T12:22:43 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:23:55 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:23:55 [INFO    ] autopivot — [QDIAG] job angle=None angle_confidence=None
+2026-09-17T12:24:15 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=None: quantile=280 naive_bottom=282 vehicle_size=(450, 283) columns_with_contact=447/450
+2026-09-17T12:24:15 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=None: contact=280 ground_y=725 paste_y=445 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:25:26 [INFO    ] autopivot — Plate rejected — aspect 18.36 outside 1.20–6.50 (score=1.00)
+2026-09-17T12:25:26 [INFO    ] autopivot — Plate filter kept 1 of 2 detections
+2026-09-17T12:25:26 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:25:26 [INFO    ] autopivot — [QDIAG] job angle=rear angle_confidence=0.5808566596116282
+2026-09-17T12:25:48 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear: quantile=282 naive_bottom=283 vehicle_size=(349, 284) columns_with_contact=347/349
+2026-09-17T12:25:48 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:26:32 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:26:32 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.9280954913754554
+2026-09-17T12:26:59 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=283 vehicle_size=(364, 284) columns_with_contact=361/364
+2026-09-17T12:26:59 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:27:41 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:27:41 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.7478033935623055
+2026-09-17T12:27:43 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=283 naive_bottom=285 vehicle_size=(687, 286) columns_with_contact=683/687
+2026-09-17T12:27:43 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:27:45 [INFO    ] autopivot.processing — Listing 83 — 19 jobs processed
+2026-09-17T12:27:45 [INFO    ] autopivot — AutoPivot shutting down
+2026-09-17T12:28:12 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T12:28:12 [INFO    ] autopivot — Starting AutoPivot — http://0.0.0.0:8000
+2026-09-17T12:28:12 [INFO    ] autopivot — Primary BG model  : briaai/RMBG-2.0
+2026-09-17T12:28:12 [INFO    ] autopivot — Fallback BG model : ZhengPeng7/BiRefNet
+2026-09-17T12:28:12 [INFO    ] autopivot — YOLO model        : yolo26n.pt
+2026-09-17T12:28:12 [INFO    ] autopivot — Device            : cpu
+2026-09-17T12:28:12 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T12:28:12 [INFO    ] autopivot — Using HuggingFace token from local hf auth login cache
+2026-09-17T12:28:12 [INFO    ] autopivot — Loading primary background model — briaai/RMBG-2.0
+2026-09-17T12:28:14 [INFO    ] autopivot — RMBG-2.0 loaded on cpu
+2026-09-17T12:28:14 [INFO    ] autopivot.processing — Vehicle processor registered: PipelineProcessor
+2026-09-17T12:28:14 [INFO    ] autopivot — AutoPivot ready — device=cpu  active_bg_model=briaai/RMBG-2.0  yolo=none
+2026-09-17T12:28:59 [INFO    ] autopivot.auth — Login accepted — user_id=1 role=dealership_admin
+2026-09-17T12:29:54 [INFO    ] autopivot.listings — Listing deleted — id=82 images=23
+2026-09-17T12:30:02 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/car/120618/2013-bmw-116i-sport-hatchback "HTTP/1.1 200 OK"
+2026-09-17T12:30:20 [INFO    ] autopivot.listings — Listing created — dealership=1 id=84
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/car/120618/2013-bmw-116i-sport-hatchback "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/2cc%20logo.svg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/from.svg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/pw.svg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-2.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/text-was.svg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/bluecorner.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/save.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/plusorc.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-3.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-9.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-10.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-4.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-6.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-8.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-7.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-11.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-12.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-13.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-14.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:21 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-15.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-16.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-17.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://dc06elnwnqgj.cloudfront.net/twocheapcars/0d356cd4-9b16-48f5-9e1b-d022bb959527/8d6af854-8e75-4ee6-9a62-7a256f6167f2-18.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/pb3.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-calc.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/check.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-compare.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/icon-download-blue.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/star_filled.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/rating/star-5.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/finance-dollar.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/vehicle-icon/e.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/people/5.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/vehicle-icon/phone.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/4/Tiles%20Update_About%20Us.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://www.2cheapcars.co.nz/img/star.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/5/Tiles%20Update_Finance.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] httpx — HTTP Request: GET https://d3kcmhguhrp8ph.cloudfront.net/twocheapcars/website/Banner/9/Tiles%20Update_Trade-Ins.png "HTTP/1.1 200 OK"
+2026-09-17T12:30:22 [INFO    ] autopivot.url_import — URL import — host=www.2cheapcars.co.nz candidates=40 imported=20 vehicle=True
+2026-09-17T12:30:22 [INFO    ] autopivot.listings — URL import — listing=84 imported=16 skipped=0 duplicates=4
+2026-09-17T12:30:22 [INFO    ] autopivot.listings — Processing queued — listing=84 jobs=16
+2026-09-17T12:30:23 [INFO    ] autopivot.classification — Loading CLIP classifier — openai/clip-vit-base-patch32
+2026-09-17T12:30:27 [INFO    ] autopivot.classification — CLIP classifier loaded on cpu
+2026-09-17T12:30:28 [INFO    ] autopivot — Loading YOLO vehicle detector — yolo26n.pt
+2026-09-17T12:30:28 [INFO    ] autopivot — Downloading YOLO vehicle detector from Hugging Face — repo=Ultralytics/YOLO26 file=yolo26n.pt
+2026-09-17T12:30:28 [INFO    ] autopivot — YOLO loaded: C:\Users\akhan\.cache\huggingface\hub\models--Ultralytics--YOLO26\snapshots\070ac3c51435984d992ba92eb3f234daf4e4500d\yolo26n.pt
+2026-09-17T12:31:36 [INFO    ] autopivot — Loading YOLOS plate detector
+2026-09-17T12:31:37 [INFO    ] autopivot — YOLOS plate detector loaded
+2026-09-17T12:31:39 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T12:31:39 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:31:39 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.3882287132924113
+2026-09-17T12:31:43 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=284 vehicle_size=(501, 285) columns_with_contact=496/501
+2026-09-17T12:31:43 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:33:01 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:33:01 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.699976437201733
+2026-09-17T12:33:06 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=283 naive_bottom=284 vehicle_size=(364, 284) columns_with_contact=360/364
+2026-09-17T12:33:06 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:33:16 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-white-2024-hyundai-venue-s5025505 "HTTP/1.1 200 OK"
+2026-09-17T12:33:17 [INFO    ] autopivot.listings — Listing created — dealership=1 id=85
+2026-09-17T12:33:18 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-white-2024-hyundai-venue-s5025505 "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/uploads/image/image/39184/Booran_Motors_Ver2.png "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261690/photo/medium-85efab8a30afd440ed71c1475acde917.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261691/photo/medium-73a419cceaec3a6630910f2e6379840c.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261687/photo/medium-4aac95b620b657b9ddbb968ee9375d89.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261689/photo/medium-25eb9c905178a07cd3ce498e4173b413.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261692/photo/medium-68889eae15a36affb2f04831bf6aeb62.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261688/photo/medium-1b88733ff8e797986d9aca584f279192.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261694/photo/medium-60c526a6e0b16473e1ee95ca4a11b8f2.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261695/photo/medium-d6a9a2344234637fc0c66ab5fb9731c5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261697/photo/medium-900bfbe70ca8f46eed56cdf994bb5ad1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261696/photo/medium-48a0a9c0e99e678cf06c37269fe87adf.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261693/photo/medium-279783ab67277c27632bfc03dedd8390.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261698/photo/medium-357e54da24817fa93f66bd4f6ed3d089.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261700/photo/medium-1bd5910e350be3802518fb447df5945f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261699/photo/medium-61e1cc74222885a55bd097c41b14ccba.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261702/photo/medium-10e0f8ca4f627baee605544fa65381cb.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261705/photo/medium-0faac356eede787bbf9d24da61878d73.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261704/photo/medium-2767eb7333390f8743e4d1816e74f27f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261701/photo/medium-017253d1145454dc5b1f32c94165f57d.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261703/photo/medium-6053b13549072c90bc0191f7c4ee2b75.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261708/photo/medium-a2b42251a44a170e0f7e4c24f5305f74.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261691/photo/thumb-6f3b1a78f7cb88d0da5bec05b6e0db5f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261706/photo/medium-70fde129f7e9a541ebe87f042df19715.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261709/photo/medium-64bbb1a925a2517e81e882d9526eec18.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261690/photo/thumb-a7cb1cab3a7aa87ec27843ad01a1daf2.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261689/photo/thumb-abb962f17535aff3717e3291fd6dd65b.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261687/photo/thumb-f3e8d1511ccf74b168b850d509ba88b1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261692/photo/thumb-baf0d66ecec21507e09b2e623b9cac4e.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261688/photo/thumb-8914b9d5cb791aa8dfad5ea4f9a1a394.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261694/photo/thumb-ecc3a72d5daef48dd831f0883746bcf0.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261695/photo/thumb-be608b4f5d47644630fa69832ca4e98b.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261696/photo/thumb-1f2ca747e6bb611017cb1a741905ef82.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261697/photo/thumb-5d220eaa4113a1f90ae4d703b1ce2141.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261698/photo/thumb-f64cbb39022abdd446e06a6edeacdb3c.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261700/photo/thumb-ba47088a4a13b03f911bd80c1b72de86.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261693/photo/thumb-832e2794b92e02a8818bb4f62cd1b00d.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:19 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261699/photo/thumb-ad96b0abb0154f98368b3f457823aef8.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:20 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261702/photo/thumb-9583182c3995651a817778fcd16dc7f5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:20 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/62261705/photo/thumb-d737ceb0d0fc26f9ad6a4c96896860af.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:33:28 [INFO    ] autopivot.backdrops — Backdrop deleted — dealership=1 id=1
+2026-09-17T12:33:29 [INFO    ] autopivot.url_import — URL import — host=www.booran.com.au candidates=40 imported=20 vehicle=True
+2026-09-17T12:33:29 [INFO    ] autopivot.listings — URL import — listing=85 imported=19 skipped=0 duplicates=1
+2026-09-17T12:33:29 [INFO    ] autopivot.listings — Processing queued — listing=85 jobs=19
+2026-09-17T12:34:22 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:34:22 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.38759246409195824
+2026-09-17T12:34:26 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=284 vehicle_size=(506, 285) columns_with_contact=502/506
+2026-09-17T12:34:26 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:34:44 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T12:34:44 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:34:44 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.5033218550570376
+2026-09-17T12:34:54 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=284 vehicle_size=(522, 285) columns_with_contact=518/522
+2026-09-17T12:34:54 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:35:46 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:35:46 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.6364199004482906
+2026-09-17T12:35:49 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=283 naive_bottom=285 vehicle_size=(790, 286) columns_with_contact=784/790
+2026-09-17T12:35:49 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:36:12 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T12:36:12 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:36:12 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.46366521680500494
+2026-09-17T12:36:20 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=281 naive_bottom=283 vehicle_size=(498, 284) columns_with_contact=494/498
+2026-09-17T12:36:20 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=281 ground_y=725 paste_y=444 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:37:11 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:37:11 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.44832012176039915
+2026-09-17T12:37:14 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.45 below bar
+2026-09-17T12:37:14 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(487, 285) columns_with_contact=483/487
+2026-09-17T12:37:14 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:37:41 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:37:41 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.8032668512872952
+2026-09-17T12:38:10 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=284 vehicle_size=(362, 285) columns_with_contact=358/362
+2026-09-17T12:38:10 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:38:34 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:38:34 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.3625979694948485
+2026-09-17T12:38:35 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.36 below bar
+2026-09-17T12:38:35 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=280 naive_bottom=284 vehicle_size=(363, 285) columns_with_contact=359/363
+2026-09-17T12:38:35 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=280 ground_y=725 paste_y=445 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:39:29 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:39:29 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.42757239158453586
+2026-09-17T12:39:31 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.43 below bar
+2026-09-17T12:39:31 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=283 naive_bottom=284 vehicle_size=(339, 285) columns_with_contact=337/339
+2026-09-17T12:39:31 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:39:54 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:39:54 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.41536913891589927
+2026-09-17T12:39:54 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.42 below bar
+2026-09-17T12:39:55 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(468, 285) columns_with_contact=464/468
+2026-09-17T12:39:55 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:39:58 [INFO    ] autopivot.processing — Listing 84 — 16 jobs processed
+2026-09-17T12:40:48 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:40:48 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.7200446794336167
+2026-09-17T12:40:53 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=283 naive_bottom=285 vehicle_size=(636, 286) columns_with_contact=632/636
+2026-09-17T12:40:53 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:40:56 [INFO    ] autopivot.processing — Listing 85 — 19 jobs processed
+2026-09-17T12:43:43 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-red-2025-chery-tiggo-4-s705528 "HTTP/1.1 200 OK"
+2026-09-17T12:43:45 [INFO    ] autopivot.listings — Listing created — dealership=1 id=86
+2026-09-17T12:43:46 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-red-2025-chery-tiggo-4-s705528 "HTTP/1.1 200 OK"
+2026-09-17T12:43:46 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/uploads/image/image/39184/Booran_Motors_Ver2.png "HTTP/1.1 200 OK"
+2026-09-17T12:43:46 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933199/photo/medium-7aec1634dc051e50e231b0c72adf44b7.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:46 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933195/photo/medium-138fb7baa152a43bcff77da7d51cbebe.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:46 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933205/photo/medium-0b05c809a4451be68c7fdd77f4f91ae3.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:46 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933201/photo/medium-0782b04e369140f04af28f5aec107571.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933196/photo/medium-e66c2b080f8b541684848694598e54ab.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933197/photo/medium-9778f45b0b1584f161766635cde1c5ab.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933207/photo/medium-9d6e564af82ca55e70b843b187c0f1a6.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933208/photo/medium-dea42432e037684f24b4bea8d8668fc6.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933212/photo/medium-e4d4c6daf1d54b47bee78065e968918f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933210/photo/medium-ac41a601fbd6943af136c88931f7fb76.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933213/photo/medium-a5ea14ec2705201f8b15a50d271a5efe.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933220/photo/medium-dabd39966d457f5689ea4d8b63f0611a.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933215/photo/medium-1b6ae86d9a29254170ddfd6d7fed5ff3.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933218/photo/medium-e89fcdcb5324acb140ccb6fe2ff0f364.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933226/photo/medium-eca28886376aa263134e4608c809946a.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933221/photo/medium-71333e99060a0a57299903bed61ab992.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933227/photo/medium-e24961641d0b13962c48e119cedf0ebd.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933216/photo/medium-6cae3b16578b9f3173260d1f2d91a6c1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933231/photo/medium-d0d4df5c0fb91c5c9e8afa3cb6628df1.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933230/photo/medium-223c87e44144dd33c1918a83d9983db5.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933223/photo/medium-61eb4fe4a2b37130a622b1890ccede93.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933241/photo/medium-eb89639b9e09296c5b58212f0a726e4c.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933235/photo/medium-8bd3f95738b195b36d0be5da5cf63da2.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933234/photo/medium-234cea98376952346dfd9131d9ab7b81.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933205/photo/thumb-0f5c1fc636ea8d56e250fa06cfef8860.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933199/photo/thumb-002aac1991be574e603414c9448d9c5d.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933201/photo/thumb-3c8028416ddc7a727bce6a047f25cbfa.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933196/photo/thumb-63c3665791a9589ff12bdd5ec95e4373.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933195/photo/thumb-273ab0aff98deb0b8c558c647d4bc8ab.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933212/photo/thumb-47e72dddcdf3a4771d0786a8d5d1737e.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933207/photo/thumb-97c9cca9e82b0deef6cf3e7c1219683d.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933197/photo/thumb-600c19c584d5355d6135c2e141a70530.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933208/photo/thumb-8e039e96d2f2345536ac9d3fc3ef8749.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933213/photo/thumb-06341bbd9b806d7281609f98fdf94059.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933210/photo/thumb-3e9e987de94bec3a2d4978ab5c2fd7d4.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933218/photo/thumb-ba6e4add824c11d8dcd8a491d87652ba.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933220/photo/thumb-73f816ace4be9ee3156fd8d6da2c512c.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933216/photo/thumb-a80166c9e84db4d1998f0c5c637b3354.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933215/photo/thumb-24054358f48cdb3334fdd43a1dedb35f.jpg "HTTP/1.1 200 OK"
+2026-09-17T12:43:47 [INFO    ] autopivot.url_import — URL import — host=www.booran.com.au candidates=40 imported=20 vehicle=True
+2026-09-17T12:43:48 [INFO    ] autopivot.listings — URL import — listing=86 imported=19 skipped=0 duplicates=1
+2026-09-17T12:43:48 [INFO    ] autopivot.listings — Processing queued — listing=86 jobs=19
+2026-09-17T12:45:01 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:45:01 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.4931594133447563
+2026-09-17T12:45:25 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=284 vehicle_size=(516, 285) columns_with_contact=512/516
+2026-09-17T12:45:25 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:46:42 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:46:42 [INFO    ] autopivot — [QDIAG] job angle=rear_quarter angle_confidence=0.40859431690435377
+2026-09-17T12:47:06 [INFO    ] autopivot.compositing — [QDIAG] recede declined: confidence 0.41 below bar
+2026-09-17T12:47:07 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear_quarter: quantile=282 naive_bottom=284 vehicle_size=(474, 285) columns_with_contact=470/474
+2026-09-17T12:47:07 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear_quarter: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:48:24 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T12:48:25 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:48:25 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.7037842699265363
+2026-09-17T12:48:35 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=284 vehicle_size=(673, 285) columns_with_contact=669/673
+2026-09-17T12:48:35 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:49:47 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T12:49:47 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.9032412242901985
+2026-09-17T12:50:47 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=283 vehicle_size=(372, 284) columns_with_contact=368/372
+2026-09-17T12:50:47 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T12:50:50 [INFO    ] autopivot.processing — Listing 86 — 19 jobs processed
+2026-09-17T13:00:40 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-silver-or-chrome-2025-chery-tiggo-4-s705527 "HTTP/1.1 200 OK"
+2026-09-17T13:00:41 [INFO    ] autopivot.listings — Listing created — dealership=1 id=87
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://www.booran.com.au/cars/used-silver-or-chrome-2025-chery-tiggo-4-s705527 "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/uploads/image/image/39184/Booran_Motors_Ver2.png "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933923/photo/medium-2e48b73ed1026ec371779c482b9d04b3.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933924/photo/medium-c73371072b3d4a09c32ca138b6432b45.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933920/photo/medium-4e358b099bd5ef1ccf0362aa31a9f976.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933922/photo/medium-2926bd8160545efc198939443569d872.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933921/photo/medium-eca452f5ffc1d12a6e32190b1e4fcc4c.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933919/photo/medium-e10f919e6d8603df3ef294c769db01a2.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933925/photo/medium-d2293eaa7acf941efc43e1f9f5168c06.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933930/photo/medium-2351df9431dc4935b25d33cb4d21d732.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933926/photo/medium-28fa3a48293fb58eb56963dc6abe925d.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933927/photo/medium-e1efd351ff50e30fa0585132723d2331.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933928/photo/medium-5739816f8c1f21dc95b9d8364dcc7a60.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933929/photo/medium-29793c62ff9c2896e48212d8c7d69e7d.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933932/photo/medium-1722c49be03d2db09f64f1697c5d0147.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933934/photo/medium-6bfb9d838ba35f3a677ce6e9e6287127.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933931/photo/medium-8d643d59d4b900d0e0c68f2ebf1556f9.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933933/photo/medium-f0df5e3e333d91604904ecbfc3557163.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933935/photo/medium-b1ad0ce5e45e3627927fd04bb96715da.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933936/photo/medium-5913a595ca6b791dd694d3d7e5c69ccc.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933939/photo/medium-5f10b2030b4825ad0f3a5f7ab1212b20.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:42 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933938/photo/medium-ad38321a046c43b731e1fdc83e5b97b3.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933940/photo/medium-f20b4e551742c4a6291c63f93b20fae9.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933941/photo/medium-f6ab02b943d3a3501d60120b795760ad.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933937/photo/medium-57c798b12729ecb1e2c28ad68f47ce16.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933942/photo/medium-9210f339f711d6476baf99aca05bf350.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933924/photo/thumb-31e36a66b7522748a846aae1038bf14c.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933923/photo/thumb-7923ce0ce3962929f2b44661bfff034a.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933920/photo/thumb-d438c4233f11b23eb2af9db4b40b7595.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933921/photo/thumb-ece571520681291444a34e335ba3206c.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933922/photo/thumb-77a2194505e3f455b72130eaa01a5611.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933919/photo/thumb-e029077aacaab0e1c0e416da263f42bb.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933928/photo/thumb-e84ad5cc90ba7124f445ac614d928921.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933926/photo/thumb-6448090bd9e7753003d856f213bddedf.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933925/photo/thumb-58640e864ee0ad5f8dd52e95a9da778f.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933927/photo/thumb-b3b1ede397cde767cbac69e4411053b9.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933930/photo/thumb-8d5d4971d9602abc1f2034142ab5f477.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933932/photo/thumb-b77d5b77e747d26d4602cbd93de6d574.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933929/photo/thumb-991add73cd83bf012f5c2f386e31abdd.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933934/photo/thumb-110d2a86dd8bf03c23159d4c54ec921c.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] httpx — HTTP Request: GET https://edge.dealerstudio.com.au/photo/60933931/photo/thumb-1bbe473fdf930cefd860252bff805f5e.jpg "HTTP/1.1 200 OK"
+2026-09-17T13:00:43 [INFO    ] autopivot.url_import — URL import — host=www.booran.com.au candidates=40 imported=20 vehicle=True
+2026-09-17T13:00:43 [INFO    ] autopivot.listings — URL import — listing=87 imported=19 skipped=0 duplicates=1
+2026-09-17T13:00:43 [INFO    ] autopivot.listings — Processing queued — listing=87 jobs=19
+2026-09-17T13:01:26 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T13:01:26 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.48367945899090026
+2026-09-17T13:01:35 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=282 naive_bottom=283 vehicle_size=(506, 284) columns_with_contact=502/506
+2026-09-17T13:01:35 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T13:02:15 [INFO    ] autopivot — Plate filter rejected all 1 detection(s) — angle='side' cannot show a plate face-on
+2026-09-17T13:02:16 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T13:02:16 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.3707260936988009
+2026-09-17T13:02:33 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=283 vehicle_size=(473, 284) columns_with_contact=469/473
+2026-09-17T13:02:33 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T13:03:44 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T13:03:44 [INFO    ] autopivot — [QDIAG] job angle=rear angle_confidence=0.769172613550299
+2026-09-17T13:03:52 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=rear: quantile=282 naive_bottom=283 vehicle_size=(308, 284) columns_with_contact=306/308
+2026-09-17T13:03:52 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=rear: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T13:05:02 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T13:05:02 [INFO    ] autopivot — [QDIAG] job angle=side angle_confidence=0.6642197258378939
+2026-09-17T13:05:09 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=side: quantile=282 naive_bottom=284 vehicle_size=(693, 285) columns_with_contact=688/693
+2026-09-17T13:05:09 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=side: contact=282 ground_y=725 paste_y=443 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T13:05:10 [ERROR   ] autopivot.listings — Listing 87 could not be deleted
+Traceback (most recent call last):
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\psycopg\cursor.py", line 117, in execute
+    raise ex.with_traceback(None)
+psycopg.errors.NotNullViolation: null value in column "vehicle_listing_id" of relation "images" violates not-null constraint
+DETAIL:  Failing row contains (1488, null, processed, medium-d2293eaa7acf941efc43e1f9f5168c06.jpg, 1/processed/1019-e9f2ab3491ca33acca379abc4e4c5cbe54ec3989d819dea..., image/png, 1603623, 1280, 960, 2026-09-17 13:03:53.851872+10, null, null).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\api\routes_listings.py", line 327, in delete_listing
+    session.commit()
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 2035, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 1316, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 1290, in _prepare_impl
+    self.session.flush()
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 4353, in flush
+    self._flush(objects)
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 4488, in _flush
+    with util.safe_reraise():
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 4449, in _flush
+    flush_context.execute()
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 465, in execute
+    rec.execute(self)
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 641, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\persistence.py", line 86, in save_obj
+    _emit_update_statements(
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\orm\persistence.py", line 913, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1421, in execute
+    return meth(
+           ^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\sql\elements.py", line 526, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1643, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\.venv\Lib\site-packages\psycopg\cursor.py", line 117, in execute
+    raise ex.with_traceback(None)
+sqlalchemy.exc.IntegrityError: (psycopg.errors.NotNullViolation) null value in column "vehicle_listing_id" of relation "images" violates not-null constraint
+DETAIL:  Failing row contains (1488, null, processed, medium-d2293eaa7acf941efc43e1f9f5168c06.jpg, 1/processed/1019-e9f2ab3491ca33acca379abc4e4c5cbe54ec3989d819dea..., image/png, 1603623, 1280, 960, 2026-09-17 13:03:53.851872+10, null, null).
+[SQL: UPDATE images SET vehicle_listing_id=%(vehicle_listing_id)s::BIGINT WHERE images.id = %(images_id)s::BIGINT]
+[parameters: {'vehicle_listing_id': None, 'images_id': 1488}]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-09-17T13:06:13 [INFO    ] autopivot — [QDIAG] saved raw cutout (post plate-treatment) to C:\Users\akhan\Downloads\itech3208-project-1-autopivot-agent-main\debug_last_cutout.png
+2026-09-17T13:06:13 [INFO    ] autopivot — [QDIAG] job angle=front angle_confidence=0.9462508483324603
+2026-09-17T13:07:06 [INFO    ] autopivot.compositing — [QDIAG] contact_y angle=front: quantile=283 naive_bottom=284 vehicle_size=(386, 285) columns_with_contact=382/386
+2026-09-17T13:07:06 [INFO    ] autopivot.compositing — [QDIAG] vehicle_position angle=front: contact=283 ground_y=725 paste_y=442 vehicle_bottom_on_canvas=725 (should equal ground_y=725)
+2026-09-17T13:07:08 [INFO    ] autopivot.processing — Listing 87 — 19 jobs processed
+2026-09-17T13:22:17 [INFO    ] autopivot — AutoPivot shutting down
+2026-09-17T13:58:29 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T13:58:29 [INFO    ] autopivot — Starting AutoPivot — http://0.0.0.0:8000
+2026-09-17T13:58:29 [INFO    ] autopivot — Primary BG model  : briaai/RMBG-2.0
+2026-09-17T13:58:29 [INFO    ] autopivot — Fallback BG model : ZhengPeng7/BiRefNet
+2026-09-17T13:58:29 [INFO    ] autopivot — YOLO model        : yolo26n.pt
+2026-09-17T13:58:29 [INFO    ] autopivot — Device            : cpu
+2026-09-17T13:58:29 [INFO    ] autopivot — frontend/dist not found — serving the original demo page at /. Run 'npm run build --prefix frontend' to serve the React client.
+2026-09-17T13:58:29 [INFO    ] autopivot — Using HuggingFace token from local hf auth login cache
+2026-09-17T13:58:29 [INFO    ] autopivot — Loading primary background model — briaai/RMBG-2.0
+2026-09-17T13:58:31 [INFO    ] autopivot — RMBG-2.0 loaded on cpu
+2026-09-17T13:58:31 [INFO    ] autopivot.processing — Vehicle processor registered: PipelineProcessor
+2026-09-17T13:58:31 [INFO    ] autopivot — AutoPivot ready — device=cpu  active_bg_model=briaai/RMBG-2.0  yolo=none
+2026-09-17T13:59:31 [INFO    ] autopivot.auth — Login accepted — user_id=1 role=dealership_admin
+2026-09-17T14:00:31 [INFO    ] autopivot — AutoPivot shutting down

@@ -1,0 +1,1754 @@
+# AutoPivot Backend
+# Developed by Vadim Rudoi, Akhanda Bhandari and Suraj Purella
+
+from __future__ import annotations
+
+import base64
+import dataclasses
+import io
+import logging
+import logging.config
+import os
+import threading
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
+
+import cv2
+import numpy as np
+import torch
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile, Body
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from huggingface_hub import get_token, hf_hub_download, login
+from PIL import Image, UnidentifiedImageError
+from torchvision import transforms
+from transformers import AutoModelForImageSegmentation, pipeline
+from ultralytics import YOLO
+
+import classification
+import compositing
+from api import processing, url_import
+from api.app import create_app
+from api.config import BASE_DIR, HOST, PORT
+
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+# Fixed by Vadim Rudoi — all hardcoded values replaced with environment-based config
+
+# HOST, PORT, ALLOWED_ORIGINS, BASE_DIR and .env loading now live in
+# api/config.py so the light API can be served without importing this module.
+
+HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
+HF_AUTH_TOKEN: str  = HF_TOKEN or (get_token() or "")
+MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 20))
+MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
+
+# Fixed by Vadim Rudoi — YOLO model path is now configurable via environment
+# variable instead of being hardcoded to a non-existent filename.
+YOLO_HF_REPO: str    = os.getenv("YOLO_HF_REPO", "Ultralytics/YOLO26")
+YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "yolo26n.pt")
+
+# Contributed by Suraj Purella (Autopivot-refactored-pipeline) — a second
+# detector to fall back to. YOLO26 is served from a Hugging Face repo, so a
+# rate limit or a withdrawn file takes vehicle detection down with it and the
+# whole pipeline stops. YOLO11 ships with ultralytics and needs no repo.
+YOLO_FALLBACK_MODEL_PATH: str = os.getenv("YOLO_FALLBACK_MODEL_PATH", "yolo11n.pt")
+ENABLE_YOLO_FALLBACK: bool = os.getenv(
+    "ENABLE_YOLO_FALLBACK", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# ── Licence plate handling ──
+# A misplaced mask is worse than no mask: a white rectangle painted over empty
+# background is visible damage to a photograph a dealer intends to publish,
+# whereas an unmasked plate is a photograph that simply still needs a person.
+# These bounds exist to make the second failure the likely one.
+PLATE_CONFIDENCE: float = float(os.getenv("PLATE_CONFIDENCE", "0.30"))
+PLATE_BOX_PADDING: int = int(os.getenv("PLATE_BOX_PADDING", "5"))
+
+# AU plates are ~372×134 mm (2.8:1) and NZ ~360×130 mm (2.8:1); European
+# slimline runs to about 4.7:1 and motorcycle plates are nearer 1.3:1. Viewing
+# angle only ever compresses the width, so the bounds are deliberately wide —
+# they are here to reject boxes that are nothing like a plate, not to grade
+# borderline ones.
+PLATE_MIN_ASPECT: float = float(os.getenv("PLATE_MIN_ASPECT", "1.2"))
+PLATE_MAX_ASPECT: float = float(os.getenv("PLATE_MAX_ASPECT", "6.5"))
+
+# A plate is a small part of a car. Anything above this is a panel or a window.
+PLATE_MAX_AREA_RATIO: float = float(os.getenv("PLATE_MAX_AREA_RATIO", "0.12"))
+
+# Fraction of the box that must land on the vehicle cutout rather than on
+# transparent background. This is what rejects a plate detected in empty space.
+PLATE_MIN_COVERAGE: float = float(os.getenv("PLATE_MIN_COVERAGE", "0.55"))
+
+# A licence plate mounted flush to a bumper is viewed edge-on in a pure side
+# profile shot — at most a thin sliver, never a legible rectangle — so a
+# detection on a "side"-classified photograph is not a plate the camera
+# caught at a steep angle, it is the detector firing on something else on
+# the car: a brake-calliper logo, a wheel-hub decal, a reflection in the
+# door. Reproduced against a real photograph — YOLOS detected a
+# plate-shaped, plate-aspect-ratio box centred on the front wheel of a
+# dead-on side shot, which passed every geometric and coverage check below
+# because the wheel itself is opaque vehicle pixels, and the brand overlay
+# was pasted onto the tyre. Angle classification runs before plate
+# detection specifically so this can be checked; every other angle
+# (front/rear straight-on and both quarters) can genuinely show a plate and
+# is unaffected.
+PLATE_INVISIBLE_ANGLES: frozenset[str] = frozenset({"side"})
+
+# The job-568 defect: a Korean marketplace's own promotional sticker — a
+# solid, saturated red block with printed text — sat in the plate mount
+# instead of a real plate. YOLOS is trained on actual licence plates (white
+# or yellow, black characters) and never proposes a box for something that
+# looks nothing like one, so lowering PLATE_CONFIDENCE cannot catch it: the
+# model simply never nominates that region as a candidate in the first
+# place. _detect_plate_zone_stickers runs a second, independent, colour-only
+# search for "a solid block of saturated colour sitting where a plate would
+# be" and hands any hit through the same _filter_plates checks a real
+# detection would face — aspect, area, cutout coverage, angle — so it is
+# rejected exactly as readily as a bad model detection, just found by a
+# different route.
+#
+# The x-band is wide, not centred, on purpose: a straight-on front/rear shot
+# does put the plate near the horizontal middle of the vehicle's own box, but
+# a front-quarter or rear-quarter shot — a dealership's usual hero angle —
+# does not. Perspective puts the near corner, and everything mounted on it,
+# well off centre: checked against the real job-568 photo, the sticker sat
+# at roughly 15% of the vehicle box's width in from its left edge, which an
+# earlier, centred 28–72% band missed outright. Only the outermost slice on
+# each side is excluded, to stay clear of a wing mirror or a wheel at the
+# very edge of the box. The y-band stays a lower-body restriction — nothing
+# mounted above mid-height is a plate — with more headroom than a strict
+# "bottom half" for a tall bumper or a raised SUV.
+#
+# What actually keeps this from flagging kerbside reflectors, tail-light
+# clusters or a bright brake calliper glimpsed through a wheel is not the
+# zone, it's shape and the checks downstream: PLATE_ZONE_MIN_EXTENT demands a
+# solid, filled-in block (a light cluster is rarely a plain rectangle), and
+# every hit still has to clear _filter_plates' own aspect, area and
+# cutout-coverage checks — a calliper glimpsed through spokes fails
+# coverage, a wraparound light strip usually fails aspect or area. If real
+# jobs show this still catching something that is not a plate or a sticker,
+# tighten PLATE_ZONE_MIN_SATURATION or PLATE_ZONE_MIN_EXTENT first — both
+# are read from the environment so that does not need a code change.
+PLATE_ZONE_MIN_SATURATION: int = int(os.getenv("PLATE_ZONE_MIN_SATURATION", "80"))
+PLATE_ZONE_X_RATIO: tuple[float, float] = (0.05, 0.95)
+# Capped short of the very bottom of the box, not just the top: right at
+# ground contact is where a shadow or a floor reflection is most likely to
+# read as a solid saturated block, and a real plate/sticker mounted on the
+# bumper never sits flush with the tyre line anyway.
+PLATE_ZONE_Y_RATIO: tuple[float, float] = (0.45, 0.93)
+PLATE_ZONE_MIN_EXTENT: float = float(os.getenv("PLATE_ZONE_MIN_EXTENT", "0.70"))
+PLATE_ZONE_MIN_AREA_PX: int = int(os.getenv("PLATE_ZONE_MIN_AREA_PX", "120"))
+
+# The job-609/611 defect: widening PLATE_ZONE_X_RATIO to (0.05, 0.95) — to
+# catch a quarter-angle sticker sitting near the vehicle box's edge, see
+# above — also brought the tail-light cluster into the search band on a
+# straight rear shot. A tail lamp's own coloured lens segments (the small
+# reflector or indicator strip along its lower edge, not the whole light) can
+# be a solid, saturated, nearly-rectangular block in exactly the same way a
+# sticker is, and neither PLATE_ZONE_MIN_EXTENT nor _filter_plates' aspect
+# check is shaped to tell them apart — confirmed against real job-611/615
+# photographs, where a lens segment on each side cleared every existing
+# check and got the brand overlay pasted onto the tail light itself.
+#
+# What a lens segment does not have is width: a real plate or a promotional
+# sticker mounted where a plate would be is a prominent object sized to be
+# read from a few metres away, never a sliver a twelfth as wide as the car.
+# Measured against the two real photographs above, the genuine plate ran
+# roughly 29% of the vehicle box's width and the false lens-segment hit
+# roughly 7% — this floor sits well clear of both. Read from the environment
+# alongside the other PLATE_ZONE_* thresholds so it can be retuned without a
+# code change if a narrower plate (a motorcycle, a slimline European plate)
+# is ever clipped by it.
+PLATE_ZONE_MIN_WIDTH_RATIO: float = float(os.getenv("PLATE_ZONE_MIN_WIDTH_RATIO", "0.12"))
+
+# The value is written to processing_jobs.plate_treatment, which has a check
+# constraint, so an unrecognised setting here would fail every job at the
+# database rather than at startup. Normalise it instead.
+PLATE_TREATMENTS: frozenset[str] = frozenset({"blur", "pixelate", "white"})
+PLATE_TREATMENT: str = os.getenv("PLATE_TREATMENT", "blur").strip().lower()
+if PLATE_TREATMENT not in PLATE_TREATMENTS:
+    logging.getLogger("autopivot").warning(
+        "PLATE_TREATMENT=%r is not one of %s — using 'blur'.",
+        PLATE_TREATMENT, ", ".join(sorted(PLATE_TREATMENTS)),
+    )
+    PLATE_TREATMENT = "blur"
+
+# Width in pixels the plate is downsampled to before being scaled back up.
+# The downsample is what destroys the characters; the upsample only decides
+# whether the result reads as a blur or as a mosaic.
+PLATE_MOSAIC_WIDTH: int = int(os.getenv("PLATE_MOSAIC_WIDTH", "8"))
+
+# Brand overlay: cover a detected plate with the AutoPivot wordmark instead of
+# obscuring it in place. `_apply_plate_treatment` has taken an optional
+# overlay image since it was first written — /process-vehicle and
+# /detect-and-hide already let a caller upload one per request — this is what
+# wires a *standing* overlay into the real listings pipeline, so a dealership
+# doesn't have to supply one on every job. `PLATE_TREATMENT` still governs
+# ordinary plates whenever this is off or the asset can't be loaded.
+PLATE_BRAND_LOGO_ENABLED: bool = os.getenv(
+    "PLATE_BRAND_LOGO_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+PLATE_BRAND_LOGO_PATH: str = os.getenv(
+    "PLATE_BRAND_LOGO_PATH", str(BASE_DIR / "assets" / "autopivot-plate-logo.png")
+)
+
+# ── Image classification ──
+# Whether to ask CLIP what each photograph is of before processing it. Set
+# false to fall back to the old behaviour, where anything a vehicle detector
+# finds a car in gets composited.
+CLASSIFY_IMAGES: bool = os.getenv(
+    "CLASSIFY_IMAGES", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# What to tell the dealer about a photograph that was left out. Written for
+# someone looking at their own listing, not at a log.
+_NOT_A_VEHICLE_PHOTO: dict[str, str] = {
+    "advertisement": (
+        "This looks like an advertisement or a dealer badge rather than a "
+        "photograph of the vehicle."
+    ),
+    "interior": "This is an interior shot, so there is no exterior to place on a backdrop.",
+    "detail": "This is a close-up of part of the vehicle rather than the whole car.",
+    "unknown": (
+        "This could not be identified as a photograph of the vehicle's exterior."
+    ),
+}
+
+_VEHICLE_CROPPED_BY_FRAME = (
+    "Part of the car runs past the edge of this photograph, so the whole "
+    "body isn't in frame."
+)
+
+_SEGMENTATION_INCOMPLETE = (
+    "Background removal did not keep the whole vehicle — part of the body "
+    "came back transparent, most often a dark car against a low-contrast "
+    "background. Flagged for review rather than published looking like "
+    "only part of the car."
+)
+
+ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"image/jpeg", "image/png", "image/webp"}
+)
+VEHICLE_CLASSES: frozenset[str] = frozenset(
+    {"car", "truck", "bus", "motorcycle"}
+)
+
+YOLO26_HF_FILES: frozenset[str] = frozenset({
+    "yolo26n.pt",
+    "yolo26s.pt",
+    "yolo26m.pt",
+    "yolo26l.pt",
+    "yolo26x.pt",
+})
+YOLO26_FILENAME_ALIASES: dict[str, str] = {
+    "yolov26n.pt": "yolo26n.pt",
+    "yolov26s.pt": "yolo26s.pt",
+    "yolov26m.pt": "yolo26m.pt",
+    "yolov26l.pt": "yolo26l.pt",
+    "yolov26x.pt": "yolo26x.pt",
+}
+
+# ── Structured Logging ─────────────────────────────────────────────────────────
+# Developed by Vadim Rudoi
+
+_LOGGING_CONFIG: dict = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
+            "datefmt": "%Y-%m-%dT%H:%M:%S",
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "stream": "ext://sys.stdout",
+        }
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
+
+logging.config.dictConfig(_LOGGING_CONFIG)
+logger = logging.getLogger("autopivot")
+
+# ── Shared Segmentation Transform ──────────────────────────────────────────────
+# Both RMBG-2.0 and BiRefNet use the same ImageNet normalisation and 1024×1024
+# input resolution, so one transform covers both models.
+
+_SEG_SIZE = (1024, 1024)
+_seg_transform = transforms.Compose([
+    transforms.Resize(_SEG_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+])
+
+# ── Model Registry ─────────────────────────────────────────────────────────────
+# Developed by Vadim Rudoi — centralised registry with:
+#   • RMBG-2.0 as primary background removal model
+#   • BiRefNet as automatic fallback if RMBG-2.0 is unavailable
+#   • Independent health tracking per model
+#   • Lazy loading for vehicle and plate detectors
+
+
+class ModelRegistry:
+    """Centralised model registry with lazy loading and per-model health tracking."""
+
+    def __init__(self) -> None:
+        # Background removal — primary + fallback
+        self._rmbg: Optional[AutoModelForImageSegmentation] = None
+        self._birefnet: Optional[AutoModelForImageSegmentation] = None
+        self._rmbg_ok = False
+        self._birefnet_ok = False
+
+        # Detection models (lazy)
+        self._vehicle: Optional[YOLO] = None
+        self._plates = None
+        self._vehicle_ok = False
+        self._plates_ok = False
+
+        self.active_yolo: str = "none"
+        self.active_yolo_role: str = "none"
+
+        self._device: str = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Contributed by Suraj Purella (Autopivot-refactored-pipeline) — one
+        # lock per lazily-loaded model. Sync FastAPI endpoints run in a thread
+        # pool and run_listing_jobs walks a batch, so two requests can reach an
+        # unloaded detector at the same moment. Without these, both threads see
+        # `not _vehicle_ok`, both call YOLO(), and the second overwrites the
+        # first mid-inference.
+        self._vehicle_lock = threading.RLock()
+        self._plates_lock = threading.RLock()
+        # Background models load at startup, which is single-threaded, but
+        # _remove_background also promotes BiRefNet mid-request when RMBG-2.0
+        # raises during inference. That path is concurrent.
+        self._bg_lock = threading.RLock()
+
+    # ── Read-only properties ──
+
+    @property
+    def device(self) -> str:
+        return self._device
+
+    @property
+    def vehicle_detector(self) -> YOLO:
+        if not self._vehicle_ok:
+            self._load_vehicle()
+        return self._vehicle  # type: ignore[return-value]
+
+    @property
+    def plate_detector(self):
+        if not self._plates_ok:
+            self._load_plates()
+        return self._plates
+
+    # ── Background model loaders ──
+
+    def _load_rmbg(self) -> None:
+        """
+        Developed by Vadim Rudoi — load BRIA RMBG-2.0 as the primary
+        background removal model. Requires a HuggingFace token from an account
+        that has accepted the BRIA license on https://huggingface.co/briaai/RMBG-2.0
+        """
+        logger.info("Loading primary background model — briaai/RMBG-2.0")
+        try:
+            self._rmbg = (
+                AutoModelForImageSegmentation.from_pretrained(
+                    "briaai/RMBG-2.0",
+                    trust_remote_code=True,
+                    torch_dtype=torch.float32,
+                    token=HF_AUTH_TOKEN or True,
+                )
+                .eval()
+                .to(self._device)
+            )
+            self._rmbg_ok = True
+            logger.info("RMBG-2.0 loaded on %s", self._device)
+        except Exception as exc:
+            logger.warning(
+                "RMBG-2.0 failed to load: %s. Falling back to BiRefNet.",
+                exc,
+                exc_info=True,
+            )
+
+    def _load_birefnet(self) -> None:
+        """
+        Developed by Vadim Rudoi — load BiRefNet as the fallback background
+        removal model, used whenever RMBG-2.0 is unavailable.
+        """
+        with self._bg_lock:
+            if self._birefnet_ok:
+                return
+
+            logger.info("Loading fallback background model — ZhengPeng7/BiRefNet")
+            try:
+                self._birefnet = (
+                    AutoModelForImageSegmentation.from_pretrained(
+                        "ZhengPeng7/BiRefNet",
+                        trust_remote_code=True,
+                        torch_dtype=torch.float32,
+                    )
+                    .eval()
+                    .to(self._device)
+                )
+                self._birefnet_ok = True
+                logger.info("BiRefNet loaded on %s", self._device)
+            except Exception as exc:
+                logger.critical("BiRefNet failed to load: %s", exc, exc_info=True)
+                raise RuntimeError(f"BiRefNet model unavailable: {exc}") from exc
+
+    # ── Detection model loaders ──
+
+    def load_vehicle_fallback(self) -> None:
+        """
+        Contributed by Suraj Purella (Autopivot-refactored-pipeline) — load the
+        secondary detector. Kept public because _detect_vehicle also calls it
+        when YOLO26 loads cleanly but then raises during inference.
+        """
+        if not ENABLE_YOLO_FALLBACK:
+            raise RuntimeError("YOLO fallback is disabled by ENABLE_YOLO_FALLBACK")
+
+        logger.info("Loading fallback vehicle detector — %s", YOLO_FALLBACK_MODEL_PATH)
+        self._vehicle = YOLO(YOLO_FALLBACK_MODEL_PATH)
+        self._vehicle_ok = True
+        self.active_yolo = str(YOLO_FALLBACK_MODEL_PATH)
+        self.active_yolo_role = "fallback"
+        logger.info("Fallback detector loaded: %s", YOLO_FALLBACK_MODEL_PATH)
+
+    def _load_vehicle(self) -> None:
+        """
+        Fixed by Vadim Rudoi — YOLO model filename is configurable via the
+        YOLO_MODEL_PATH environment variable instead of being hardcoded.
+
+        Falls back to YOLO11 — contributed by Suraj Purella.
+        """
+        with self._vehicle_lock:
+            # Re-checked inside the lock: a thread that blocked here may have
+            # been waiting on the very load it was about to start.
+            if self._vehicle_ok:
+                return
+
+            logger.info("Loading YOLO vehicle detector — %s", YOLO_MODEL_PATH)
+            try:
+                model_path = _resolve_yolo_model_path(YOLO_MODEL_PATH)
+                self._vehicle = YOLO(model_path)
+                self._vehicle_ok = True
+                self.active_yolo = str(model_path)
+                self.active_yolo_role = "primary"
+                logger.info("YOLO loaded: %s", model_path)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "YOLO model '%s' failed to load: %s",
+                    YOLO_MODEL_PATH, exc, exc_info=True,
+                )
+
+            try:
+                self.load_vehicle_fallback()
+            except Exception as exc:
+                logger.critical("Fallback detector also failed: %s", exc, exc_info=True)
+                raise RuntimeError(
+                    f"No vehicle detector available "
+                    f"(primary={YOLO_MODEL_PATH}, fallback={YOLO_FALLBACK_MODEL_PATH}): {exc}"
+                ) from exc
+
+    def _load_plates(self) -> None:
+        with self._plates_lock:
+            if self._plates_ok:
+                return
+
+            logger.info("Loading YOLOS plate detector")
+            try:
+                self._plates = pipeline(
+                    "object-detection",
+                    model="nickmuchi/yolos-small-finetuned-license-plate-detection",
+                )
+                self._plates_ok = True
+                logger.info("YOLOS plate detector loaded")
+            except Exception as exc:
+                logger.critical("Plate detector failed to load: %s", exc, exc_info=True)
+                raise RuntimeError(f"Plate detector unavailable: {exc}") from exc
+
+    # ── Active model resolution ──
+
+    def active_bg_model(self):
+        """Return the active background removal model and its identifier."""
+        if self._rmbg_ok:
+            return self._rmbg, "briaai/RMBG-2.0"
+        if self._birefnet_ok:
+            return self._birefnet, "ZhengPeng7/BiRefNet"
+        raise RuntimeError(
+            "No background removal model is loaded. "
+            "Check startup logs for RMBG-2.0 / BiRefNet errors."
+        )
+
+    def health(self) -> dict:
+        if self._rmbg_ok:
+            active_bg = "briaai/RMBG-2.0"
+        elif self._birefnet_ok:
+            active_bg = "ZhengPeng7/BiRefNet (fallback)"
+        else:
+            active_bg = "none"
+
+        return {
+            "device": self._device,
+            "active_bg_model": active_bg,
+            "rmbg_loaded": self._rmbg_ok,
+            "birefnet_loaded": self._birefnet_ok,
+            "active_yolo_model": self.active_yolo,
+            "active_yolo_role": self.active_yolo_role,
+            "vehicle_detector_loaded": self._vehicle_ok,
+            "plate_detector_loaded": self._plates_ok,
+        }
+
+
+registry = ModelRegistry()
+
+# ── Pipeline Adapter ───────────────────────────────────────────────────────────
+# Wraps the seven-step pipeline in the interface api/processing.py expects, so
+# job orchestration, storage and status tracking stay free of any ML import.
+
+
+class PipelineProcessor:
+    """Runs the full pipeline over raw bytes and reports what it found."""
+
+    def process(
+        self,
+        image: bytes,
+        background: Optional[bytes],
+        ground_y_ratio: Optional[float] = None,
+    ) -> processing.ProcessOutcome:
+        source = _open_image(image).convert("RGB")
+
+        # Classified before anything else runs. Vehicle detection cannot answer
+        # this question: a finance advertisement contains a real car and passes
+        # detection, and compositing it puts a stranger's Mazda in a Nissan's
+        # gallery. A steering-wheel close-up passes for much the same reason and
+        # ends up standing on the turntable. Both were in the first real URL
+        # import. Judged on the whole photograph rather than a crop, because
+        # what makes a banner a banner is the text around the car.
+        classified = _classify(source)
+        if classified is not None and not classification.is_processable(classified):
+            return processing.ProcessOutcome(
+                image_png=None,
+                vehicle_detected=False,
+                image_kind=classified.kind,
+                kind_confidence=classified.kind_confidence,
+                message=_NOT_A_VEHICLE_PHOTO.get(
+                    classified.kind, "This photograph is not a vehicle exterior."
+                ),
+            )
+
+        vehicle = _detect_vehicle(source)
+        if vehicle is None:
+            # A correct run that produced nothing usable — recorded as needing
+            # review rather than as a failure.
+            return processing.ProcessOutcome(
+                image_png=None,
+                vehicle_detected=False,
+                image_kind=classified.kind if classified else None,
+                kind_confidence=classified.kind_confidence if classified else None,
+                message="No vehicle detected in this photograph.",
+            )
+
+        if _vehicle_is_cropped_by_frame(vehicle["box"], source.size):
+            # A correctly-detected car that the camera simply didn't fit all
+            # of — see _vehicle_is_cropped_by_frame. Held for review rather
+            # than composited, the same as a close-up or a non-exterior shot:
+            # scaling a partial silhouette up to a "whole car" height would
+            # otherwise publish a car with an invisible chunk missing.
+            return processing.ProcessOutcome(
+                image_png=None,
+                vehicle_detected=False,
+                image_kind=classified.kind if classified else None,
+                kind_confidence=classified.kind_confidence if classified else None,
+                message=_VEHICLE_CROPPED_BY_FRAME,
+            )
+
+        crop, coords = _crop_with_padding(source, vehicle["box"])
+        bg_removed, model_used = _remove_background(crop)
+
+        # Whether background removal actually kept the vehicle it was given.
+        # A correctly-detected, correctly-framed car can still come out of
+        # this step missing most of its body — see
+        # _segmentation_dropped_the_vehicle — and nothing downstream of here
+        # can tell a genuinely small car from one that lost half its paint to
+        # the wrong side of the matte, so it has to be caught now, before the
+        # compositor scales whatever it was given up to a "whole car" height.
+        vehicle_box_in_crop = _box_in_crop(vehicle["box"], coords)
+        if _segmentation_dropped_the_vehicle(bg_removed, vehicle_box_in_crop):
+            return processing.ProcessOutcome(
+                image_png=None,
+                vehicle_detected=False,
+                image_kind=classified.kind if classified else None,
+                kind_confidence=classified.kind_confidence if classified else None,
+                message=_SEGMENTATION_INCOMPLETE,
+            )
+
+        # Plates are found on the cropped original rather than the finished
+        # composite. At 3000-odd pixels wide the plate is a sliver of the frame
+        # and the detector's own resize leaves it a few pixels across; on the
+        # crop it occupies far more of the input. The crop is also ordinary
+        # photographic pixels, which is what the detector was trained on — a
+        # cutout floating on transparency is not.
+        plates = _detect_plates(crop) + _detect_plate_zone_stickers(crop, vehicle_box_in_crop)
+        plates = _filter_plates(
+            plates,
+            _box_area(vehicle["box"]),
+            bg_removed,
+            angle=classified.angle if classified else None,
+        )
+        # Treated here, before the compositor rescales the cutout to fit the
+        # scene: after that, coordinates taken from the crop no longer apply.
+        brand_overlay = _brand_plate_overlay()
+        bg_removed = _apply_plate_treatment(bg_removed, plates, brand_overlay)
+
+        background_image = _open_image(background) if background else None
+        angle = classified.angle if classified else None
+        angle_confidence = classified.angle_confidence if classified else None
+        final, _ = _place_on_backdrop(
+            bg_removed, background_image, source.size, coords,
+            angle=angle, ground_y_ratio=ground_y_ratio,
+            angle_confidence=angle_confidence,
+        )
+
+        buffer = io.BytesIO()
+        final.save(buffer, format="PNG")
+
+        return processing.ProcessOutcome(
+            image_png=buffer.getvalue(),
+            vehicle_detected=True,
+            plates_detected=len(plates),
+            # 'overlay' matches the value /process-vehicle and /detect-and-hide
+            # already write for a per-request overlay — the check constraint
+            # on processing_jobs.plate_treatment allows it today, so this
+            # needs no migration.
+            plate_treatment=(
+                "overlay" if plates and brand_overlay is not None
+                else (PLATE_TREATMENT if plates else "none")
+            ),
+            model_used=model_used,
+            detected_angle=angle,
+            angle_confidence=angle_confidence,
+            image_kind=classified.kind if classified else None,
+            kind_confidence=classified.kind_confidence if classified else None,
+        )
+
+
+# ── Application Lifespan ───────────────────────────────────────────────────────
+# Developed by Vadim Rudoi — startup sequence:
+#   1. HuggingFace authentication (required for RMBG-2.0 and BiRefNet)
+#   2. Attempt RMBG-2.0 (primary) — failure is non-fatal, logged as WARNING
+#   3. If RMBG-2.0 failed, load BiRefNet (fallback) — failure IS fatal
+#   4. Detection models load lazily on first request
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if HF_TOKEN:
+        try:
+            login(token=HF_TOKEN)
+            logger.info("HuggingFace authentication successful")
+        except Exception as exc:
+            # Fixed by Vadim Rudoi — previously crashed unconditionally on auth
+            # failure. We log the error and continue; the downstream model load
+            # will surface the 401 with a clear message if the token was the
+            # only issue.
+            logger.warning("HuggingFace login failed: %s", exc)
+    elif HF_AUTH_TOKEN:
+        logger.info("Using HuggingFace token from local hf auth login cache")
+    else:
+        # Fixed by Vadim Rudoi — silent skip replaced with actionable warning.
+        logger.warning(
+            "HF_TOKEN is not set. RMBG-2.0 requires authentication — "
+            "BiRefNet will be used as the fallback. Set HF_TOKEN and accept "
+            "the BRIA license at https://huggingface.co/briaai/RMBG-2.0 "
+            "to enable the primary model."
+        )
+
+    # Step 1 — try primary model
+    registry._load_rmbg()
+
+    # Step 2 — if primary failed, load fallback (fatal if also fails)
+    if not registry._rmbg_ok:
+        registry._load_birefnet()
+
+    # Hands the pipeline to the job orchestrator in api/processing.py. Until
+    # this runs, POST /api/listings/{id}/process answers 503 rather than
+    # queueing work no model can execute.
+    processing.set_processor(PipelineProcessor())
+
+    logger.info(
+        "AutoPivot ready — device=%s  active_bg_model=%s  yolo=%s",
+        registry.device,
+        registry.health()["active_bg_model"],
+        registry.active_yolo,
+    )
+    yield
+    logger.info("AutoPivot shutting down")
+
+
+# ── FastAPI Application ────────────────────────────────────────────────────────
+
+# CORS, the global exception handler and the auth routes are configured by the
+# factory, so the light API (uvicorn api.app:app) and this full application
+# behave identically on everything that is not vehicle processing.
+app = create_app(
+    lifespan=lifespan,
+    description=(
+        "Vehicle background removal, detection, and licence-plate treatment API. "
+        "Developed by Vadim Rudoi."
+    ),
+)
+
+# The /static mount is gone with the vanilla page that needed it. It originally
+# published the entire project root — serving .env, the backend source and the
+# database models to any caller — and was then narrowed to assets/ for the demo
+# image. Nothing serves that image now, so the whole mount goes: files under
+# assets/ stay in the repository but are no longer exposed over HTTP. Everything
+# a signed-in user needs is served through /api/files, which checks ownership.
+
+
+# ── Validation Helpers ─────────────────────────────────────────────────────────
+# Developed by Vadim Rudoi — previously there was no validation at all.
+# Any payload was passed straight to PIL and produced opaque 500 errors.
+
+
+def _validate_upload(file: UploadFile, content: bytes) -> None:
+    """Raise HTTP 413 / 415 for oversized or unsupported uploads."""
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Unsupported media type '{file.content_type}'. "
+                "Accepted formats: JPEG, PNG, WEBP."
+            ),
+        )
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds the {MAX_FILE_MB} MB limit.",
+        )
+
+
+def _open_image(content: bytes) -> Image.Image:
+    """
+    Safely decode image bytes.
+
+    PIL's Image.verify() is destructive (it closes the internal stream), so we
+    open the buffer twice — once to verify integrity, once to return a usable
+    object. Corrupt or non-image payloads surface as HTTP 400.
+    """
+    try:
+        probe = Image.open(io.BytesIO(content))
+        probe.verify()
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Cannot identify image file.")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image data: {exc}")
+    return Image.open(io.BytesIO(content))
+
+
+async def _read_optional_image(upload: Optional[UploadFile]) -> Optional[Image.Image]:
+    """Read and decode an optional UploadFile; return None if not provided."""
+    if upload is None or not upload.filename:
+        return None
+    content = await upload.read()
+    _validate_upload(upload, content)
+    return _open_image(content)
+
+
+def _encode_png(image: Image.Image) -> str:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _resolve_yolo_model_path(model_ref: str) -> str:
+    """
+    Resolve a YOLO model reference to a local file path that Ultralytics can load.
+
+    Plain YOLO26 filenames are downloaded from Hugging Face into the local cache;
+    explicit local paths are used as-is.
+    """
+    resolved_ref = YOLO26_FILENAME_ALIASES.get(model_ref, model_ref)
+    candidate = Path(resolved_ref).expanduser()
+    if candidate.exists():
+        return str(candidate)
+
+    if resolved_ref in YOLO26_HF_FILES:
+        logger.info(
+            "Downloading YOLO vehicle detector from Hugging Face — repo=%s file=%s",
+            YOLO_HF_REPO,
+            resolved_ref,
+        )
+        return hf_hub_download(
+            repo_id=YOLO_HF_REPO,
+            filename=resolved_ref,
+            token=HF_AUTH_TOKEN or None,
+        )
+
+    return resolved_ref
+
+
+# ── Core Processing Logic ──────────────────────────────────────────────────────
+
+def _run_segmentation(model, image: Image.Image) -> Image.Image:
+    """
+    Developed by Vadim Rudoi — shared inference path for both RMBG-2.0 and
+    BiRefNet. Both models use the same ImageNet normalisation and produce a
+    single-channel sigmoid output that is used directly as an alpha mask.
+    """
+    rgb = image.convert("RGB")
+    tensor = _seg_transform(rgb).unsqueeze(0).to(registry.device)
+
+    with torch.no_grad():
+        output = model(tensor)
+        pred = output[-1] if isinstance(output, (list, tuple)) else output
+        mask_tensor = pred.sigmoid().cpu()[0].squeeze()
+
+    mask = transforms.ToPILImage()(mask_tensor).resize(
+        rgb.size, Image.Resampling.LANCZOS
+    )
+    # Mask cleanup contributed by Suraj Purella (Auto_pivot_Scaling). The mask
+    # is produced at 1024x1024 and stretched over a photograph several times
+    # that wide, which leaves a soft fringe of background clinging to the
+    # silhouette — invisible against white, obvious against a studio floor.
+    result = rgb.copy().convert("RGBA")
+    result.putalpha(compositing.refine_alpha_mask(mask))
+    return result
+
+
+def _remove_background(image: Image.Image) -> tuple[Image.Image, str]:
+    """
+    Developed by Vadim Rudoi — attempt RMBG-2.0 (primary). If it raises at
+    inference time (e.g. a runtime error after a successful load), fall back to
+    BiRefNet automatically and log a warning. Returns the result image and the
+    name of the model that was actually used.
+    """
+    model, name = registry.active_bg_model()
+
+    # Primary attempt
+    try:
+        return _run_segmentation(model, image), name
+    except Exception as exc:
+        # Only falls through to fallback if the primary was RMBG-2.0
+        if name == "briaai/RMBG-2.0":
+            logger.warning(
+                "RMBG-2.0 inference failed (%s) — retrying with BiRefNet fallback.", exc
+            )
+            if not registry._birefnet_ok:
+                registry._load_birefnet()
+            return _run_segmentation(registry._birefnet, image), "ZhengPeng7/BiRefNet"
+        raise
+
+
+def _detect_vehicle(image_rgb: Image.Image, conf: float = 0.35) -> Optional[dict]:
+    """
+    Return the largest detected vehicle bounding box, or None.
+
+    Inference-time fallback contributed by Suraj Purella
+    (Autopivot-refactored-pipeline): a model that loaded cleanly can still
+    raise on a particular image, and that used to fail the job outright.
+    """
+    detector = registry.vehicle_detector
+    try:
+        results = detector(image_rgb, conf=conf, verbose=False)
+    except Exception as exc:
+        if registry.active_yolo_role != "primary" or not ENABLE_YOLO_FALLBACK:
+            raise
+        logger.warning(
+            "%s raised during inference: %s. Retrying on the fallback detector.",
+            registry.active_yolo, exc,
+        )
+        registry.load_vehicle_fallback()
+        results = registry.vehicle_detector(image_rgb, conf=conf, verbose=False)
+
+    candidates: list[dict] = []
+
+    for result in results:
+        for box in result.boxes:
+            name = result.names[int(box.cls[0])]
+            if name not in VEHICLE_CLASSES:
+                continue
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            candidates.append({
+                "class": name,
+                "score": float(box.conf[0]),
+                "box": {
+                    "xmin": int(x1), "ymin": int(y1),
+                    "xmax": int(x2), "ymax": int(y2),
+                },
+                "area": max(0.0, x2 - x1) * max(0.0, y2 - y1),
+            })
+
+    return max(candidates, key=lambda v: v["area"]) if candidates else None
+
+
+def _box_area(box: dict) -> float:
+    """Pixel area of a detection box, clamped at zero."""
+    return (
+        max(0.0, box["xmax"] - box["xmin"])
+        * max(0.0, box["ymax"] - box["ymin"])
+    )
+
+
+# How close a detection box may sit to the photograph's own edge before the
+# vehicle is treated as cut off rather than merely well-framed.
+#
+# This used to be a fraction of the frame's width/height (1.5%). That was a
+# guess, made in a sandbox that cannot download the detection model to test
+# it against real photographs, and it turned out to be a bad one: it flagged
+# genuine, whole-car dealer photos — a car photographed with a normal, if not
+# huge, margin around it — as cropped, because on a large enough photograph
+# 1.5% of the frame is still dozens of pixels, and plenty of well-composed
+# shots leave less headroom than that on at least one side.
+#
+# What actually distinguishes a clipped vehicle is not how much margin is
+# left — that varies hugely between ordinary photographs — but where YOLO's
+# own box lands: ultralytics clips box coordinates to the image's own bounds
+# during post-processing, so a car that truly continues past what the camera
+# captured reports back with that edge of its box sitting exactly on the
+# boundary (0, or the image's own width/height), not merely close to it. A
+# few pixels of tolerance below absorbs float rounding without reintroducing
+# the false positives a percentage caused.
+_FRAME_EDGE_MARGIN_PX = 2
+
+
+def _vehicle_is_cropped_by_frame(box: dict, image_size: tuple[int, int]) -> bool:
+    """
+    Whether a detected vehicle's box was clipped to the edge of the
+    photograph, rather than the whole body being in frame.
+
+    A different failure from classification's "detail" kind, which is a
+    close-up of one part filling the frame *on purpose* — a wheel, a badge.
+    This catches a photograph attempted as a whole-car shot where the
+    photographer stood too close or too far to one side and the body
+    genuinely continues past what the camera captured. Left uncaught, the
+    compositor has no way to know the silhouette is incomplete: it scales
+    whatever fraction of the car it was given up to a "whole car" height and
+    pastes it on the backdrop looking like a complete, if oddly proportioned,
+    vehicle rather than the half a car it actually is.
+    """
+    width, height = image_size
+    if width <= 0 or height <= 0:
+        return False
+    return (
+        box["xmin"] <= _FRAME_EDGE_MARGIN_PX
+        or box["ymin"] <= _FRAME_EDGE_MARGIN_PX
+        or box["xmax"] >= width - _FRAME_EDGE_MARGIN_PX
+        or box["ymax"] >= height - _FRAME_EDGE_MARGIN_PX
+    )
+
+
+def _crop_with_padding(
+    image: Image.Image,
+    box: dict,
+    padding_ratio: float = 0.08,
+) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """
+    Crop to the vehicle bounding box with proportional padding.
+    Returns the crop and the absolute pixel coordinates used, so the processed
+    result can be composited back onto the original canvas.
+    """
+    w, h = image.size
+    bx1, by1, bx2, by2 = (
+        box["xmin"], box["ymin"], box["xmax"], box["ymax"]
+    )
+    pad_x = int((bx2 - bx1) * padding_ratio)
+    pad_y = int((by2 - by1) * padding_ratio)
+    x1 = max(0, bx1 - pad_x)
+    y1 = max(0, by1 - pad_y)
+    x2 = min(w, bx2 + pad_x)
+    y2 = min(h, by2 + pad_y)
+    return image.crop((x1, y1, x2, y2)), (x1, y1, x2, y2)
+
+
+def _box_in_crop(box: dict, coords: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """
+    A detection box, expressed in the pixel coordinates of the crop taken
+    around it by `_crop_with_padding`, rather than the original photograph.
+
+    `coords` is that crop's own (x1, y1, x2, y2) in the original photograph;
+    subtracting its top-left corner is all the mapping needs, because the
+    crop is axis-aligned and unscaled — a straight translation, not a resize.
+    Pulled out on its own because getting this arithmetic wrong is exactly
+    the kind of mistake that would not show up as a crash, only as the
+    segmentation-coverage gate comparing against the wrong pixels and never
+    firing (or always firing) — worth a test of its own rather than trusting
+    it inline.
+    """
+    crop_x1, crop_y1, _, _ = coords
+    return (
+        box["xmin"] - crop_x1, box["ymin"] - crop_y1,
+        box["xmax"] - crop_x1, box["ymax"] - crop_y1,
+    )
+
+
+def _detect_plates(image_rgba: Image.Image) -> list[dict]:
+    """Run YOLOS plate detector and return raw detection dicts above threshold."""
+    detections = registry.plate_detector(image_rgba.convert("RGB"))
+    return [d for d in detections if d["score"] > PLATE_CONFIDENCE]
+
+
+def _detect_plate_zone_stickers(
+    crop: Image.Image, vehicle_box: tuple[float, float, float, float]
+) -> list[dict]:
+    """
+    A second, colour-only pass over the same crop `_detect_plates` runs on,
+    for something sitting in the plate mount that does not look like a real
+    plate at all — see PLATE_ZONE_MIN_SATURATION's comment.
+
+    `vehicle_box` is the detected vehicle's box in `crop`'s own pixel
+    coordinates (`_box_in_crop`'s output) — the search is confined to a band
+    within it, not the whole photograph.
+
+    Returns detections shaped like `_detect_plates`'s own output (score/box),
+    so the two lists can simply be concatenated before `_filter_plates` runs.
+    The score is not a model confidence — there is no model here — it exists
+    only so downstream code that logs or serialises `plate["score"]` keeps
+    working; it plays no part in filtering.
+    """
+    vx1, vy1, vx2, vy2 = vehicle_box
+    vx1, vy1 = max(0, int(vx1)), max(0, int(vy1))
+    vx2, vy2 = min(crop.width, int(vx2)), min(crop.height, int(vy2))
+    vehicle_w, vehicle_h = vx2 - vx1, vy2 - vy1
+    if vehicle_w <= 0 or vehicle_h <= 0:
+        return []
+
+    zx1 = vx1 + round(vehicle_w * PLATE_ZONE_X_RATIO[0])
+    zx2 = vx1 + round(vehicle_w * PLATE_ZONE_X_RATIO[1])
+    zy1 = vy1 + round(vehicle_h * PLATE_ZONE_Y_RATIO[0])
+    zy2 = vy1 + round(vehicle_h * PLATE_ZONE_Y_RATIO[1])
+    if zx2 <= zx1 or zy2 <= zy1:
+        return []
+
+    zone = np.array(crop.convert("RGB"))[zy1:zy2, zx1:zx2]
+    hsv = cv2.cvtColor(zone, cv2.COLOR_RGB2HSV)
+    saturated = (hsv[:, :, 1] >= PLATE_ZONE_MIN_SATURATION).astype(np.uint8)
+
+    count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
+        saturated, connectivity=8
+    )
+    detections: list[dict] = []
+    for label in range(1, count):  # label 0 is the background component
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < PLATE_ZONE_MIN_AREA_PX:
+            continue
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+        if w <= 0 or h <= 0:
+            continue
+        extent = area / (w * h)
+        if extent < PLATE_ZONE_MIN_EXTENT:
+            continue
+        if w < vehicle_w * PLATE_ZONE_MIN_WIDTH_RATIO:
+            # A solid, saturated block that is too narrow to plausibly be a
+            # plate or a mounted sticker — a tail-light lens segment, most
+            # often. See PLATE_ZONE_MIN_WIDTH_RATIO's own comment.
+            continue
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        detections.append({
+            "score": 1.0,
+            "box": {
+                "xmin": zx1 + x, "ymin": zy1 + y,
+                "xmax": zx1 + x + w, "ymax": zy1 + y + h,
+            },
+        })
+    return detections
+
+
+def _plate_coverage(cutout: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """
+    Fraction of the box that lands on opaque pixels of the vehicle cutout.
+
+    The detector runs on the original photograph, so it can fire on something
+    in the background — a sign, a wheelie bin, a reflection. After background
+    removal that area is transparent, which is a far more reliable signal than
+    the detector's own confidence.
+    """
+    x1, y1, x2, y2 = box
+    alpha = np.array(cutout.convert("RGBA").getchannel("A"), dtype=np.uint8)
+    region = alpha[y1:y2, x1:x2]
+    if region.size == 0:
+        return 0.0
+    return float(np.count_nonzero(region > 128) / region.size)
+
+
+# How much of the detected vehicle box background removal has to keep opaque
+# before the result is trusted enough to composite — see
+# _segmentation_dropped_the_vehicle and PipelineProcessor.process().
+#
+# YOLO's box is drawn tightly around whatever it called a vehicle, so once
+# background removal runs, most of that box should come back opaque: the box
+# IS the car, give or take some background in its corners. A dark vehicle
+# against a similarly dark or low-contrast background can trip up RMBG-2.0 —
+# and its BiRefNet fallback — into reading large parts of the bodywork as
+# background rather than foreground, which turns those pixels transparent and
+# leaves only a fragment of the car (usually whichever end had the most
+# contrast against its surroundings) to be scaled up and pasted onto the
+# backdrop looking like a complete, if oddly shaped, vehicle.
+#
+# 0.35 is a starting point, not an empirically-tuned number — the sandbox
+# this was written in cannot download the segmentation model to test it
+# against real photographs (see the project notes on RMBG-2.0/huggingface.co
+# being unreachable there), so this wants checking against real "half car"
+# results and adjusting if it is too trigger-happy or not trigger-happy
+# enough. It is deliberately conservative: a normal detection box already
+# fits a car closely, so a correctly-segmented vehicle should clear 0.35 by
+# a wide margin, and falling under it means the segmenter dropped most of
+# what YOLO called "vehicle" — worth a second look either way.
+#
+# Environment-configurable, the same as every other threshold in this file
+# (PLATE_CONFIDENCE, CLIP_KIND_CONFIDENCE, ...), specifically so it can be
+# tuned from real results without waiting on a code change: if real listings
+# show good photos getting flagged, raise SEGMENTATION_MIN_COVERAGE's floor
+# by lowering this number; if a "half car" still slips through, raise it.
+_MIN_SEGMENTATION_COVERAGE: float = float(os.getenv("SEGMENTATION_MIN_COVERAGE", "0.35"))
+
+
+def _segmentation_coverage(cutout: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """
+    Fraction of `box` (in cutout's own pixel coordinates) that survived
+    background removal as opaque pixels.
+
+    Same measurement as _plate_coverage, applied to the whole vehicle box
+    rather than one candidate plate, to catch segmentation dropping large
+    parts of the car rather than a plate detection landing off it.
+    """
+    x1, y1, x2, y2 = box
+    alpha = np.array(cutout.convert("RGBA").getchannel("A"), dtype=np.uint8)
+    region = alpha[y1:y2, x1:x2]
+    if region.size == 0:
+        return 0.0
+    return float(np.count_nonzero(region > 128) / region.size)
+
+
+def _segmentation_dropped_the_vehicle(
+    cutout: Image.Image, vehicle_box_in_crop: tuple[int, int, int, int]
+) -> bool:
+    """True when background removal kept too little of the detected vehicle
+    box opaque to trust the result — see _MIN_SEGMENTATION_COVERAGE."""
+    return _segmentation_coverage(cutout, vehicle_box_in_crop) < _MIN_SEGMENTATION_COVERAGE
+
+
+def _filter_plates(
+    plates: list[dict],
+    vehicle_area: float,
+    cutout: Optional[Image.Image] = None,
+    angle: Optional[str] = None,
+) -> list[dict]:
+    """
+    Reject detections that are not plausibly a licence plate.
+
+    YOLOS-small is permissive and its false positives are expensive: each one
+    paints an obscuration over part of the photograph that has no plate in it.
+    Geometry and cutout coverage are cheap, independent evidence — as is the
+    photograph's own angle, see PLATE_INVISIBLE_ANGLES.
+    """
+    if angle in PLATE_INVISIBLE_ANGLES:
+        if plates:
+            logger.info(
+                "Plate filter rejected all %d detection(s) — angle=%r cannot "
+                "show a plate face-on",
+                len(plates), angle,
+            )
+        return []
+
+    kept: list[dict] = []
+
+    for plate in plates:
+        b = plate["box"]
+        x1, y1 = int(b["xmin"]), int(b["ymin"])
+        x2, y2 = int(b["xmax"]), int(b["ymax"])
+        width, height = x2 - x1, y2 - y1
+
+        if width <= 0 or height <= 0:
+            continue
+
+        aspect = width / height
+        if not PLATE_MIN_ASPECT <= aspect <= PLATE_MAX_ASPECT:
+            logger.info(
+                "Plate rejected — aspect %.2f outside %.2f–%.2f (score=%.2f)",
+                aspect, PLATE_MIN_ASPECT, PLATE_MAX_ASPECT, plate["score"],
+            )
+            continue
+
+        if vehicle_area > 0 and (width * height) / vehicle_area > PLATE_MAX_AREA_RATIO:
+            logger.info(
+                "Plate rejected — %.1f%% of the vehicle, limit %.1f%% (score=%.2f)",
+                100 * (width * height) / vehicle_area,
+                100 * PLATE_MAX_AREA_RATIO,
+                plate["score"],
+            )
+            continue
+
+        if cutout is not None:
+            coverage = _plate_coverage(cutout, (x1, y1, x2, y2))
+            if coverage < PLATE_MIN_COVERAGE:
+                logger.info(
+                    "Plate rejected — only %.0f%% on the vehicle, needs %.0f%% "
+                    "(score=%.2f)",
+                    100 * coverage, 100 * PLATE_MIN_COVERAGE, plate["score"],
+                )
+                continue
+
+        kept.append(plate)
+
+    if len(kept) != len(plates):
+        logger.info("Plate filter kept %d of %d detections", len(kept), len(plates))
+
+    return kept
+
+
+_brand_plate_overlay_cache: Optional[Image.Image] = None
+_brand_plate_overlay_loaded: bool = False
+
+
+def _brand_plate_overlay() -> Optional[Image.Image]:
+    """
+    The standing overlay `process()` passes to `_apply_plate_treatment` for
+    every job, when `PLATE_BRAND_LOGO_ENABLED` is on — see that flag's
+    comment for why this exists alongside the per-request overlay the two
+    test endpoints already accepted.
+
+    Loaded once and cached: every job reuses the same PIL image rather than
+    re-reading and re-decoding the file from disk per photograph.
+
+    Returns None — which makes `process()` fall back to `PLATE_TREATMENT`'s
+    ordinary obscuring behaviour — whenever the feature is off, or the asset
+    is missing or fails to decode. A bad path here is a reason to keep
+    publishing photographs with blurred plates, not a reason to stop
+    publishing photographs.
+    """
+    global _brand_plate_overlay_cache, _brand_plate_overlay_loaded
+    if not PLATE_BRAND_LOGO_ENABLED:
+        return None
+    if _brand_plate_overlay_loaded:
+        return _brand_plate_overlay_cache
+
+    _brand_plate_overlay_loaded = True
+    try:
+        _brand_plate_overlay_cache = Image.open(PLATE_BRAND_LOGO_PATH).convert("RGBA")
+    except (FileNotFoundError, UnidentifiedImageError, OSError) as exc:
+        logging.getLogger("autopivot").warning(
+            "PLATE_BRAND_LOGO_ENABLED is set but the overlay at %r could not "
+            "be loaded (%s) — falling back to PLATE_TREATMENT=%r.",
+            PLATE_BRAND_LOGO_PATH, exc, PLATE_TREATMENT,
+        )
+        _brand_plate_overlay_cache = None
+    return _brand_plate_overlay_cache
+
+
+def _apply_plate_treatment(
+    image_rgba: Image.Image,
+    plates: list[dict],
+    plate_overlay: Optional[Image.Image] = None,
+) -> Image.Image:
+    """
+    Developed by Vadim Rudoi — apply treatment to each detected licence plate
+    region using OpenCV:
+
+    • If plate_overlay is provided: resize the overlay to the plate bounding box
+      and alpha-composite it onto the vehicle image, preserving any transparency
+      in the overlay itself.
+    • If no overlay is provided: obscure the plate according to PLATE_TREATMENT.
+    """
+    arr = np.array(image_rgba, dtype=np.uint8)
+
+    for p in plates:
+        b = p["box"]
+        x1 = max(0, int(b["xmin"]) - PLATE_BOX_PADDING)
+        y1 = max(0, int(b["ymin"]) - PLATE_BOX_PADDING)
+        x2 = min(arr.shape[1], int(b["xmax"]) + PLATE_BOX_PADDING)
+        y2 = min(arr.shape[0], int(b["ymax"]) + PLATE_BOX_PADDING)
+
+        region_w = x2 - x1
+        region_h = y2 - y1
+
+        if region_w <= 0 or region_h <= 0:
+            continue
+
+        if plate_overlay is not None:
+            # Resize the overlay image to exactly fit the plate bounding box
+            overlay_resized = plate_overlay.convert("RGBA").resize(
+                (region_w, region_h), Image.Resampling.LANCZOS
+            )
+            overlay_arr = np.array(overlay_resized, dtype=np.float32)
+
+            # Per-pixel alpha compositing via OpenCV
+            # Formula: out = overlay_rgb * alpha + base_rgb * (1 - alpha)
+            alpha = overlay_arr[:, :, 3:4] / 255.0
+            base_region = arr[y1:y2, x1:x2].astype(np.float32)
+
+            blended_rgb = (
+                overlay_arr[:, :, :3] * alpha
+                + base_region[:, :, :3] * (1.0 - alpha)
+            ).clip(0, 255).astype(np.uint8)
+
+            # Preserve the maximum alpha between overlay and original
+            blended_alpha = np.maximum(
+                base_region[:, :, 3],
+                overlay_arr[:, :, 3],
+            ).clip(0, 255).astype(np.uint8)
+
+            arr[y1:y2, x1:x2, :3] = blended_rgb
+            arr[y1:y2, x1:x2, 3] = blended_alpha
+        else:
+            arr[y1:y2, x1:x2, :3] = _obscure_region(arr[y1:y2, x1:x2, :3])
+            # Alpha is deliberately left untouched. The white rectangle this
+            # replaced forced alpha to 255 across the whole box, so a detection
+            # that strayed off the vehicle punched an opaque white block into
+            # the transparent background and survived compositing.
+
+    return Image.fromarray(arr, "RGBA")
+
+
+def _obscure_region(region: np.ndarray) -> np.ndarray:
+    """
+    Destroy the contents of an RGB region beyond recovery.
+
+    Both modes downsample to PLATE_MOSAIC_WIDTH first, which is what actually
+    discards the characters — a Gaussian blur alone is a convolution and can be
+    partially inverted. The upsample filter only decides how the result reads:
+    NEAREST gives a mosaic, and a smooth interpolation followed by a light blur
+    gives something closer to soft focus, which sits better on a listing photo.
+    """
+    height, width = region.shape[:2]
+    if height <= 0 or width <= 0:
+        return region
+
+    if PLATE_TREATMENT == "white":
+        return np.full_like(region, 255)
+
+    small_w = max(1, min(PLATE_MOSAIC_WIDTH, width))
+    small_h = max(1, round(small_w * height / width))
+    small = cv2.resize(region, (small_w, small_h), interpolation=cv2.INTER_AREA)
+
+    if PLATE_TREATMENT == "pixelate":
+        return cv2.resize(small, (width, height), interpolation=cv2.INTER_NEAREST)
+
+    blown_up = cv2.resize(small, (width, height), interpolation=cv2.INTER_LINEAR)
+    # Kernel scales with the box so a plate close to camera is blurred as
+    # thoroughly as a distant one, and stays odd as GaussianBlur requires.
+    kernel = max(3, (max(width, height) // 8) | 1)
+    return cv2.GaussianBlur(blown_up, (kernel, kernel), 0)
+
+
+_classifier_warned = False
+
+
+def _classify(image: Image.Image) -> Optional[classification.Classification]:
+    """
+    What this photograph is of, or None if nothing could look at it.
+
+    A classifier that will not load must not fail every job. Returning None
+    leaves the pipeline behaving exactly as it did before classification
+    existed, and the image's kind stays null so the listing shows it as
+    unclassified rather than asserting something no model actually decided.
+    The warning is logged once; per-job it would bury the real output.
+    """
+    global _classifier_warned
+
+    if not CLASSIFY_IMAGES:
+        return None
+    try:
+        return classification.classify(image)
+    except Exception as exc:
+        if not _classifier_warned:
+            logger.warning(
+                "Image classification is unavailable, so photographs will be "
+                "processed without it: %s", exc, exc_info=True,
+            )
+            _classifier_warned = True
+        return None
+
+
+def _place_on_backdrop(
+    cutout: Image.Image,
+    background: Optional[Image.Image],
+    original_size: tuple[int, int],
+    coords: tuple[int, int, int, int],
+    angle: Optional[str] = None,
+    ground_y_ratio: Optional[float] = None,
+    angle_confidence: Optional[float] = None,
+) -> tuple[Image.Image, dict]:
+    """
+    Produce the finished image from a treated cutout.
+
+    With a backdrop, hand off to the compositor: the vehicle is scaled to the
+    scene, stood on its ground line, given shadows and colour-matched.
+
+    Without one, fall back to the old behaviour — the cutout returns to its
+    place on a transparent canvas the size of the original photograph. There is
+    no scene to sit in, so scaling to a fixed canvas would only throw away
+    resolution.
+
+    `ground_y_ratio` is the dealer's own measured floor line for this backdrop
+    (Backdrop.ground_y_ratio), when one has been set. None — the common case
+    for a backdrop nobody has tuned yet — keeps DEALER_BACKDROP's generic
+    guess exactly as before (APA-138).
+
+    Before falling back to that generic guess, check whether this backdrop is
+    actually one of the bundled studio scenes (someone uploaded it as their
+    own backdrop rather than it being offered as one — see
+    `compositing.match_studio_backdrop`). When it is, its platform edge is
+    already precisely measured, so the vehicle is sized and clamped against
+    that real edge instead of DEALER_BACKDROP's flat, platform-blind budget —
+    the same neat, doesn't-overhang-the-disc fit STUDIO_FULL's own tests pin.
+    The dealer's own ground_y_ratio is not applied in that case: it was set
+    (if at all) against DEALER_BACKDROP's nominal floor line, which does not
+    correspond to anything on the measured scene.
+
+    `angle_confidence` is the classifier's own confidence in `angle`, when
+    known — forwarded to the compositor so it can decline to physically
+    rotate the cutout on a label it was barely sure of (see
+    `compositing.LEVELLING_MIN_CONFIDENCE`). A quarter-angle photograph
+    mislabelled as a safe angle right at classification's own low bar is
+    exactly what rotated a level car into looking like it was taking off the
+    platform — see the reasoning on that constant.
+    """
+    if background is None:
+        canvas = Image.new("RGBA", original_size, (0, 0, 0, 0))
+        x1, y1, x2, y2 = coords
+        patch = cutout.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
+        canvas.paste(patch, (x1, y1), patch.getchannel("A"))
+        return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
+
+    preset = compositing.match_studio_backdrop(background)
+    if preset is None:
+        preset = compositing.DEALER_BACKDROP
+        if ground_y_ratio is not None:
+            preset = dataclasses.replace(preset, ground_y_ratio=ground_y_ratio)
+
+    return compositing.compose(
+        cutout, background, preset, angle=angle, angle_confidence=angle_confidence
+    )
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
+
+
+# The React client is the only interface. The original single-page demo — its
+# index.html, style.css and app.js, plus the routes that served them — has been
+# removed: the product is a platform with accounts, listings and a backdrop
+# library, and keeping a second, unauthenticated interface alongside it meant two
+# front doors to maintain and one of them bypassing every access control.
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+SERVE_REACT_CLIENT = FRONTEND_DIST.is_dir()
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> Response:
+    if SERVE_REACT_CLIENT:
+        return FileResponse(FRONTEND_DIST / "index.html")
+    # Said plainly rather than as a 500 from a missing file: this is the first
+    # thing anyone sees after forgetting the build step.
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": (
+                "The client has not been built. Run "
+                "'npm ci --prefix frontend && npm run build --prefix frontend', "
+                "then restart. The API itself is available at /docs."
+            )
+        },
+    )
+
+
+@app.get("/health", tags=["Observability"])
+async def health() -> dict:
+    """Liveness + readiness check with per-model status."""
+    return {"status": "ready", **registry.health()}
+
+
+@app.get("/api/status", tags=["Observability"])
+async def api_status() -> dict:
+    return {
+        "status": "online",
+        "models": {
+            "vehicle": f"YOLO ({registry.active_yolo})",
+            "background_primary": "briaai/RMBG-2.0",
+            "background_fallback": "ZhengPeng7/BiRefNet",
+            "plate": "nickmuchi/yolos-small-finetuned-license-plate-detection",
+        },
+        **registry.health(),
+    }
+
+
+@app.post("/remove-background", tags=["Processing"])
+async def api_remove_background(file: UploadFile = File(...)) -> dict:
+    """
+    Remove image background using the active model (RMBG-2.0 or BiRefNet
+    fallback). No vehicle detection or plate treatment is performed.
+    """
+    content = await file.read()
+    _validate_upload(file, content)
+    image = _open_image(content)
+
+    # Fixed by Vadim Rudoi — filename sanitised via Path.name to strip any
+    # path-traversal characters from untrusted client input before logging.
+    logger.info(
+        "Background removal — file=%s  size=%d B",
+        Path(file.filename).name, len(content),
+    )
+
+    result, model_used = _remove_background(image)
+    return {
+        "success": True,
+        "processed_image": _encode_png(result),
+        "bg_model_used": model_used,
+        "background_removed": True,
+        "transparency_preserved": True,
+    }
+
+
+@app.post("/process-vehicle", tags=["Processing"])
+async def api_process_vehicle(
+    file: UploadFile = File(...),
+    background: Optional[UploadFile] = File(None),
+    plate_overlay: Optional[UploadFile] = File(None),
+) -> dict:
+    """
+    Full processing pipeline — Developed by Vadim Rudoi:
+
+      Step 1  YOLO vehicle detection — abort early if no vehicle found.
+      Step 2  Crop vehicle region with padding.
+      Step 3  Background removal via RMBG-2.0 (primary) → BiRefNet (fallback).
+      Step 4  Composite background-removed crop back onto full-size canvas.
+      Step 4  YOLOS licence-plate detection on the crop, filtered by geometry
+              and by how much of each box lands on the vehicle cutout.
+      Step 5  Plate treatment via OpenCV:
+                • plate_overlay provided  → resize and alpha-composite onto plate
+                • no plate_overlay        → obscure per PLATE_TREATMENT
+      Step 6  Composite the treated crop back onto a full-size canvas.
+      Step 7  Background compositing:
+                • background provided  → composite vehicle onto custom background
+                • no background        → return transparent PNG
+
+    Accepts three multipart fields:
+      file           (required) — vehicle photograph
+      background     (optional) — custom background image
+      plate_overlay  (optional) — image to apply over detected licence plates
+    """
+    # ── Read uploads ──
+    content = await file.read()
+    _validate_upload(file, content)
+    image = _open_image(content).convert("RGB")
+
+    bg_image      = await _read_optional_image(background)
+    plate_img     = await _read_optional_image(plate_overlay)
+
+    logger.info(
+        "Full pipeline — file=%s  size=%d B  background=%s  plate_overlay=%s",
+        Path(file.filename).name,
+        len(content),
+        "yes" if bg_image else "no",
+        "yes" if plate_img else "no",
+    )
+
+    # ── Step 1 & 2: Vehicle detection ──
+    vehicle = _detect_vehicle(image)
+    if vehicle is None:
+        logger.info("No vehicle detected — pipeline aborted")
+        return {
+            "success": False,
+            "vehicle_detected": False,
+            "message": "No vehicle detected. Please upload a clear vehicle image.",
+        }
+
+    logger.info(
+        "Vehicle detected — class=%s  confidence=%.2f",
+        vehicle["class"], vehicle["score"],
+    )
+
+    # ── Step 3: Background removal (RMBG-2.0 → BiRefNet fallback) ──
+    crop, coords = _crop_with_padding(image, vehicle["box"])
+    bg_removed, model_used = _remove_background(crop)
+    logger.info("Background removed — model=%s", model_used)
+
+    # ── Step 4: Licence plate detection ──
+    # Run on the cropped original, not the finished composite: the plate is a
+    # much larger share of the input, and the pixels are photographic rather
+    # than a cutout on transparency.
+    vehicle_box_in_crop = _box_in_crop(vehicle["box"], coords)
+    plates = _detect_plates(crop) + _detect_plate_zone_stickers(crop, vehicle_box_in_crop)
+    plates = _filter_plates(plates, _box_area(vehicle["box"]), bg_removed)
+    logger.info("Plates detected — count=%d", len(plates))
+
+    # ── Step 5: Plate treatment ──
+    # Before compositing: the cutout is rescaled to fit the scene, after which
+    # coordinates measured on the crop no longer apply.
+    bg_removed = _apply_plate_treatment(bg_removed, plates, plate_img)
+
+    # ── Steps 6 & 7: Placement ──
+    # With a backdrop this scales the vehicle to the scene, stands it on the
+    # ground line, lays down shadows and matches its colour to the light —
+    # compositing contributed by Suraj Purella (Auto_pivot_Scaling). Without
+    # one, the cutout returns to its place on a transparent canvas the size of
+    # the original photograph.
+    final, composite_meta = _place_on_backdrop(bg_removed, bg_image, image.size, coords)
+
+    logger.info(
+        "Pipeline complete — plates_treated=%d  bg_applied=%s",
+        len(plates),
+        "custom" if bg_image else "transparent",
+    )
+
+    return {
+        "success": True,
+        "processed_image": _encode_png(final),
+        "vehicle_detected": True,
+        "vehicle": {
+            "class": vehicle["class"],
+            "score": round(vehicle["score"], 4),
+            "box": vehicle["box"],
+        },
+        "bg_model_used": model_used,
+        "plates_detected": len(plates),
+        "plate_treatment": "overlay" if plate_img else PLATE_TREATMENT,
+        "background_applied": "custom" if bg_image else "transparent",
+        "background_removed": True,
+        "transparency_preserved": bg_image is None,
+        "detections": [
+            {
+                "score": round(float(p["score"]), 4),
+                "box": {k: int(v) for k, v in p["box"].items()},
+            }
+            for p in plates
+        ],
+        **composite_meta,
+    }
+
+
+@app.post("/detect-and-hide", tags=["Processing"])
+async def api_detect_and_hide(
+    file: UploadFile = File(...),
+    plate_overlay: Optional[UploadFile] = File(None),
+) -> dict:
+    """
+    Detect and treat licence plates only — no background removal or vehicle
+    detection. Accepts an optional plate_overlay image (same OpenCV compositing
+    as the full pipeline).
+    """
+    content = await file.read()
+    _validate_upload(file, content)
+    image = _open_image(content).convert("RGBA")
+    plate_img = await _read_optional_image(plate_overlay)
+
+    logger.info(
+        "Plate detection — file=%s  size=%d B  overlay=%s",
+        Path(file.filename).name, len(content),
+        "yes" if plate_img else "no",
+    )
+
+    # No vehicle box and no cutout here, so only the shape check applies —
+    # passing 0.0 skips the relative-area test rather than rejecting everything.
+    plates = _filter_plates(_detect_plates(image), 0.0, None)
+    if not plates:
+        return {
+            "success": False,
+            "plates_detected": 0,
+            "message": "No licence plates detected.",
+        }
+
+    result = _apply_plate_treatment(image, plates, plate_img)
+    logger.info("Plates treated — count=%d  method=%s",
+                len(plates), "overlay" if plate_img else PLATE_TREATMENT)
+
+    return {
+        "success": True,
+        "plates_detected": len(plates),
+        "processed_image": _encode_png(result),
+        "plate_treatment": "overlay" if plate_img else PLATE_TREATMENT,
+        "transparency_preserved": True,
+        "detections": [
+            {
+                "score": round(float(p["score"]), 4),
+                "box": {k: int(v) for k, v in p["box"].items()},
+            }
+            for p in plates
+        ],
+    }
+
+@app.post("/extract-images-from-url", tags=["Extract Images from URL"])
+async def api_extract_images_from_url(url: str = Body(..., embed=True)) -> dict:
+    """
+    Extract images from a URL. Accepts JSON body: {"url": "https://..."}
+
+    The fetching and parsing are Akhanda Bhandari's and now live in
+    api/url_import.py, shared with the authenticated listing importer at
+    POST /api/listings/{id}/images/from-url. This endpoint returns base64 to
+    the caller and stores nothing.
+    """
+    try:
+        result = await url_import.fetch_images(url)
+    except url_import.UrlImportError as exc:
+        return {"success": False, "message": str(exc)}
+    except Exception as exc:  # a clean message beats a raw 500
+        logger.exception("URL import failed unexpectedly")
+        return {"success": False, "message": f"Unexpected error while fetching images: {exc}"}
+
+    return {
+        "success": True,
+        "images": [image.as_payload() for image in result.images],
+        "note": result.note,
+    }
+
+
+# ── React client (single-page fallback) ────────────────────────────────────────
+# Registered last on purpose. Starlette matches routes in registration order, so
+# every API route above wins; this only sees what nothing else claimed.
+#
+# The fallback is what makes a deep link work: /app/vehicles/12 is a client-side
+# route with no file behind it, so a refresh has to return index.html and let
+# the router sort it out. Without this, reloading any page but "/" 404s.
+
+if SERVE_REACT_CLIENT:
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_DIST / "assets")),
+        name="frontend-assets",
+    )
+
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def spa_fallback(spa_path: str) -> FileResponse:
+        candidate = (FRONTEND_DIST / spa_path).resolve()
+        # A path from the URL must not be able to reach outside the build.
+        if (
+            spa_path
+            and candidate.is_relative_to(FRONTEND_DIST.resolve())
+            and candidate.is_file()
+        ):
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+    logger.info("Serving the React client from %s", FRONTEND_DIST)
+else:
+    logger.info(
+        "frontend/dist not found — serving the original demo page at /. "
+        "Run 'npm run build --prefix frontend' to serve the React client."
+    )
+
+
+# ── Entry Point ────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    logger.info("Starting AutoPivot — http://%s:%d", HOST, PORT)
+    logger.info("Primary BG model  : briaai/RMBG-2.0")
+    logger.info("Fallback BG model : ZhengPeng7/BiRefNet")
+    logger.info("YOLO model        : %s", YOLO_MODEL_PATH)
+    logger.info("Device            : %s", "cuda" if torch.cuda.is_available() else "cpu")
+    uvicorn.run(
+        "autopivot_backend:app",
+        host=HOST,
+        port=PORT,
+        log_level="info",
+        reload=False,
+    )
