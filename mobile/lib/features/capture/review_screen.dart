@@ -1,12 +1,19 @@
 /// The screen shown after capture, replacing the old "submit" bottom sheet.
 ///
-/// Two steps in one screen rather than two routes: a photo grid — tap any
-/// tile to expand it with Retake / Delete this angle / Close — then an
-/// overview step asking for make, model, year and an optional backdrop
-/// before submitting. [CaptureScreen] pushes this and reads back a
-/// [ReviewResult] once it closes; every branch of that result carries the
-/// current [ReviewResult.photos] map, so a photo deleted here is never lost
-/// even if the review ends in a retake rather than a submit.
+/// One screen, not the grid-then-details-form split this used to be: the
+/// photo grid — tap any tile to expand it with Retake / Delete this angle /
+/// Close, or tap an empty slot to jump straight back to shooting it — sits
+/// above the vehicle-details form, with Submit Set as the one button at the
+/// bottom. [CaptureScreen] pushes this and reads back a [ReviewResult] once
+/// it closes.
+///
+/// [ReviewClosed] and [ReviewRetake] both carry a [ReviewDraft] snapshot of
+/// whatever the form held at the moment of exit, alongside the current
+/// photos — merging the old two steps means a retake can now happen *after*
+/// the photographer has already typed in make/model/year, so without
+/// carrying the draft forward, jumping back to the camera for one more angle
+/// would silently wipe out everything already typed. [ReviewSubmit] needs no
+/// such thing: it is the one exit with nothing left to resume.
 library;
 
 import 'dart:io';
@@ -40,21 +47,52 @@ class VehicleDetails {
   final String? variant;
 }
 
+/// The vehicle-details form's raw, possibly-incomplete contents — carried
+/// through [ReviewClosed] and [ReviewRetake] so re-opening this screen picks
+/// up exactly where the form was left. Unlike [VehicleDetails], nothing here
+/// is validated: a half-typed year or an empty make is exactly what a draft
+/// looks like mid-edit.
+class ReviewDraft {
+  const ReviewDraft({
+    this.make = '',
+    this.model = '',
+    this.year = '',
+    this.variant = '',
+    this.url = '',
+    this.backdropId,
+  });
+
+  final String make;
+  final String model;
+  final String year;
+  final String variant;
+  final String url;
+  final int? backdropId;
+}
+
 sealed class ReviewResult {
   const ReviewResult({required this.photos});
   final Map<CaptureAngle, XFile> photos;
 }
 
 /// The photographer closed the review without submitting. [CaptureScreen]
-/// returns to the live camera with [photos] as the new source of truth.
+/// returns to the live camera with [photos] as the new source of truth, and
+/// hands [draft] back the next time this screen opens.
 final class ReviewClosed extends ReviewResult {
-  const ReviewClosed({required super.photos});
+  const ReviewClosed({required super.photos, required this.draft});
+  final ReviewDraft draft;
 }
 
-/// Reshoot one angle. [CaptureScreen] jumps the live camera to [angle].
+/// Reshoot one angle. [CaptureScreen] jumps the live camera to [angle] and
+/// hands [draft] back the next time this screen opens.
 final class ReviewRetake extends ReviewResult {
-  const ReviewRetake({required this.angle, required super.photos});
+  const ReviewRetake({
+    required this.angle,
+    required super.photos,
+    required this.draft,
+  });
   final CaptureAngle angle;
+  final ReviewDraft draft;
 }
 
 /// Create the listing, upload [photos] and queue it for processing.
@@ -68,12 +106,15 @@ final class ReviewSubmit extends ReviewResult {
   final int? backdropId;
 }
 
-enum _Step { grid, overview }
-
 class ReviewScreen extends ConsumerStatefulWidget {
-  const ReviewScreen({super.key, required this.initialCaptured});
+  const ReviewScreen({
+    super.key,
+    required this.initialCaptured,
+    this.initialDraft = const ReviewDraft(),
+  });
 
   final Map<CaptureAngle, XFile> initialCaptured;
+  final ReviewDraft initialDraft;
 
   @override
   ConsumerState<ReviewScreen> createState() => _ReviewScreenState();
@@ -81,17 +122,125 @@ class ReviewScreen extends ConsumerStatefulWidget {
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   late final Map<CaptureAngle, XFile> _photos = Map.of(widget.initialCaptured);
-  _Step _step = _Step.grid;
 
-  void _closeWithCurrentPhotos() =>
-      Navigator.of(context).pop(ReviewClosed(photos: _photos));
+  final _formKey = GlobalKey<FormState>();
+  final _detailsSectionKey = GlobalKey();
+  late final _makeController = TextEditingController(
+    text: widget.initialDraft.make,
+  );
+  late final _modelController = TextEditingController(
+    text: widget.initialDraft.model,
+  );
+  late final _yearController = TextEditingController(
+    text: widget.initialDraft.year.isEmpty
+        ? DateTime.now().year.toString()
+        : widget.initialDraft.year,
+  );
+  late final _variantController = TextEditingController(
+    text: widget.initialDraft.variant,
+  );
+  late final _urlController = TextEditingController(
+    text: widget.initialDraft.url,
+  );
+  late int? _selectedBackdropId = widget.initialDraft.backdropId;
+
+  bool _autofilling = false;
+  String? _autofillMessage;
+
+  List<Backdrop>? _backdrops;
+  String? _backdropsError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBackdrops();
+  }
+
+  @override
+  void dispose() {
+    _makeController.dispose();
+    _modelController.dispose();
+    _yearController.dispose();
+    _variantController.dispose();
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadBackdrops() async {
+    try {
+      final backdrops = await ref.read(apiClientProvider).backdrops();
+      if (!mounted) return;
+      setState(() {
+        _backdrops = backdrops;
+        // A draft's own choice always wins — only default when nothing had
+        // been chosen yet before this fetch resolved.
+        _selectedBackdropId ??= backdrops
+            .where((b) => b.isDefault)
+            .map((b) => b.id)
+            .firstOrNullValue;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _backdropsError = e.message);
+    }
+  }
+
+  Future<void> _autofillFromUrl() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) return;
+    setState(() {
+      _autofilling = true;
+      _autofillMessage = null;
+    });
+    try {
+      final UrlVehicleGuess guess = await ref
+          .read(apiClientProvider)
+          .parseListingUrl(url);
+      if (!mounted) return;
+      if (guess.isEmpty) {
+        setState(
+          () => _autofillMessage =
+              "That link's make, model and year "
+              "could not be read — enter them below instead.",
+        );
+        return;
+      }
+      setState(() {
+        if (guess.make != null) _makeController.text = guess.make!;
+        if (guess.model != null) _modelController.text = guess.model!;
+        if (guess.year != null) _yearController.text = guess.year.toString();
+        if (guess.variant != null) _variantController.text = guess.variant!;
+        _autofillMessage = 'Filled in below — check it before submitting.';
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _autofillMessage = e.message);
+    } finally {
+      if (mounted) setState(() => _autofilling = false);
+    }
+  }
+
+  ReviewDraft get _currentDraft => ReviewDraft(
+    make: _makeController.text,
+    model: _modelController.text,
+    year: _yearController.text,
+    variant: _variantController.text,
+    url: _urlController.text,
+    backdropId: _selectedBackdropId,
+  );
+
+  void _closeWithCurrentPhotos() => Navigator.of(
+    context,
+  ).pop(ReviewClosed(photos: _photos, draft: _currentDraft));
 
   Future<void> _openViewer(CaptureAngle angle) async {
     final file = _photos[angle];
     if (file == null) {
       // An unfilmed slot in the grid — tapping it means "shoot this one",
       // not "expand a photo that does not exist yet".
-      Navigator.of(context).pop(ReviewRetake(angle: angle, photos: _photos));
+      Navigator.of(context).pop(
+        ReviewRetake(angle: angle, photos: _photos, draft: _currentDraft),
+      );
       return;
     }
     final action = await Navigator.of(context).push<_ViewerAction>(
@@ -103,7 +252,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     if (!mounted) return;
     switch (action) {
       case _ViewerAction.retake:
-        Navigator.of(context).pop(ReviewRetake(angle: angle, photos: _photos));
+        Navigator.of(context).pop(
+          ReviewRetake(angle: angle, photos: _photos, draft: _currentDraft),
+        );
       case _ViewerAction.delete:
         setState(() => _photos.remove(angle));
       case null:
@@ -111,9 +262,32 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     }
   }
 
-  void _submit(VehicleDetails details, int? backdropId) {
+  void _submit() {
+    if (_photos.isEmpty) return;
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      final sectionContext = _detailsSectionKey.currentContext;
+      if (sectionContext != null) {
+        Scrollable.ensureVisible(
+          sectionContext,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+      return;
+    }
     Navigator.of(context).pop(
-      ReviewSubmit(photos: _photos, details: details, backdropId: backdropId),
+      ReviewSubmit(
+        photos: _photos,
+        details: VehicleDetails(
+          make: _makeController.text.trim(),
+          model: _modelController.text.trim(),
+          year: int.parse(_yearController.text.trim()),
+          variant: _variantController.text.trim().isEmpty
+              ? null
+              : _variantController.text.trim(),
+        ),
+        backdropId: _selectedBackdropId,
+      ),
     );
   }
 
@@ -124,121 +298,263 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _closeWithCurrentPhotos();
       },
-      child: switch (_step) {
-        _Step.grid => _GridStep(
-          photos: _photos,
-          onClose: _closeWithCurrentPhotos,
-          onOpen: _openViewer,
-          onContinue: _photos.isNotEmpty
-              ? () => setState(() => _step = _Step.overview)
-              : null,
-        ),
-        _Step.overview => _OverviewStep(
-          photoCount: _photos.length,
-          onBack: () => setState(() => _step = _Step.grid),
-          onSubmit: _submit,
-        ),
-      },
-    );
-  }
-}
-
-// ── Grid step ────────────────────────────────────────────────────────────────
-
-class _GridStep extends StatelessWidget {
-  const _GridStep({
-    required this.photos,
-    required this.onClose,
-    required this.onOpen,
-    required this.onContinue,
-  });
-
-  final Map<CaptureAngle, XFile> photos;
-  final VoidCallback onClose;
-  final ValueChanged<CaptureAngle> onOpen;
-  final VoidCallback? onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: C.paper,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                Space.md,
-                Space.sm,
-                Space.lg,
-                Space.sm,
+      child: Scaffold(
+        backgroundColor: C.paper,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Space.md,
+                  Space.sm,
+                  Space.lg,
+                  Space.sm,
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: _closeWithCurrentPhotos,
+                      icon: const Icon(Icons.close, color: C.ink),
+                      tooltip: 'Close',
+                    ),
+                    const SizedBox(width: Space.xs),
+                    Expanded(
+                      child: Text(
+                        'Review · ${_photos.length} of '
+                        '${CaptureAngle.values.length}',
+                        style: T.label,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close, color: C.ink),
-                    tooltip: 'Close',
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(
+                    Space.lg,
+                    0,
+                    Space.lg,
+                    Space.lg,
                   ),
-                  const SizedBox(width: Space.xs),
-                  Expanded(
-                    child: Text(
-                      'Review · ${photos.length} of ${CaptureAngle.values.length}',
-                      style: T.label,
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('PHOTOS', style: T.caption),
+                        const SizedBox(height: Space.sm),
+                        GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                                maxCrossAxisExtent: 170,
+                                mainAxisSpacing: Space.sm,
+                                crossAxisSpacing: Space.sm,
+                                childAspectRatio: 0.82,
+                              ),
+                          itemCount: CaptureAngle.values.length,
+                          itemBuilder: (context, index) {
+                            final angle = CaptureAngle.values[index];
+                            return _GridTile(
+                              angle: angle,
+                              file: _photos[angle],
+                              onTap: () => _openViewer(angle),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: Space.xl),
+                        Text(
+                          'VEHICLE DETAILS',
+                          key: _detailsSectionKey,
+                          style: T.caption,
+                        ),
+                        const SizedBox(height: Space.md),
+                        Text(
+                          'FROM A LISTING URL (OPTIONAL)',
+                          style: T.caption,
+                        ),
+                        const SizedBox(height: Space.sm),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: _urlController,
+                                keyboardType: TextInputType.url,
+                                decoration: const InputDecoration(
+                                  labelText: 'Paste a listing link',
+                                  hintText: 'https://…',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: Space.sm),
+                            FilledButton(
+                              // minimumSize overrides the house-wide
+                              // full-width default (see the equivalent note
+                              // in listing_detail_screen.dart's delete
+                              // dialog) — this button sits beside the URL
+                              // field, not stretched across the row, and a
+                              // bare FilledButton here would ask a Row for
+                              // infinite width and crash.
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(0, 48),
+                              ),
+                              onPressed: _autofilling
+                                  ? null
+                                  : _autofillFromUrl,
+                              child: _autofilling
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: C.white,
+                                      ),
+                                    )
+                                  : const Text('Fill in'),
+                            ),
+                          ],
+                        ),
+                        if (_autofillMessage != null) ...[
+                          const SizedBox(height: Space.xs),
+                          Text(_autofillMessage!, style: T.bodySmall),
+                        ],
+                        const SizedBox(height: Space.lg),
+                        TextFormField(
+                          controller: _makeController,
+                          textCapitalization: TextCapitalization.words,
+                          decoration: const InputDecoration(labelText: 'Make'),
+                          validator: (value) =>
+                              (value == null || value.trim().isEmpty)
+                              ? 'Required'
+                              : null,
+                        ),
+                        const SizedBox(height: Space.md),
+                        TextFormField(
+                          controller: _modelController,
+                          textCapitalization: TextCapitalization.words,
+                          decoration: const InputDecoration(
+                            labelText: 'Model',
+                          ),
+                          validator: (value) =>
+                              (value == null || value.trim().isEmpty)
+                              ? 'Required'
+                              : null,
+                        ),
+                        const SizedBox(height: Space.md),
+                        TextFormField(
+                          controller: _yearController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Year'),
+                          validator: (value) {
+                            final year = int.tryParse(value?.trim() ?? '');
+                            if (year == null) return 'Enter a valid year';
+                            if (year < 1886 || year > 2100) {
+                              return 'Enter a valid year';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: Space.md),
+                        TextFormField(
+                          controller: _variantController,
+                          textCapitalization: TextCapitalization.words,
+                          decoration: const InputDecoration(
+                            labelText: 'Variant (optional)',
+                          ),
+                        ),
+                        const SizedBox(height: Space.lg),
+                        Text('BACKDROP (OPTIONAL)', style: T.caption),
+                        const SizedBox(height: Space.sm),
+                        _backdropPicker(),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
-            Expanded(
-              child: GridView.builder(
+              Padding(
                 padding: const EdgeInsets.fromLTRB(
                   Space.lg,
                   0,
                   Space.lg,
                   Space.lg,
                 ),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 170,
-                  mainAxisSpacing: Space.sm,
-                  crossAxisSpacing: Space.sm,
-                  childAspectRatio: 0.82,
-                ),
-                itemCount: CaptureAngle.values.length,
-                itemBuilder: (context, index) {
-                  final angle = CaptureAngle.values[index];
-                  return _GridTile(
-                    angle: angle,
-                    file: photos[angle],
-                    onTap: () => onOpen(angle),
-                  );
-                },
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                Space.lg,
-                0,
-                Space.lg,
-                Space.lg,
-              ),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: onContinue,
-                  child: Text(
-                    photos.isEmpty
-                        ? 'Take at least one photo to continue'
-                        : 'Continue',
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _photos.isEmpty ? null : _submit,
+                    child: Text(
+                      _photos.isEmpty
+                          ? 'Take at least one photo to continue'
+                          : 'Submit set (${_photos.length})',
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  Widget _backdropPicker() {
+    if (_backdropsError != null) {
+      return Text(
+        "Couldn't load backdrops — the vehicle will be returned on a "
+        'transparent background instead.',
+        style: T.bodySmall,
+      );
+    }
+    final backdrops = _backdrops;
+    if (backdrops == null) {
+      return const SizedBox(
+        height: 32,
+        child: Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (backdrops.isEmpty) {
+      return Text(
+        'No backdrops in the library yet — the vehicle will be returned on '
+        'a transparent background.',
+        style: T.bodySmall,
+      );
+    }
+    return SizedBox(
+      height: 96,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: backdrops.length + 1,
+        separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return _BackdropChoice(
+              label: 'None',
+              selected: _selectedBackdropId == null,
+              onTap: () => setState(() => _selectedBackdropId = null),
+            );
+          }
+          final backdrop = backdrops[index - 1];
+          return _BackdropChoice(
+            label: backdrop.name,
+            imagePath: backdrop.imageUrl,
+            selected: _selectedBackdropId == backdrop.id,
+            onTap: () => setState(() => _selectedBackdropId = backdrop.id),
+          );
+        },
+      ),
+    );
+  }
 }
+
+// ── Grid tile ────────────────────────────────────────────────────────────────
 
 class _GridTile extends StatelessWidget {
   const _GridTile({
@@ -406,331 +722,6 @@ class _PhotoViewer extends StatelessWidget {
   }
 }
 
-// ── Overview step ────────────────────────────────────────────────────────────
-
-class _OverviewStep extends ConsumerStatefulWidget {
-  const _OverviewStep({
-    required this.photoCount,
-    required this.onBack,
-    required this.onSubmit,
-  });
-
-  final int photoCount;
-  final VoidCallback onBack;
-  final void Function(VehicleDetails details, int? backdropId) onSubmit;
-
-  @override
-  ConsumerState<_OverviewStep> createState() => _OverviewStepState();
-}
-
-class _OverviewStepState extends ConsumerState<_OverviewStep> {
-  final _formKey = GlobalKey<FormState>();
-  final _makeController = TextEditingController();
-  final _modelController = TextEditingController();
-  final _yearController = TextEditingController(
-    text: DateTime.now().year.toString(),
-  );
-  final _variantController = TextEditingController();
-  final _urlController = TextEditingController();
-
-  bool _autofilling = false;
-  String? _autofillMessage;
-
-  List<Backdrop>? _backdrops;
-  String? _backdropsError;
-  int? _selectedBackdropId;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadBackdrops();
-  }
-
-  Future<void> _loadBackdrops() async {
-    try {
-      final backdrops = await ref.read(apiClientProvider).backdrops();
-      if (!mounted) return;
-      setState(() {
-        _backdrops = backdrops;
-        _selectedBackdropId = backdrops
-            .where((b) => b.isDefault)
-            .map((b) => b.id)
-            .firstOrNullValue;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _backdropsError = e.message);
-    }
-  }
-
-  Future<void> _autofillFromUrl() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty) return;
-    setState(() {
-      _autofilling = true;
-      _autofillMessage = null;
-    });
-    try {
-      final UrlVehicleGuess guess = await ref
-          .read(apiClientProvider)
-          .parseListingUrl(url);
-      if (!mounted) return;
-      if (guess.isEmpty) {
-        setState(
-          () => _autofillMessage =
-              "That link's make, model and year "
-              "could not be read — enter them below instead.",
-        );
-        return;
-      }
-      setState(() {
-        if (guess.make != null) _makeController.text = guess.make!;
-        if (guess.model != null) _modelController.text = guess.model!;
-        if (guess.year != null) _yearController.text = guess.year.toString();
-        if (guess.variant != null) _variantController.text = guess.variant!;
-        _autofillMessage = 'Filled in below — check it before submitting.';
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _autofillMessage = e.message);
-    } finally {
-      if (mounted) setState(() => _autofilling = false);
-    }
-  }
-
-  void _confirm() {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    widget.onSubmit(
-      VehicleDetails(
-        make: _makeController.text.trim(),
-        model: _modelController.text.trim(),
-        year: int.parse(_yearController.text.trim()),
-        variant: _variantController.text.trim().isEmpty
-            ? null
-            : _variantController.text.trim(),
-      ),
-      _selectedBackdropId,
-    );
-  }
-
-  @override
-  void dispose() {
-    _makeController.dispose();
-    _modelController.dispose();
-    _yearController.dispose();
-    _variantController.dispose();
-    _urlController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: C.paper,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                Space.md,
-                Space.sm,
-                Space.lg,
-                Space.sm,
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: widget.onBack,
-                    icon: const Icon(Icons.arrow_back, color: C.ink),
-                    tooltip: 'Back to photos',
-                  ),
-                  const SizedBox(width: Space.xs),
-                  Text('Vehicle details', style: T.label),
-                ],
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(
-                  Space.lg,
-                  0,
-                  Space.lg,
-                  Space.lg,
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${widget.photoCount} photograph'
-                        '${widget.photoCount == 1 ? '' : 's'} ready to submit.',
-                        style: T.bodySmall,
-                      ),
-                      const SizedBox(height: Space.lg),
-                      Text('FROM A LISTING URL (OPTIONAL)', style: T.caption),
-                      const SizedBox(height: Space.sm),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _urlController,
-                              keyboardType: TextInputType.url,
-                              decoration: const InputDecoration(
-                                labelText: 'Paste a listing link',
-                                hintText: 'https://…',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: Space.sm),
-                          FilledButton(
-                            onPressed: _autofilling ? null : _autofillFromUrl,
-                            child: _autofilling
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: C.white,
-                                    ),
-                                  )
-                                : const Text('Fill in'),
-                          ),
-                        ],
-                      ),
-                      if (_autofillMessage != null) ...[
-                        const SizedBox(height: Space.xs),
-                        Text(_autofillMessage!, style: T.bodySmall),
-                      ],
-                      const SizedBox(height: Space.lg),
-                      TextFormField(
-                        controller: _makeController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(labelText: 'Make'),
-                        validator: (value) =>
-                            (value == null || value.trim().isEmpty)
-                            ? 'Required'
-                            : null,
-                      ),
-                      const SizedBox(height: Space.md),
-                      TextFormField(
-                        controller: _modelController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(labelText: 'Model'),
-                        validator: (value) =>
-                            (value == null || value.trim().isEmpty)
-                            ? 'Required'
-                            : null,
-                      ),
-                      const SizedBox(height: Space.md),
-                      TextFormField(
-                        controller: _yearController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Year'),
-                        validator: (value) {
-                          final year = int.tryParse(value?.trim() ?? '');
-                          if (year == null) return 'Enter a valid year';
-                          if (year < 1886 || year > 2100) {
-                            return 'Enter a valid year';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: Space.md),
-                      TextFormField(
-                        controller: _variantController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(
-                          labelText: 'Variant (optional)',
-                        ),
-                      ),
-                      const SizedBox(height: Space.lg),
-                      Text('BACKDROP (OPTIONAL)', style: T.caption),
-                      const SizedBox(height: Space.sm),
-                      _backdropPicker(),
-                      const SizedBox(height: Space.xl),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                Space.lg,
-                0,
-                Space.lg,
-                Space.lg,
-              ),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _confirm,
-                  child: Text('Submit set (${widget.photoCount})'),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _backdropPicker() {
-    if (_backdropsError != null) {
-      return Text(
-        "Couldn't load backdrops — the vehicle will be returned on a "
-        'transparent background instead.',
-        style: T.bodySmall,
-      );
-    }
-    final backdrops = _backdrops;
-    if (backdrops == null) {
-      return const SizedBox(
-        height: 32,
-        child: Center(
-          child: SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-    if (backdrops.isEmpty) {
-      return Text(
-        'No backdrops in the library yet — the vehicle will be returned on '
-        'a transparent background.',
-        style: T.bodySmall,
-      );
-    }
-    return SizedBox(
-      height: 96,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: backdrops.length + 1,
-        separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return _BackdropChoice(
-              label: 'None',
-              selected: _selectedBackdropId == null,
-              onTap: () => setState(() => _selectedBackdropId = null),
-            );
-          }
-          final backdrop = backdrops[index - 1];
-          return _BackdropChoice(
-            label: backdrop.name,
-            imagePath: backdrop.imageUrl,
-            selected: _selectedBackdropId == backdrop.id,
-            onTap: () => setState(() => _selectedBackdropId = backdrop.id),
-          );
-        },
-      ),
-    );
-  }
-}
-
 extension<T> on Iterable<T> {
   /// The first element, or null for an empty iterable — `firstWhere` has no
   /// such fallback built in, and pulling in `package:collection` for one
@@ -778,7 +769,11 @@ class _BackdropChoice extends StatelessWidget {
                 child: imagePath == null
                     ? const DecoratedBox(
                         decoration: BoxDecoration(color: C.bone),
-                        child: Icon(Icons.block, size: 18, color: C.lineStrong),
+                        child: Icon(
+                          Icons.block,
+                          size: 18,
+                          color: C.lineStrong,
+                        ),
                       )
                     : AuthedImage(
                         storagePath: imagePath!,

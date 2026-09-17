@@ -19,6 +19,17 @@
 /// wording in `_NOT_A_VEHICLE_PHOTO` in `autopivot_backend.py` deliberately,
 /// so a dealer sees the same explanation on the phone as anywhere else in the
 /// product.
+///
+/// A photograph the pipeline ran but found no vehicle in is a different
+/// thing again from an excluded one: nothing about the *image* explains it
+/// (`imageKind` may be null, or even 'exterior' if the classifier agreed but
+/// detection still failed), because the explanation lives on the *job* —
+/// [ProcessingJobSummary.reviewState] and `.errorMessage`, fetched
+/// separately via `/jobs` and correlated back to each original by
+/// `inputImageId`. Without that correlation this screen cannot tell "still
+/// queued" apart from "ran and gave up", and both used to sit in the same
+/// unexplained "awaiting processing" bucket — see `_loadedBody`'s
+/// `needsReviewOriginals` split and [_NeedsReviewTile].
 library;
 
 import 'dart:async';
@@ -129,6 +140,7 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   /// interactive.
   Set<int> _deletingImageIds = const {};
   Set<int> _includingImageIds = const {};
+  bool _retrying = false;
 
   /// The most recent delete or include failure, already safe to show as-is
   /// per [ApiException.message]. Cleared at the start of the next attempt
@@ -162,10 +174,30 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       final listing = await api.listing(widget.listingId);
       if (!mounted) return;
       setState(() => _state = _Loaded(listing));
+      // Best-effort and unconditional — not only while polling — because a
+      // needs_review photograph needs job.errorMessage to explain itself no
+      // matter what the listing's overall processingStatus already is.
+      await _refreshProgress();
+      if (!mounted) return;
       _pollWhileProcessing(listing.processingStatus);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _state = _LoadFailed(e.message));
+    }
+  }
+
+  /// See [_load]'s call to this: a failure here is not worth taking the
+  /// whole screen down for, the same reasoning the poll below already
+  /// applies to itself — [_progress] only ever adds detail on top of a
+  /// listing that already loaded, it gates nothing the screen needs to work.
+  Future<void> _refreshProgress() async {
+    try {
+      final summary = await ref
+          .read(apiClientProvider)
+          .listingJobs(widget.listingId);
+      if (mounted) setState(() => _progress = summary);
+    } on ApiException {
+      // Leave whatever _progress already had.
     }
   }
 
@@ -283,6 +315,44 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
         _includingImageIds = {..._includingImageIds}..remove(image.id);
         _actionErrorMessage = e.message;
       });
+    }
+  }
+
+  /// The backdrop a needs_review photograph last ran with, if any — reused
+  /// so pressing Retry does not silently fall back to a transparent
+  /// background just because this screen was not the one that originally
+  /// chose one. Every flagged photograph on one listing was queued together
+  /// from the same review-screen choice, so the first one found is as good
+  /// as any.
+  int? _retryBackdropId() {
+    for (final job in _progress?.jobs ?? const <ProcessingJobSummary>[]) {
+      if (job.backdropId != null) return job.backdropId;
+    }
+    return null;
+  }
+
+  /// Queues every outstanding photograph again — including one flagged
+  /// needs_review, now that `create_jobs` on the server treats that as
+  /// unfinished rather than done. Listing-wide because there is no
+  /// per-photograph retry endpoint: `POST /process` is what Reprocess has
+  /// always meant here, for the set the review screen originally submitted.
+  Future<void> _handleRetry() async {
+    if (_retrying) return;
+    setState(() {
+      _retrying = true;
+      _actionErrorMessage = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .processListing(widget.listingId, backdropId: _retryBackdropId());
+      if (!mounted) return;
+      await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _actionErrorMessage = e.message);
+    } finally {
+      if (mounted) setState(() => _retrying = false);
     }
   }
 
@@ -406,10 +476,27 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       pairs.add((result, original));
     }
 
+    // A job's own review_state is what actually distinguishes "still queued"
+    // from "the pipeline ran and found nothing to cut out" — both look
+    // identical from the image alone (no processed pair, not excluded), so
+    // without this a needs_review photograph sat in "awaiting processing"
+    // forever with no explanation and nothing to do about it.
+    final jobsByInputImageId = {
+      for (final job in _progress?.jobs ?? const <ProcessingJobSummary>[])
+        job.inputImageId: job,
+    };
+
     final originals = listing.originals;
-    final awaitingOriginals = originals
-        .where((i) => !i.isExcluded && !pairedOriginalIds.contains(i.id))
-        .toList();
+    final awaitingOriginals = <ListingImage>[];
+    final needsReviewOriginals = <ListingImage>[];
+    for (final image in originals) {
+      if (image.isExcluded || pairedOriginalIds.contains(image.id)) continue;
+      if (jobsByInputImageId[image.id]?.reviewState == 'needs_review') {
+        needsReviewOriginals.add(image);
+      } else {
+        awaitingOriginals.add(image);
+      }
+    }
     final excludedOriginals = originals.where((i) => i.isExcluded).toList();
 
     return CustomScrollView(
@@ -462,6 +549,31 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                     awaitingOriginals,
                     semanticRole: 'Original photograph',
                   ),
+                ],
+                if (needsReviewOriginals.isNotEmpty) ...[
+                  const SizedBox(height: Space.xl),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _sectionHeading(
+                        'NEEDS REVIEW (${needsReviewOriginals.length})',
+                      ),
+                      TextButton(
+                        onPressed: _retrying ? null : _handleRetry,
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          _retrying ? 'Retrying…' : 'Retry',
+                          style: T.caption.copyWith(color: C.forest),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: Space.sm),
+                  _needsReviewWrap(needsReviewOriginals, jobsByInputImageId),
                 ],
                 if (excludedOriginals.isNotEmpty) ...[
                   const SizedBox(height: Space.xl),
@@ -558,6 +670,40 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
           onDelete: () => _handleDelete(image),
         );
       },
+    );
+  }
+
+  /// The needs_review originals, each with the job's own explanation
+  /// underneath it — see [_NeedsReviewTile]. No per-tile "include anyway"
+  /// here, unlike [_excludedWrap]: an excluded tile still has a classifier
+  /// guess a dealer can overrule, but a needs_review job produced no
+  /// processed image at all, so there is nothing a per-photograph override
+  /// could promote — Retry, above the section, is the one action that can
+  /// actually change the outcome.
+  Widget _needsReviewWrap(
+    List<ListingImage> images,
+    Map<int, ProcessingJobSummary> jobsByInputImageId,
+  ) {
+    return Wrap(
+      spacing: Space.sm,
+      runSpacing: Space.md,
+      children: images.map((image) {
+        final reason =
+            jobsByInputImageId[image.id]?.errorMessage ??
+            'No vehicle was found in this photograph.';
+        return SizedBox(
+          width: 148,
+          child: _NeedsReviewTile(
+            image: image,
+            reason: reason,
+            semanticLabel:
+                'Photograph needing review: ${image.originalFilename}. '
+                '$reason',
+            isDeleting: _deletingImageIds.contains(image.id),
+            onDelete: () => _handleDelete(image),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -1046,6 +1192,84 @@ class _ExcludedTile extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+/// One photograph the pipeline ran but found no vehicle to cut out —
+/// [reason] is the job's own [ProcessingJobSummary.errorMessage], not a
+/// guess made on this screen. Deleting it is the one per-photograph action;
+/// see [ListingDetailScreen]'s `_needsReviewWrap` for why there is no
+/// per-tile "include anyway" here the way [_ExcludedTile] has.
+class _NeedsReviewTile extends StatelessWidget {
+  const _NeedsReviewTile({
+    required this.image,
+    required this.reason,
+    required this.semanticLabel,
+    required this.isDeleting,
+    required this.onDelete,
+  });
+
+  final ListingImage image;
+  final String reason;
+  final String semanticLabel;
+  final bool isDeleting;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: Radii.controlAll,
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Opacity(
+                  opacity: 0.45,
+                  child: AuthedImage(
+                    storagePath: image.imageUrl,
+                    semanticLabel: semanticLabel,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                if (isDeleting)
+                  Semantics(
+                    label: 'Deleting this photograph',
+                    child: const Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Opacity(opacity: 0.55, child: ColoredBox(color: C.ink)),
+                        Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: C.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: Space.xs),
+        Text(reason, style: T.bodySmall),
+        const SizedBox(height: Space.xs),
+        TextButton(
+          onPressed: isDeleting ? null : onDelete,
+          style: TextButton.styleFrom(padding: EdgeInsets.zero),
+          child: Text('Delete', style: T.caption.copyWith(color: C.rust)),
         ),
       ],
     );

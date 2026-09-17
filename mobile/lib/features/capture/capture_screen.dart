@@ -92,12 +92,15 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../api/api_exception.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../routes.dart';
 import '../../settings/app_preferences.dart';
+import '../dashboard/dashboard_screen.dart';
 import 'capture_angles.dart';
 import 'capture_draft.dart';
 import 'device_tilt_detector.dart';
@@ -186,6 +189,12 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
 
   bool _capturing = false;
   bool _submitting = false;
+
+  /// What the vehicle-details form held the last time review closed without
+  /// submitting — see [ReviewDraft]'s own doc comment for why this has to be
+  /// threaded back in rather than letting each new [ReviewScreen] start
+  /// blank.
+  ReviewDraft _reviewDraft = const ReviewDraft();
 
   /// Every camera the device offers — front, back, and (where the plugin
   /// exposes them) any extra back lenses — so [_switchCamera] has something
@@ -671,7 +680,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   Future<void> _submit() async {
     final result = await Navigator.of(context).push<ReviewResult>(
       MaterialPageRoute(
-        builder: (_) => ReviewScreen(initialCaptured: Map.of(_captured)),
+        builder: (_) => ReviewScreen(
+          initialCaptured: Map.of(_captured),
+          initialDraft: _reviewDraft,
+        ),
       ),
     );
     if (result == null || !mounted) return;
@@ -683,9 +695,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     });
 
     switch (result) {
-      case ReviewClosed():
-        return;
-      case ReviewRetake(:final angle):
+      case ReviewClosed(:final draft):
+        _reviewDraft = draft;
+      case ReviewRetake(:final angle, :final draft):
+        _reviewDraft = draft;
         _selectAngle(angle);
       case ReviewSubmit(:final details, :final backdropId):
         await _submitListing(details, backdropId);
@@ -745,6 +758,15 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         ),
       );
       if (!mounted) return;
+      // Land back on Overview, refreshed, rather than wherever the camera
+      // bubble happened to be tapped from — the dealer just added a car and
+      // that is the one screen built to show it. go() rather than push():
+      // this replaces the current location instead of stacking a new one,
+      // so the back gesture from Overview can't return to a stale screen.
+      // If Overview is already the screen underneath, go() alone would not
+      // reconstruct it, so the ticker bump covers that case explicitly.
+      ref.read(dashboardRefreshProvider.notifier).bump();
+      context.go(AppRoutes.home);
       (widget.onClose ?? () => Navigator.of(context).pop()).call();
     } on ApiException catch (e) {
       if (!mounted) return;

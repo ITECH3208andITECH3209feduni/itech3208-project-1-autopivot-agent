@@ -112,8 +112,12 @@ def create_jobs(
 ) -> list[ProcessingJob]:
     """Queue one job per original photograph.
 
-    Originals that already have a completed job are skipped, so pressing
-    Reprocess does not duplicate work that succeeded.
+    Originals that already completed successfully are skipped, so pressing
+    Reprocess does not duplicate work that succeeded. A `needs_review`
+    outcome is a `status == "completed"` job too — the run finished cleanly,
+    it just found nothing to cut out — so `review_state` has to be checked
+    alongside `status` here, or a photograph flagged for review could never
+    be picked up again by Reprocess.
     """
     originals = session.scalars(
         select(Image).where(
@@ -128,6 +132,7 @@ def create_jobs(
             select(ProcessingJob).where(
                 ProcessingJob.vehicle_listing_id == listing.id,
                 ProcessingJob.status == "completed",
+                ProcessingJob.review_state == "ok",
             )
         ).all()
     }

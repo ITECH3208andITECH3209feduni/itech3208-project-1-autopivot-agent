@@ -78,6 +78,24 @@ final class _LoadFailed extends _Load {
   final String message;
 }
 
+/// Bumped after a set is submitted from the camera, wherever it was opened
+/// from — see `capture_screen.dart`'s `_submitListing`. Sending the user
+/// back to [AppRoutes.home] already gets a fresh load for free when that
+/// navigation actually constructs a new [DashboardScreen]; this covers the
+/// one case it doesn't — the dashboard was already the screen showing when
+/// the submission happened, so there is no route change for go_router to
+/// rebuild it from scratch.
+final dashboardRefreshProvider = NotifierProvider<DashboardRefreshTicker, int>(
+  DashboardRefreshTicker.new,
+);
+
+class DashboardRefreshTicker extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void bump() => state++;
+}
+
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
@@ -172,6 +190,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(dashboardRefreshProvider, (previous, next) => _fetch());
     return Scaffold(
       body: SafeArea(
         child: RefreshIndicator(

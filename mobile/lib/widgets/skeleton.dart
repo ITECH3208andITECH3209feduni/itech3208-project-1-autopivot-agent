@@ -42,7 +42,20 @@ class _ShimmerGroupState extends State<ShimmerGroup>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
-    if (!MediaQuery.of(context).disableAnimations) _controller.repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MediaQuery isn't available yet in initState (the widget isn't attached
+    // to the tree), so the reduced-motion check lives here instead — also
+    // covers the OS setting flipping while this screen is already open.
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (reduceMotion) {
+      if (_controller.isAnimating) _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
   }
 
   @override
