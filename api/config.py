@@ -8,17 +8,23 @@ has any use for them.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
-from dotenv import load_dotenv
+from api.env import BASE_DIR, load_environment
 
-# .env.example has always existed but nothing loaded it, so DATABASE_URL had to
-# be exported by hand in every shell. Real environment variables still win.
-load_dotenv(override=False)
+# .env is loaded by absolute path rather than by search. VS Code starts the
+# debugger with the workspace folder as the working directory, but a terminal
+# opened inside a subfolder does not, and load_dotenv's default search would
+# then silently find nothing. Real environment variables still win.
+#
+# Calling it here as well as from autopivot_backend.py is what lets the light
+# API — `uvicorn api.app:app` — read the same file. The call is idempotent.
+load_environment()
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-HOST: str = os.getenv("HOST", "0.0.0.0")
+# 127.0.0.1 rather than 0.0.0.0: this is a development machine, and there is no
+# reason for a half-finished demo holding dealership data to be reachable from
+# the rest of the network. Set HOST=0.0.0.0 to expose it deliberately — that is
+# what a server or a tunnel needs.
+HOST: str = os.getenv("HOST", "127.0.0.1")
 PORT: int = int(os.getenv("PORT", 8000))
 
 # The 5173 entries are the Vite dev server, which serves the React client on a

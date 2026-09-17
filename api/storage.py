@@ -15,7 +15,6 @@ from __future__ import annotations
 import hashlib
 import io
 import os
-import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -23,7 +22,17 @@ from PIL import Image, UnidentifiedImageError
 
 StorageKind = Literal["original", "processed", "backdrop", "plate_overlay"]
 
-STORAGE_ROOT = Path(os.getenv("STORAGE_ROOT", "storage")).resolve()
+# Anchored to the project directory, not the working directory. A relative
+# "storage" would follow whatever folder the server happened to be started
+# from: VS Code's Run panel uses the workspace root, a terminal opened in
+# scripts/ does not, and the uploaded images would quietly split across two
+# folders with half of them 404ing. An absolute STORAGE_ROOT still wins.
+_STORAGE_ROOT_SETTING = os.getenv("STORAGE_ROOT", "").strip() or "storage"
+STORAGE_ROOT = (
+    Path(_STORAGE_ROOT_SETTING)
+    if Path(_STORAGE_ROOT_SETTING).is_absolute()
+    else Path(__file__).resolve().parent.parent / _STORAGE_ROOT_SETTING
+).resolve()
 
 # Mirrors the CHECK constraint on images.mime_type and backdrops.mime_type.
 EXTENSION_FOR_MIME: dict[str, str] = {
@@ -44,22 +53,6 @@ MIME_FOR_PIL_FORMAT: dict[str, str] = {
 
 class StorageError(Exception):
     """Raised for unreadable images and unsafe paths."""
-
-
-def provision_dealership(dealership_id: int) -> Path:
-    """Create and return the isolated storage root for a new dealership."""
-    if dealership_id <= 0:
-        raise StorageError("A valid dealership id is required for storage.")
-    destination = STORAGE_ROOT / str(dealership_id)
-    destination.mkdir(parents=True, exist_ok=False)
-    return destination
-
-
-def remove_provisioned_dealership(dealership_id: int) -> None:
-    """Compensate for a failed onboarding transaction."""
-    destination = STORAGE_ROOT / str(dealership_id)
-    if destination.is_dir() and destination.is_relative_to(STORAGE_ROOT):
-        shutil.rmtree(destination)
 
 
 class StoredImage:

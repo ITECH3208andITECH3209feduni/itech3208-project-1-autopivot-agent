@@ -36,11 +36,20 @@ import math
 import os
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
+from dotenv import load_dotenv
 from PIL import Image
 
 logger = logging.getLogger("autopivot.classification")
+
+# This module is imported before api.config is, and it can also be run on its
+# own to calibrate the thresholds against real photographs. Either way it has
+# to read .env itself, or every CLIP_* setting below silently falls back to its
+# default no matter what the file says. Real environment variables still win,
+# and a second load_dotenv elsewhere is harmless.
+load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
 
 # These are the values images.image_kind accepts: the check constraint
 # ck_images_image_kind_allowed lists them, so a fifth string invented here
