@@ -45,8 +45,10 @@ a public tunnel. It skips anything already done, so re-running costs seconds.
 It finishes with a box containing the **public URL, email and password**. Expect
 5–15 minutes on a cold pod, most of it downloading model weights.
 
-Add `HF_TOKEN` first if you want RMBG-2.0 rather than the BiRefNet fallback.
-BiRefNet works fine; it is simply second choice.
+Background removal is BiRefNet (MIT-licensed, no auth needed) — RMBG-2.0 was
+removed, since its free weights are CC BY-NC 4.0 and this product is
+commercial. `HF_TOKEN` is optional: it only raises the download rate limit
+for YOLO26, nothing here requires it.
 
 **First run also downloads CLIP** (`openai/clip-vit-base-patch32`, around
 350 MB) for image classification. Its thresholds are reasoned rather than

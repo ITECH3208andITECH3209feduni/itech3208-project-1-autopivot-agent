@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -45,6 +46,9 @@ class Dealership(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     # Shown beneath the dealership name in the application sidebar.
     location: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="active"
     )
@@ -63,6 +67,30 @@ class Dealership(Base):
         back_populates="dealership"
     )
     backdrops: Mapped[list[Backdrop]] = relationship(back_populates="dealership")
+
+
+class AuditLog(Base):
+    """Persistent record of sensitive administration actions and refusals."""
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        CheckConstraint("outcome IN ('success', 'denied', 'failed')", name="outcome_allowed"),
+    )
+
+    id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
+    actor_user_id: Mapped[Optional[int]] = mapped_column(
+        BigIntId, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    dealership_id: Mapped[Optional[int]] = mapped_column(
+        BigIntId, ForeignKey("dealerships.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, server_default=func.now()
+    )
 
 
 class Backdrop(Base):
@@ -89,6 +117,31 @@ class Backdrop(Base):
         CheckConstraint(
             "mime_type IN ('image/jpeg', 'image/png', 'image/webp')",
             name="mime_type_allowed",
+        ),
+        CheckConstraint(
+            "horizon_y_ratio IS NULL OR horizon_y_ratio BETWEEN 0 AND 1",
+            name="horizon_y_ratio_range",
+        ),
+        CheckConstraint(
+            "horizon_confidence IS NULL OR horizon_confidence BETWEEN 0 AND 1",
+            name="horizon_confidence_range",
+        ),
+        CheckConstraint(
+            "horizon_method IS NULL OR "
+            "horizon_method IN ('vanishing_point', 'floor_junction', 'assumed')",
+            name="horizon_method_allowed",
+        ),
+        CheckConstraint(
+            "floor_top_y_ratio IS NULL OR floor_top_y_ratio BETWEEN 0 AND 1",
+            name="floor_top_y_ratio_range",
+        ),
+        CheckConstraint(
+            "floor_confidence IS NULL OR floor_confidence BETWEEN 0 AND 1",
+            name="floor_confidence_range",
+        ),
+        CheckConstraint(
+            "camera_elevation_deg IS NULL OR camera_elevation_deg BETWEEN -90 AND 90",
+            name="camera_elevation_range",
         ),
     )
 
@@ -120,9 +173,55 @@ class Backdrop(Base):
         default=list,
         server_default="{}",
     )
+    # server_default=false() rather than the string "false": a plain string is
+    # emitted as the SQL literal 'false', which PostgreSQL casts to a boolean
+    # but SQLite stores as the text 'false' — and non-empty text reads back as
+    # True. The column then defaults to the opposite of what it says on every
+    # SQLite-backed test in the suite.
     is_default: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
+        Boolean, nullable=False, server_default=false()
     )
+
+    # ── Geometry, measured from the image when it is uploaded ──
+    # A dealer's backdrop used to be composited against a ground line assumed to
+    # be 84% of the way down the canvas, which is right for the studio scenes
+    # and a guess for everything else: a showroom whose floor meets the wall
+    # higher than that left the vehicle sunk into the concrete. `horizon_y_ratio`
+    # is what Phase 1 aligns a photograph's estimated camera elevation against,
+    # and `floor_top_y_ratio` is where the floor begins.
+    #
+    # All nullable, because a backdrop uploaded before this existed has never
+    # been measured, and that is a different state from having been measured and
+    # found unreadable — which is recorded as method 'assumed' with a zero
+    # confidence. The compositor has to be able to tell those two apart.
+    horizon_y_ratio: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
+    horizon_confidence: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
+    horizon_method: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    floor_top_y_ratio: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
+    floor_confidence: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
+    # Only derivable when the dealer's camera recorded a focal length, so it
+    # stays null for a render and for a photograph stripped of its EXIF. Kept
+    # because it is what makes the backdrop's own viewpoint comparable with the
+    # elevation estimated for a photograph, rather than only with its horizon.
+    camera_elevation_deg: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+    # Set when a dealer has corrected the measurement by hand. Re-analysis must
+    # never overwrite a correction: the person who took the photograph knows
+    # where the floor is, and having their fix quietly reverted by a background
+    # job is worse than never having offered the fix at all.
+    geometry_overridden: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, nullable=False, server_default=func.now()
     )
@@ -192,6 +291,8 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    # Every reset advances this value; JWTs issued before the reset are refused.
+    token_version: Mapped[int] = mapped_column(nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, nullable=False, server_default=func.now()
     )
@@ -316,6 +417,35 @@ class Image(Base):
     __tablename__ = "images"
     __table_args__ = (
         UniqueConstraint("id", "vehicle_listing_id", name="image_listing_pair"),
+        # Which original a processed photograph was cut out of. The pair form
+        # mirrors the job constraints below it and leans on the same
+        # (id, vehicle_listing_id) target: a derived image can only name an
+        # original from its own listing, so the lineage cannot be made to cross
+        # a dealership boundary even by a query that forgot to scope itself.
+        #
+        # RESTRICT, like every neighbouring constraint, rather than CASCADE or
+        # SET NULL. A before-and-after pair is what the realism work is judged
+        # on, and both of the alternatives lose it silently: CASCADE would take
+        # the processed result away with the original without anyone asking for
+        # it, and SET NULL would leave an "after" that can no longer be shown
+        # beside anything. Deletion therefore clears the dependent rows
+        # deliberately and in order — see `_release_job_references` and
+        # `delete_listing` in api/routes_listings.py.
+        ForeignKeyConstraint(
+            ["source_image_id", "vehicle_listing_id"],
+            ["images.id", "images.vehicle_listing_id"],
+            name="source_image_same_listing",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            # A row that names itself as its own source can never be deleted:
+            # RESTRICT is checked against the row being removed as well, so the
+            # delete would be refused by the row's own reference. That is a
+            # photograph a dealer is permanently stuck with, so it is refused
+            # at write time instead.
+            "source_image_id IS NULL OR source_image_id <> id",
+            name="source_image_not_self",
+        ),
         CheckConstraint(
             "image_type IN ('original', 'processed', 'background', 'plate_overlay')",
             name="type_allowed",
@@ -352,6 +482,14 @@ class Image(Base):
         ForeignKey("vehicle_listings.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
+    )
+    # The photograph this one was made from. Null on an original, and on every
+    # processed row written before this column existed, so it is read as "not
+    # known" rather than "no source". Indexed because PostgreSQL indexes a
+    # referencing column for nobody: without it the RESTRICT check runs a
+    # sequential scan of images every time a dealer deletes a photograph.
+    source_image_id: Mapped[Optional[int]] = mapped_column(
+        BigIntId, nullable=True, index=True
     )
     image_type: Mapped[str] = mapped_column(String(30), nullable=False)
     # Null until something has looked at it. Set by the classifier.
@@ -443,6 +581,29 @@ class ProcessingJob(Base):
             name="angle_confidence_range",
         ),
         CheckConstraint(
+            # The bounds are elevation.MIN_ELEVATION_DEG and MAX_ELEVATION_DEG,
+            # written out rather than imported: elevation.py pulls in OpenCV and
+            # NumPy, which live in requirements-ml.txt, and this module is loaded
+            # by the light API that must install and serve without either.
+            # tests/test_camera_elevation.py fails if the two ever disagree.
+            "camera_elevation_deg IS NULL OR "
+            "camera_elevation_deg BETWEEN -5 AND 35",
+            name="camera_elevation_range",
+        ),
+        CheckConstraint(
+            "elevation_confidence IS NULL OR elevation_confidence BETWEEN 0 AND 1",
+            name="elevation_confidence_range",
+        ),
+        CheckConstraint(
+            # elevation.ELEVATION_METHODS, for the reason given above. Unlike
+            # detected_angle this vocabulary is closed and settled — it names the
+            # four rungs of one cascade rather than a taxonomy still under
+            # discussion — so it is worth constraining rather than leaving open.
+            "elevation_method IS NULL OR elevation_method IN "
+            "('wheel_ellipse', 'roof_underside', 'shot_angle', 'assumed')",
+            name="elevation_method_allowed",
+        ),
+        CheckConstraint(
             "completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at",
             name="completion_after_start",
         ),
@@ -479,6 +640,33 @@ class ProcessingJob(Base):
     angle_confidence: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 3), nullable=True
     )
+    # Where the camera was when the photograph was taken: the elevation in
+    # degrees above the horizontal through the wheel centres, how far the
+    # estimator trusts it, and which rung of elevation.py's cascade produced it.
+    # Two decimal places because the estimator's own error budget is measured in
+    # whole degrees, so anything finer would be recording noise.
+    #
+    # Nullable for the same reason detected_angle is, and one more. A job can
+    # finish without there being anything to measure — an advertisement banner
+    # and a photograph with no vehicle in it both stop before a cutout exists —
+    # and every job that ran before this column did has no estimate that could
+    # be reconstructed now.
+    #
+    # But an exterior photograph that reached the compositor always gets a
+    # number, because the cascade's last rung assumes standing eye level rather
+    # than declining. Recording that assumption instead of leaving these null is
+    # the whole point of elevation_method: a null cannot be told apart from a run
+    # where the estimator never happened at all, and Phase 1 has to know the
+    # difference before it shifts a backdrop's horizon. Shifting on a value
+    # nobody estimated would move every one of a dealer's photographs by the same
+    # invented amount, which is a worse result than not shifting them.
+    camera_elevation_deg: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 2), nullable=True
+    )
+    elevation_confidence: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), nullable=True
+    )
+    elevation_method: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     plates_detected: Mapped[Optional[int]] = mapped_column(nullable=True)
     plate_treatment: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Distinct from `status`. A job can complete successfully and still need a

@@ -487,11 +487,220 @@ There is therefore one set of auth routes, not two that can drift apart.
 ## Features
 
 - Upload a vehicle image and process it through the full pipeline.
-- Remove image backgrounds with RMBG-2.0, falling back to BiRefNet.
-- Detect vehicles with YOLO26, falling back to YOLO11.
-- Detect and hide licence plates with
-  `nickmuchi/yolos-small-finetuned-license-plate-detection`.
-- Upload custom backdrops and numberplate overlays.
+- Remove image backgrounds with BiRefNet (MIT-licensed — RMBG-2.0 was dropped as CC BY-NC 4.0, non-commercial only).
+- Detect vehicles with YOLO26.
+- Detect and hide license plates with nickmuchi/yolos-small-finetuned-license-plate-detection.
+- Upload optional custom backgrounds and numberplate overlays.
+
+## Project Structure
+
+- `autopivot_backend.py` - vehicle processing endpoints, model registry, and the full application.
+- `api/app.py` - application factory: CORS, error handling and auth, with no ML imports.
+- `api/config.py` - settings shared by both halves.
+- `api/security.py` - password hashing and access tokens.
+- `api/deps.py` - database session and authenticated-user dependencies.
+- `api/routes_auth.py` - login, current user and password change.
+- `api/routes_dealership_users.py` - dealership-scoped user creation, reset and deactivation.
+- `api/routes_dashboard.py` - dashboard statistics.
+- `api/routes_listings.py` - vehicle listings, photograph upload and processing.
+- `api/processing.py` - job orchestration, behind a processor protocol so the
+  light API stays free of ML imports.
+- `scripts/seed_dealership.py` - provisions a dealership and its administrator.
+- `scripts/seed_platform_admin.py` - provisions the initial AutoPivot administrator.
+- `api/storage.py` - content-addressed file storage, scoped per dealership.
+- `api/url_import.py` - fetching and parsing listing pages, shared by the light
+  API and the processing backend.
+- `compositing.py` - placing a cut-out vehicle into a scene: alpha refinement,
+  ground alignment, shadows and colour matching.
+- `assets/backgrounds/` - the two measured studio scenes.
+- `api/routes_backdrops.py` - backdrop library and authenticated file serving.
+- `scripts/runpod_setup.sh` - one-shot setup for a GPU test pod.
+- `frontend/` - React client. `src/design.ts` is the single source of truth for
+  the visual system; `src/Guidelines.tsx` renders it as a living style guide at
+  `/guidelines`.
+- `assets/` - sample images kept in the repository; no longer served over HTTP.
+- `database/base.py` - shared SQLAlchemy model base and constraint naming rules.
+- `database/connection.py` - PostgreSQL engine and database-session setup.
+- `database/models.py` - permanent dealership, user, listing, image and job models.
+- `requirements.txt` - Python dependencies.
+
+## Requirements
+
+- Python 3.10+
+- A machine with enough RAM/VRAM for the selected vision models.
+- **Optional**: `HF_TOKEN` for Hugging Face authentication. Nothing in this pipeline requires it — BiRefNet needs no auth at all — but it raises YOLO26's anonymous download rate limit.
+
+Install dependencies. There are two sets:
+
+```bash
+pip install -r requirements.txt
+```
+
+Core only — server, auth and database. No machine learning, every package has a
+prebuilt Apple Silicon wheel, and it installs in seconds. Enough for
+authentication, the dashboard and Alembic.
+
+```bash
+pip install -r requirements-ml.txt
+```
+
+Everything above plus the vision stack. Several gigabytes, and a CUDA GPU to be
+useful.
+
+## Configuration
+
+The backend uses environment variables:
+
+```bash
+HF_TOKEN=your_huggingface_token        # optional — raises YOLO26's download rate limit
+HOST=0.0.0.0                           # default
+PORT=8000                              # default
+MAX_FILE_MB=20                         # default upload limit
+YOLO_HF_REPO=Ultralytics/YOLO26        # default YOLO26 Hugging Face repo
+YOLO_MODEL_PATH=yolo26n.pt             # default YOLO26 detector file
+ALLOWED_ORIGINS=http://localhost:8000  # comma-separated CORS origins
+DATABASE_URL=postgresql+psycopg://autopivot_user:password@localhost:5432/autopivot
+```
+
+Use `.env.example` as the template for setting `DATABASE_URL` in the local shell
+or deployment environment. Real database credentials must not be committed.
+
+For larger demo uploads, raise `MAX_FILE_MB`, for example:
+
+```bash
+MAX_FILE_MB=50 python autopivot_backend.py
+```
+
+## Run Locally
+
+Two ways to run, depending on whether you need vehicle processing.
+
+**Light API** — authentication and dealership data, no models loaded. Starts
+instantly on any machine, GPU or not:
+
+```bash
+uvicorn api.app:app --reload
+```
+
+**Full application** — the light API plus the processing pipeline:
+
+```bash
+python autopivot_backend.py
+```
+
+Both serve the same auth routes: `autopivot_backend.py` calls the same
+application factory and adds the processing routes on top, so there is one set
+of routes and no risk of the two drifting apart.
+
+**Frontend** — in a second terminal:
+
+```bash
+npm install --prefix frontend && npm run dev --prefix frontend
+```
+
+Opens on `http://localhost:5173` and proxies `/auth`, `/api` and `/health` to
+the API on port 8000, so the browser stays on one origin in development. Sign in
+with the account printed by the seed script.
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+`/` serves the React client from `frontend/dist`, so a single port serves the
+application and the API on one origin and CORS never comes into it. Build the
+client first, or `/` answers 503 telling you so:
+
+```bash
+npm ci --prefix frontend && npm run build --prefix frontend
+```
+
+Nothing else is published as static files. Images belonging to a dealership are
+served through `/api/files/{path}`, which checks that the caller belongs to the
+dealership that owns them.
+
+## Database and accounts
+
+Apply the schema, then seed a demo dealership:
+
+```bash
+alembic upgrade head
+python -m scripts.seed_dealership
+```
+
+To use the platform administration area, provision its first AutoPivot
+administrator once:
+
+```bash
+python -m scripts.seed_platform_admin
+```
+
+The generated initial password is printed once and must be changed at first
+login. Platform administrators can then create dealerships and their first
+administrator from `/app/platform`.
+The default platform-administrator email is `admin@autopivot.example.com`;
+set `SEED_PLATFORM_ADMIN_EMAIL` before seeding to choose a different valid email.
+
+This provisions one dealership and one administrator, and nothing else — no
+vehicles, images or backdrops. A dealership fills up through the application.
+Name, location and admin details are configurable via `SEED_DEALERSHIP_NAME`,
+`SEED_DEALERSHIP_LOCATION`, `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`; the
+password is generated and printed once if unset. Re-running is safe.
+
+There is no registration endpoint by design: dealer accounts are provisioned by
+AutoPivot, which is why `users.must_change_password` defaults to true. Seeded
+accounts must change their password at first login via `/auth/change-password`.
+
+## APA-231 dealership user management
+
+The existing `users.dealership_id` links every dealership administrator and staff
+member to exactly one dealership. The available roles are `platform_admin`
+(no dealership), `dealership_admin` and `dealership_staff`. A dealership
+administrator can visit `/app/users` to list, add, reset or deactivate accounts
+in their own dealership. The API derives the dealership from the authenticated
+database user rather than trusting a client-supplied ID. Attempts to specify
+another dealership or manage another dealership's user are denied and recorded
+in `audit_logs` with the actor, path and action. The user's email remains unique
+across the platform, including deactivated accounts.
+
+Initial passwords are generated with `secrets`, hashed with bcrypt and returned
+once to the administrator for secure handover outside the platform. New and
+reset accounts must change their password before accessing application routes.
+JWTs carry `users.token_version`: reset increments it, invalidating all earlier
+tokens on their next request. Deactivation also increments the version and the
+existing `get_current_user` check refuses inactive users on every request.
+Deactivation leaves the user row and historical attribution intact. The added
+`f8d91a6b20e4` migration supplies `token_version` to existing users with a
+default of zero. No public registration or email-based reset endpoint exists.
+
+Run the focused two-dealership evidence with:
+
+```bash
+python -m pytest tests/test_dealership_user_management.py tests/test_platform_administration.py tests/test_migrations.py -q
+npm run build --prefix frontend
+```
+
+## Runpod / ngrok / remote access setup
+
+Run the app on Runpod / server as normal, then expose port `8000` with ngrok or your chosen tunnel.  
+
+Note: Ngrok requires auth token and this can be accessed via [official website](https://dashboard.ngrok.com/signup)
+
+Then open Terminal and prompt this:
+```bash
+pip install pyngrok
+
+ngrok config add-authtoken [YOUR TOKEN FROM NGROK GOES HERE]
+```
+
+Example:
+
+```bash
+HOST=0.0.0.0 PORT=8000 MAX_FILE_MB=20 python autopivot_backend.py
+```
+
+Then open the ngrok URL in your browser. If using browser requests from another origin, set `ALLOWED_ORIGINS` to include that URL.
 
 ## API Endpoints
 

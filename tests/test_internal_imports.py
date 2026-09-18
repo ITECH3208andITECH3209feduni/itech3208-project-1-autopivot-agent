@@ -14,7 +14,26 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 SEARCH_DIRS = ["api", "database", "scripts", "migrations"]
-SEARCH_FILES = ["autopivot_backend.py", "compositing.py"]
+
+# The half of the system that runs anywhere: only cv2, numpy and PIL, so their
+# tests need no GPU, no torch and no database. HANDOVER.md calls that separation
+# the most important structural fact in the system, and until now it was only
+# ever stated in a comment at the top of each of these files.
+PURE_MODULES = ["compositing.py", "metrics.py", "elevation.py", "backdrop_analysis.py"]
+
+SEARCH_FILES = ["autopivot_backend.py", *PURE_MODULES]
+
+# Reaching for any of these is what turns a pure module heavy. The first three
+# are the model stack and drag in several gigabytes; the last two are the
+# database and the web framework, which would make a geometry helper impossible
+# to exercise without a running PostgreSQL.
+FORBIDDEN_IN_PURE_MODULES = (
+    "torch",
+    "transformers",
+    "ultralytics",
+    "sqlalchemy",
+    "fastapi",
+)
 
 SKIP_DIRS = {"__pycache__", "node_modules", "dist", ".git", "frontend"}
 
@@ -66,8 +85,47 @@ def top_level_names(path: Path) -> set[str]:
     return names
 
 
+def imported_top_level_modules(path: Path) -> set[str]:
+    """Every top-level package the file imports, wherever the import sits.
+
+    Walked rather than read off the module body, because an import moved inside
+    a function is still a hard dependency of the file — it only defers the point
+    at which the machine without it finds out.
+    """
+    modules: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            modules.add(node.module.split(".")[0])
+    return modules
+
+
 def test_there_are_files_to_check():
     assert python_files()
+
+
+@pytest.mark.parametrize("name", PURE_MODULES)
+def test_the_pure_modules_reach_for_no_model_and_no_database(name):
+    """
+    One import of torch inside compositing.py, metrics.py or elevation.py takes
+    the whole geometry suite with it: those tests then need the ML environment,
+    which means they stop running on a laptop and in practice stop being run at
+    all. Nothing about the failure points at the line that caused it — the suite
+    simply becomes uninstallable — so it is caught here instead, by reading the
+    source rather than importing it, which is also what lets this test run on a
+    machine that has none of the forbidden packages installed.
+
+    Stated in a comment at the top of each of the three files since they were
+    written, and asserted by nothing until Stage 0 added two more of them.
+    """
+    imported = imported_top_level_modules(ROOT / name)
+    forbidden = sorted(imported & set(FORBIDDEN_IN_PURE_MODULES))
+    assert not forbidden, (
+        f"{name} must stay runnable without a GPU or a database, but imports: "
+        + ", ".join(forbidden)
+    )
 
 
 @pytest.mark.parametrize("path", python_files(), ids=lambda p: str(p.relative_to(ROOT)))

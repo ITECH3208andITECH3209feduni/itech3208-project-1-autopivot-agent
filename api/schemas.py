@@ -28,6 +28,9 @@ class DealershipOut(BaseModel):
     name: str
     # Shown beneath the dealership name in the application sidebar.
     location: Optional[str]
+    contact_name: Optional[str] = None
+    contact_email: Optional[EmailStr] = None
+    contact_phone: Optional[str] = None
     status: str
     user_count: int
 
@@ -41,6 +44,51 @@ class UserOut(BaseModel):
     is_active: bool
     must_change_password: bool
     dealership: Optional[DealershipOut] = None
+
+
+class DealershipOnboardRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    location: str = Field(min_length=1, max_length=120)
+    contact_name: str = Field(min_length=1, max_length=200)
+    contact_email: EmailStr
+    contact_phone: str = Field(min_length=1, max_length=50)
+    admin_email: EmailStr
+    admin_first_name: str = Field(min_length=1, max_length=100)
+    admin_last_name: str = Field(min_length=1, max_length=100)
+
+
+class DealershipProvisionedOut(BaseModel):
+    dealership: DealershipOut
+    administrator: UserOut
+    initial_password: str
+
+
+class DealershipUserOut(BaseModel):
+    id: int
+    email: EmailStr
+    first_name: str
+    last_name: str
+    role: str
+    is_active: bool
+    must_change_password: bool
+
+
+class DealershipUserCreate(BaseModel):
+    email: EmailStr
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    role: str = Field(pattern="^(dealership_admin|dealership_staff)$")
+    # Optional only to detect and audit a caller attempting to override scope.
+    dealership_id: Optional[int] = None
+
+
+class DealershipUserProvisionedOut(BaseModel):
+    user: DealershipUserOut
+    initial_password: str
+
+
+class DealershipUserResetOut(BaseModel):
+    initial_password: str
 
 
 class LoginResponse(BaseModel):
@@ -58,6 +106,31 @@ class BackdropOut(BaseModel):
     is_default: bool
     image_url: str
     created_at: datetime
+
+    # Measured from the image when it was uploaded. All optional: a backdrop
+    # added before the measurement existed has never been looked at, which the
+    # client has to be able to tell apart from one that was looked at and gave
+    # nothing up — that case arrives as method 'assumed' with a zero confidence.
+    horizon_y_ratio: Optional[float] = None
+    horizon_confidence: Optional[float] = None
+    horizon_method: Optional[str] = None
+    floor_top_y_ratio: Optional[float] = None
+    floor_confidence: Optional[float] = None
+    camera_elevation_deg: Optional[float] = None
+    geometry_overridden: bool = False
+
+
+class BackdropGeometryIn(BaseModel):
+    """A dealer correcting where the floor and the horizon actually are.
+
+    Both are ratios down the canvas, 0 at the top edge and 1 at the bottom. The
+    person who took the photograph knows where their own floor is, and a
+    measurement they can see is wrong is worse than no measurement at all if
+    they cannot fix it.
+    """
+
+    horizon_y_ratio: float = Field(..., ge=0.0, le=1.0)
+    floor_top_y_ratio: float = Field(..., ge=0.0, le=1.0)
 
 
 class DashboardStats(BaseModel):
@@ -106,6 +179,11 @@ class VehicleListingUpdate(BaseModel):
 class ImageOut(BaseModel):
     id: int
     image_type: str
+    # The original this one was made from, so a client holding a listing's
+    # images can pair each processed result with its before shot without asking
+    # for the jobs as well. Null on an original, and on anything processed
+    # before the column existed.
+    source_image_id: Optional[int] = None
     # What the photograph is of. Null until the classifier has seen it.
     image_kind: Optional[str] = None
     kind_confidence: Optional[float] = None
@@ -153,6 +231,18 @@ class UrlImportResult(BaseModel):
     images: list[ImageOut]
     # Set when the import worked but the result is worth a second look.
     note: Optional[str] = None
+
+
+class UrlVehicleGuess(BaseModel):
+    """What url_import.guess_vehicle_from_url read out of a pasted URL's own
+    slug — every field is optional because a URL that does not match a known
+    shape yields nothing, not a wrong guess.
+    """
+
+    year: Optional[int] = None
+    make: Optional[str] = None
+    model: Optional[str] = None
+    variant: Optional[str] = None
 
 
 class ProcessingJobOut(BaseModel):

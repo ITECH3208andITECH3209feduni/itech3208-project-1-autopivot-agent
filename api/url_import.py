@@ -93,6 +93,60 @@ class UrlImportError(Exception):
     """Carries a message intended to be shown to the person who pasted the URL."""
 
 
+# ── Vehicle guess from the URL itself ───────────────────────────────────────
+#
+# Confirmed by hand against a live 2cheapcars.co.nz listing:
+#   .../car/121007/2015-mitsubishi-delica-d2-hatchback
+# The numeric id is the site's own, and everything after it is
+# year-make-model-variant...-bodytype, hyphen-joined with no marker for where
+# one field ends and the next begins. Year and make are reliable — they are
+# always the first two tokens. Model is usually the third, but variant and
+# body type cannot be told apart from the slug alone (a body type can itself
+# be two words, e.g. "people-mover"), so everything past the model is handed
+# back as one "variant" string for a person to glance at and trim rather than
+# a guess we would get wrong with false confidence.
+#
+# Matched on the URL's shape — /car/<id>/<slug> — not on a specific hostname,
+# so any other dealer site that happens to use the same convention benefits
+# too; a URL that does not fit the shape yields no guess rather than a wrong
+# one built from an unrelated path.
+_CAR_SLUG_RE = re.compile(r"/car/\d+/([a-z0-9.-]+)", re.IGNORECASE)
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+@dataclass
+class VehicleGuess:
+    year: int
+    make: str
+    model: str
+    variant: str | None = None
+
+
+def guess_vehicle_from_url(url: str) -> VehicleGuess | None:
+    """
+    Guess year/make/model/variant from a listing URL's own slug.
+
+    Never fetches the page — the guess comes from the URL text alone, so this
+    is synchronous and cheap enough to call on every pasted URL, before a
+    listing exists to attach anything to.
+    """
+    match = _CAR_SLUG_RE.search(urlparse(url).path)
+    if not match:
+        return None
+
+    tokens = [t for t in match.group(1).split("-") if t]
+    if len(tokens) < 3 or not _YEAR_RE.match(tokens[0]):
+        return None
+
+    variant = " ".join(tokens[3:]).strip() or None
+    return VehicleGuess(
+        year=int(tokens[0]),
+        make=tokens[1].capitalize(),
+        model=tokens[2].capitalize(),
+        variant=variant,
+    )
+
+
 @dataclass
 class FetchedImage:
     filename: str

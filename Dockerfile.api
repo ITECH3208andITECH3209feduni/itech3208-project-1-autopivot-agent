@@ -1,0 +1,37 @@
+# The light API only — no ML dependencies, no GPU, builds and starts in
+# seconds. Deliberately separate from the vehicle-processing pipeline, which
+# runs on RunPod: this image serves authentication, listings and the
+# dashboard for the mobile app and (eventually) the web client, on a host
+# that stays up permanently, at a fraction of a GPU pod's cost, without
+# needing to be started before it can be used.
+#
+# See docs/HANDOVER.md §2 for why the split between api/ and
+# autopivot_backend.py exists, and docs/DEPLOY_FLY.md for how to deploy this.
+#
+# Built from requirements.txt, never requirements-ml.txt — that is what keeps
+# this image light. If a future change makes api/ import anything from the ML
+# stack, this build fails fast rather than silently pulling in gigabytes.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# psycopg[binary] and bcrypt both ship prebuilt wheels for this base image's
+# architecture, so no compiler is installed here. If a future dependency
+# needs to build from source, the fix is `apt-get install build-essential`
+# above this line, not a mystery — leaving a note here rather than installing
+# it pre-emptively and never knowing whether it was needed.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY api ./api
+COPY database ./database
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY alembic.ini .
+
+ENV HOST=0.0.0.0
+ENV PORT=8000
+EXPOSE 8000
+
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
