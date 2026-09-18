@@ -1,0 +1,42 @@
+AutoPivot realism evidence — stage 0 baseline, synthetic input
+2026-08-17T11:51:47+00:00   schema autopivot.realism-report/1
+
+SYNTHETIC INPUT — THESE NUMBERS SAY NOTHING ABOUT REALISM.
+  The vehicles in this run were drawn by the harness, not photographed. A
+  synthetic run shows that the measuring works end to end; it is not
+  evidence that a composite looks better, and quoting it in the technical
+  report as if it were would be dishonest. Re-run against real dealer
+  cut-outs before any figure below leaves this file.
+
+Inputs     5 cut-outs from /Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/evidence/synthetic
+Backdrop   AutoPivot Studio — Full Car [studio_full], source 1448x1086, rendered at 1280x960
+           /Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/assets/backgrounds/studio-full.png
+
+Measured
+  edge quality      0.5362   of 301770 boundary pixels carry fractional alpha
+  gallery spread    1.0000   largest rendered vehicle height over the smallest; 1.0000 is coherent
+  camera elevation  12.82 deg mean, confidence 0.279
+                    roof_underside 1, shot_angle 2, wheel_ellipse 2
+                    3 of 5 were measured rather than assumed
+  horizon offset    not measured. It needs the backdrop's horizon as a canvas ratio,
+                    which no preset carries yet, and each photograph's own horizon,
+                    which nothing estimates yet. Both are Phase 1's to supply; pass
+                    --backdrop-horizon-ratio and a vehicle_horizon_ratio per sidecar.
+
+Per photograph
+  name                                elev   conf  method            edge  height    drawn
+  front-quarter-crouching.png        16.41   0.32  roof_underside   0.504     265     4.61
+  front-standing.png                 11.16   0.15  shot_angle       0.983     265    11.16
+  side-crouching.png                 11.16   0.20  shot_angle       0.506     265     4.61
+  side-raised.png                    16.04   0.46  wheel_ellipse    0.506     265    17.43
+  side-standing.png                   9.35   0.27  wheel_ellipse    0.506     265    11.16
+  'drawn' is the elevation the vehicle was drawn from, and only a wheel_ellipse row
+  is comparable with it. This is not an accuracy score for the estimator.
+
+Look at
+  /Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/evidence/contact-sheet.png
+      every render in one frame, in the order listed above
+  /Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/evidence/renders
+      the full-size composites, one per cut-out
+  /Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/evidence/metrics.json
+      the numbers. Keep this one: it is the --baseline for the next run

@@ -7,6 +7,11 @@ Creates only what is needed to sign in: one dealership and one admin account.
 No listings, no images, no backdrops — a new dealership starts empty and fills
 up through the application.
 
+The platform administrator — the account with no dealership of its own, used
+to onboard other dealerships — is a separate concern with its own script,
+`scripts.seed_platform_admin`, since it isn't scoped to any one dealership
+this one provisions.
+
 Everything is configurable, so this doubles as the provisioning step for a real
 dealership rather than being demo-only:
 

@@ -1,0 +1,42 @@
+# Deployment config for the light API. See Dockerfile.api and
+# docs/DEPLOY_FLY.md for the full picture and the exact commands to deploy
+# this.
+#
+# `app` must be globally unique across every Fly account, not just yours —
+# this placeholder is almost certainly taken. Change it before running
+# anything; `fly apps create <name>` will simply refuse a name in use.
+app = "CHANGE-ME-autopivot-api"
+
+# Sydney: closest Fly region to AU/NZ dealerships. `fly platform regions`
+# lists what is currently available if this has changed or is unavailable at
+# the time of deploy.
+primary_region = "syd"
+
+[build]
+  dockerfile = "Dockerfile.api"
+
+# Runs once per deploy, after the new image is built but before it takes
+# traffic, with the deploy's secrets already available — unlike a
+# `RUN alembic upgrade head` baked into the Dockerfile, which would run at
+# build time with no DATABASE_URL to reach. tests/test_migrations.py already
+# guards the migration chain itself; this is what actually applies it.
+[deploy]
+  release_command = "python -m alembic upgrade head"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Both explicit rather than left at Fly's newer defaults, which scale a
+  # service to zero on idle: that reintroduces exactly the cold-start delay
+  # that ruled out Render's free tier for this. A dealer's employee — or a
+  # mobile developer mid-session — should never be the one who discovers the
+  # machine was asleep.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/health/api"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"

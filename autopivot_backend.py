@@ -36,6 +36,7 @@ from ultralytics import YOLO
 
 import classification
 import compositing
+import elevation
 from api import processing, url_import
 from api.app import create_app
 from api.config import BASE_DIR, HOST, PORT
@@ -177,8 +178,7 @@ logging.config.dictConfig(_LOGGING_CONFIG)
 logger = logging.getLogger("autopivot")
 
 # ── Shared Segmentation Transform ──────────────────────────────────────────────
-# Both RMBG-2.0 and BiRefNet use the same ImageNet normalisation and 1024×1024
-# input resolution, so one transform covers both models.
+# BiRefNet uses ImageNet normalisation and a 1024×1024 input resolution.
 
 _SEG_SIZE = (1024, 1024)
 _seg_transform = transforms.Compose([
@@ -189,20 +189,28 @@ _seg_transform = transforms.Compose([
 
 # ── Model Registry ─────────────────────────────────────────────────────────────
 # Developed by Vadim Rudoi — centralised registry with:
-#   • RMBG-2.0 as primary background removal model
-#   • BiRefNet as automatic fallback if RMBG-2.0 is unavailable
+#   • BiRefNet as the background removal model
 #   • Independent health tracking per model
 #   • Lazy loading for vehicle and plate detectors
+#
+# BRIA's RMBG-2.0 was the original background removal model here, and was
+# removed — not merely deprioritised — because its free weights are licensed
+# CC BY-NC 4.0 (non-commercial only; see huggingface.co/briaai/RMBG-2.0's own
+# license terms). This product is commercial, so that model was never legally
+# usable in production regardless of which position it held in a fallback
+# chain. BiRefNet's general-purpose checkpoint (ZhengPeng7/BiRefNet, not the
+# -portrait variant, which trains partly on the academic P3M-10k dataset) is
+# MIT-licensed and was already integrated here as the fallback, so promoting
+# it to the only model was the smallest change that actually fixes the
+# problem, rather than reaching for an unfamiliar third model.
 
 
 class ModelRegistry:
     """Centralised model registry with lazy loading and per-model health tracking."""
 
     def __init__(self) -> None:
-        # Background removal — primary + fallback
-        self._rmbg: Optional[AutoModelForImageSegmentation] = None
+        # Background removal
         self._birefnet: Optional[AutoModelForImageSegmentation] = None
-        self._rmbg_ok = False
         self._birefnet_ok = False
 
         # Detection models (lazy)
@@ -230,9 +238,9 @@ class ModelRegistry:
         # first mid-inference.
         self._vehicle_lock = threading.RLock()
         self._plates_lock = threading.RLock()
-        # Background models load at startup, which is single-threaded, but
-        # _remove_background also promotes BiRefNet mid-request when RMBG-2.0
-        # raises during inference. That path is concurrent.
+        # The background model loads once at startup, which is
+        # single-threaded — kept for the same reason the other two locks
+        # exist, in case a future change makes it lazy or reloadable.
         self._bg_lock = threading.RLock()
 
     # ── Read-only properties ──
@@ -253,45 +261,20 @@ class ModelRegistry:
             self._load_plates()
         return self._plates
 
-    # ── Background model loaders ──
-
-    def _load_rmbg(self) -> None:
-        """
-        Developed by Vadim Rudoi — load BRIA RMBG-2.0 as the primary
-        background removal model. Requires a HuggingFace token from an account
-        that has accepted the BRIA license on https://huggingface.co/briaai/RMBG-2.0
-        """
-        logger.info("Loading primary background model — briaai/RMBG-2.0")
-        try:
-            self._rmbg = (
-                AutoModelForImageSegmentation.from_pretrained(
-                    "briaai/RMBG-2.0",
-                    trust_remote_code=True,
-                    torch_dtype=torch.float32,
-                    token=HF_AUTH_TOKEN or True,
-                )
-                .eval()
-                .to(self._device)
-            )
-            self._rmbg_ok = True
-            logger.info("RMBG-2.0 loaded on %s", self._device)
-        except Exception as exc:
-            logger.warning(
-                "RMBG-2.0 failed to load: %s. Falling back to BiRefNet.",
-                exc,
-                exc_info=True,
-            )
+    # ── Background model loader ──
 
     def _load_birefnet(self) -> None:
         """
-        Developed by Vadim Rudoi — load BiRefNet as the fallback background
-        removal model, used whenever RMBG-2.0 is unavailable.
+        Developed by Vadim Rudoi — load BiRefNet, the background removal
+        model. No HuggingFace authentication required — unlike RMBG-2.0
+        (removed; see this file's Model Registry doc comment), BiRefNet's
+        general-purpose checkpoint carries no license gate to accept.
         """
         with self._bg_lock:
             if self._birefnet_ok:
                 return
 
-            logger.info("Loading fallback background model — ZhengPeng7/BiRefNet")
+            logger.info("Loading background model — ZhengPeng7/BiRefNet")
             try:
                 self._birefnet = (
                     AutoModelForImageSegmentation.from_pretrained(
@@ -384,29 +367,21 @@ class ModelRegistry:
     # ── Active model resolution ──
 
     def active_bg_model(self):
-        """Return the active background removal model and its identifier."""
-        if self._rmbg_ok:
-            return self._rmbg, "briaai/RMBG-2.0"
+        """Return the background removal model and its identifier."""
         if self._birefnet_ok:
             return self._birefnet, "ZhengPeng7/BiRefNet"
         raise RuntimeError(
             "No background removal model is loaded. "
-            "Check startup logs for RMBG-2.0 / BiRefNet errors."
+            "Check startup logs for a BiRefNet error."
         )
 
     def health(self) -> dict:
-        if self._rmbg_ok:
-            active_bg = "briaai/RMBG-2.0"
-        elif self._birefnet_ok:
-            active_bg = "ZhengPeng7/BiRefNet (fallback)"
-        else:
-            active_bg = "none"
+        active_bg = "ZhengPeng7/BiRefNet" if self._birefnet_ok else "none"
 
         return {
             "device": self._device,
             "device_info": self._device_info,
             "active_bg_model": active_bg,
-            "rmbg_loaded": self._rmbg_ok,
             "birefnet_loaded": self._birefnet_ok,
             "active_yolo_model": self.active_yolo,
             "active_yolo_role": self.active_yolo_role,
@@ -426,7 +401,10 @@ class PipelineProcessor:
     """Runs the full pipeline over raw bytes and reports what it found."""
 
     def process(
-        self, image: bytes, background: Optional[bytes]
+        self,
+        image: bytes,
+        background: Optional[bytes],
+        placement: Optional[processing.BackdropPlacement] = None,
     ) -> processing.ProcessOutcome:
         source = _open_image(image).convert("RGB")
 
@@ -476,10 +454,22 @@ class PipelineProcessor:
         # scene: after that, coordinates taken from the crop no longer apply.
         bg_removed = _apply_plate_treatment(bg_removed, plates, None)
 
-        background_image = _open_image(background) if background else None
         angle = classified.angle if classified else None
+        # Estimated between the plate treatment and the compositor, and neither
+        # side of that is free to move. The estimator wants the plates already
+        # obscured because that is the cutout the rest of the pipeline hands on,
+        # and a blurred plate sits well clear of the wheels it reads. It has to
+        # run before _place_on_backdrop for the same reason the plates do: the
+        # compositor rescales the cutout to stand on the scene's platform, so a
+        # tyre measured afterwards describes the studio's geometry rather than
+        # the photograph's, and the camera height it reports would be the
+        # backdrop's own.
+        estimated = _estimate_elevation(bg_removed, angle)
+
+        background_image = _open_image(background) if background else None
         final, _ = _place_on_backdrop(
-            bg_removed, background_image, source.size, coords, angle=angle
+            bg_removed, background_image, source.size, coords, angle=angle,
+            placement=placement, estimated=estimated,
         )
 
         buffer = io.BytesIO()
@@ -495,6 +485,9 @@ class PipelineProcessor:
             model_used=model_used,
             detected_angle=angle,
             angle_confidence=classified.angle_confidence if classified else None,
+            camera_elevation_deg=estimated.degrees if estimated else None,
+            elevation_confidence=estimated.confidence if estimated else None,
+            elevation_method=estimated.method if estimated else None,
             image_kind=classified.kind if classified else None,
             kind_confidence=classified.kind_confidence if classified else None,
         )
@@ -502,10 +495,10 @@ class PipelineProcessor:
 
 # ── Application Lifespan ───────────────────────────────────────────────────────
 # Developed by Vadim Rudoi — startup sequence:
-#   1. HuggingFace authentication (required for RMBG-2.0 and BiRefNet)
-#   2. Attempt RMBG-2.0 (primary) — failure is non-fatal, logged as WARNING
-#   3. If RMBG-2.0 failed, load BiRefNet (fallback) — failure IS fatal
-#   4. Detection models load lazily on first request
+#   1. HuggingFace authentication (raises YOLO26's download rate limit; not
+#      required by anything here, since BiRefNet needs no token)
+#   2. Load BiRefNet — failure IS fatal, there is no fallback background model
+#   3. Detection models load lazily on first request
 
 
 @asynccontextmanager
@@ -523,20 +516,13 @@ async def lifespan(app: FastAPI):
     elif HF_AUTH_TOKEN:
         logger.info("Using HuggingFace token from local hf auth login cache")
     else:
-        # Fixed by Vadim Rudoi — silent skip replaced with actionable warning.
-        logger.warning(
-            "HF_TOKEN is not set. RMBG-2.0 requires authentication — "
-            "BiRefNet will be used as the fallback. Set HF_TOKEN and accept "
-            "the BRIA license at https://huggingface.co/briaai/RMBG-2.0 "
-            "to enable the primary model."
+        logger.info(
+            "HF_TOKEN is not set — downloading YOLO26 anonymously, subject to "
+            "Hugging Face's unauthenticated rate limit. No model this pipeline "
+            "uses requires authentication."
         )
 
-    # Step 1 — try primary model
-    registry._load_rmbg()
-
-    # Step 2 — if primary failed, load fallback (fatal if also fails)
-    if not registry._rmbg_ok:
-        registry._load_birefnet()
+    registry._load_birefnet()
 
     # Hands the pipeline to the job orchestrator in api/processing.py. Until
     # this runs, POST /api/listings/{id}/process answers 503 rather than
@@ -660,9 +646,8 @@ def _resolve_yolo_model_path(model_ref: str) -> str:
 
 def _run_segmentation(model, image: Image.Image) -> Image.Image:
     """
-    Developed by Vadim Rudoi — shared inference path for both RMBG-2.0 and
-    BiRefNet. Both models use the same ImageNet normalisation and produce a
-    single-channel sigmoid output that is used directly as an alpha mask.
+    Developed by Vadim Rudoi — inference path for BiRefNet, which produces a
+    single-channel sigmoid output used directly as an alpha mask.
     """
     rgb = image.convert("RGB")
     tensor = _seg_transform(rgb).unsqueeze(0).to(registry.device)
@@ -686,26 +671,14 @@ def _run_segmentation(model, image: Image.Image) -> Image.Image:
 
 def _remove_background(image: Image.Image) -> tuple[Image.Image, str]:
     """
-    Developed by Vadim Rudoi — attempt RMBG-2.0 (primary). If it raises at
-    inference time (e.g. a runtime error after a successful load), fall back to
-    BiRefNet automatically and log a warning. Returns the result image and the
-    name of the model that was actually used.
+    Developed by Vadim Rudoi — run BiRefNet. Returns the result image and the
+    model identifier, kept as a tuple rather than a bare image for the same
+    reason it always was: every caller logs and records which model actually
+    produced a result, which mattered more when there were two candidates but
+    costs nothing to keep now that there is one.
     """
     model, name = registry.active_bg_model()
-
-    # Primary attempt
-    try:
-        return _run_segmentation(model, image), name
-    except Exception as exc:
-        # Only falls through to fallback if the primary was RMBG-2.0
-        if name == "briaai/RMBG-2.0":
-            logger.warning(
-                "RMBG-2.0 inference failed (%s) — retrying with BiRefNet fallback.", exc
-            )
-            if not registry._birefnet_ok:
-                registry._load_birefnet()
-            return _run_segmentation(registry._birefnet, image), "ZhengPeng7/BiRefNet"
-        raise
+    return _run_segmentation(model, image), name
 
 
 def _detect_vehicle(image_rgb: Image.Image, conf: float = 0.35) -> Optional[dict]:
@@ -996,18 +969,58 @@ def _classify(image: Image.Image) -> Optional[classification.Classification]:
         return None
 
 
+def _estimate_elevation(
+    cutout: Image.Image, angle: Optional[str]
+) -> Optional[elevation.ElevationEstimate]:
+    """
+    Where the camera was for this photograph, or None if it could not be worked
+    out at all.
+
+    elevation.estimate_elevation is written never to raise and never to return
+    None — each measurement rung runs inside its own guard and the last rung
+    assumes standing eye level rather than declining. The guard is repeated here
+    anyway because of where in the pipeline the call sits: by this point the
+    photograph has already survived classification, detection, a background
+    removal and plate treatment, which is every expensive thing the job does.
+    Losing all of that to an unforeseen error in a geometry helper would turn a
+    photograph that processed perfectly well into a failed job, and the estimate
+    is an annotation on the result rather than part of producing it.
+
+    Returning None leaves the three elevation columns null, which is what a job
+    that stopped before there was a cutout records too — so a reader still
+    cannot mistake either for the cascade's own 'assumed' answer. Logged per job
+    rather than once, unlike the classifier warning above: a classifier that
+    will not load fails identically every time and would bury the real output,
+    whereas this depends on the individual cutout and each occurrence names a
+    different photograph.
+    """
+    try:
+        return elevation.estimate_elevation(cutout, angle)
+    except Exception as exc:
+        logger.warning(
+            "Camera elevation could not be estimated, so this photograph is "
+            "processed without one: %s", exc, exc_info=True,
+        )
+        return None
+
+
 def _place_on_backdrop(
     cutout: Image.Image,
     background: Optional[Image.Image],
     original_size: tuple[int, int],
     coords: tuple[int, int, int, int],
     angle: Optional[str] = None,
+    placement: Optional[processing.BackdropPlacement] = None,
+    estimated: Optional[elevation.ElevationEstimate] = None,
 ) -> tuple[Image.Image, dict]:
     """
     Produce the finished image from a treated cutout.
 
     With a backdrop, hand off to the compositor: the vehicle is scaled to the
-    scene, stood on its ground line, given shadows and colour-matched.
+    scene, stood on its ground line, given shadows and colour-matched. When the
+    backdrop was measured at upload the vehicle stands on that dealer's own
+    floor rather than on an assumed line, and when the photograph also yielded a
+    usable camera elevation the scene is slid so the two horizons meet.
 
     Without one, fall back to the old behaviour — the cutout returns to its
     place on a transparent canvas the size of the original photograph. There is
@@ -1021,8 +1034,35 @@ def _place_on_backdrop(
         canvas.paste(patch, (x1, y1), patch.getchannel("A"))
         return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
 
+    placement = placement or processing.BackdropPlacement()
+    preset = compositing.dealer_preset(
+        horizon_y_ratio=placement.horizon_y_ratio,
+        floor_top_y_ratio=placement.floor_top_y_ratio,
+    )
+
+    # Only an estimate that actually read the photograph may slide the scene.
+    #
+    # Tested on the method rather than on the confidence, and the difference is
+    # not academic: the shot-angle prior returns 11.16 deg for every side-on
+    # photograph ever taken, at a confidence of 0.20 that clears any sensible
+    # floor. Aligning a dealer's room to it would move their backdrop by a fact
+    # about dealers in general while looking exactly like a measurement of their
+    # car. The confidence floor is kept as well, because a measured rung can
+    # still measure badly.
+    #
+    # Composing without it leaves the scene centred, which is what shipped, and
+    # the job still records the estimate either way — so a photograph that could
+    # not be aligned is visible as such rather than silently absent.
+    elevation_deg = None
+    if (
+        estimated is not None
+        and estimated.method in elevation.MEASURED_METHODS
+        and estimated.confidence >= elevation.MIN_USEFUL_CONFIDENCE
+    ):
+        elevation_deg = estimated.degrees
+
     return compositing.compose(
-        cutout, background, compositing.DEALER_BACKDROP, angle=angle
+        cutout, background, preset, angle=angle, elevation_deg=elevation_deg
     )
 
 
@@ -1068,8 +1108,7 @@ async def api_status() -> dict:
         "status": "online",
         "models": {
             "vehicle": f"YOLO ({registry.active_yolo})",
-            "background_primary": "briaai/RMBG-2.0",
-            "background_fallback": "ZhengPeng7/BiRefNet",
+            "background": "ZhengPeng7/BiRefNet",
             "plate": "nickmuchi/yolos-small-finetuned-license-plate-detection",
         },
         **registry.health(),
@@ -1079,8 +1118,8 @@ async def api_status() -> dict:
 @app.post("/remove-background", tags=["Processing"])
 async def api_remove_background(file: UploadFile = File(...)) -> dict:
     """
-    Remove image background using the active model (RMBG-2.0 or BiRefNet
-    fallback). No vehicle detection or plate treatment is performed.
+    Remove image background using BiRefNet. No vehicle detection or plate
+    treatment is performed.
     """
     content = await file.read()
     _validate_upload(file, content)
@@ -1114,7 +1153,7 @@ async def api_process_vehicle(
 
       Step 1  YOLO vehicle detection — abort early if no vehicle found.
       Step 2  Crop vehicle region with padding.
-      Step 3  Background removal via RMBG-2.0 (primary) → BiRefNet (fallback).
+      Step 3  Background removal via BiRefNet.
       Step 4  Composite background-removed crop back onto full-size canvas.
       Step 4  YOLOS licence-plate detection on the crop, filtered by geometry
               and by how much of each box lands on the vehicle cutout.
@@ -1162,7 +1201,7 @@ async def api_process_vehicle(
         vehicle["class"], vehicle["score"],
     )
 
-    # ── Step 3: Background removal (RMBG-2.0 → BiRefNet fallback) ──
+    # ── Step 3: Background removal (BiRefNet) ──
     crop, coords = _crop_with_padding(image, vehicle["box"])
     bg_removed, model_used = _remove_background(crop)
     logger.info("Background removed — model=%s", model_used)
@@ -1334,8 +1373,7 @@ else:
 
 if __name__ == "__main__":
     logger.info("Starting AutoPivot — http://%s:%d", HOST, PORT)
-    logger.info("Primary BG model  : briaai/RMBG-2.0")
-    logger.info("Fallback BG model : ZhengPeng7/BiRefNet")
+    logger.info("Background model  : ZhengPeng7/BiRefNet")
     logger.info("YOLO model        : %s", YOLO_MODEL_PATH)
     logger.info(
         "Device            : %s (%s)",

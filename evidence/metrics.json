@@ -1,0 +1,233 @@
+{
+  "schema": "autopivot.realism-report/1",
+  "label": "stage 0 baseline, synthetic input",
+  "generated_at": "2026-08-17T11:51:47+00:00",
+  "synthetic": true,
+  "inputs": {
+    "directory": "/Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/evidence/synthetic",
+    "count": 5,
+    "synthetic": true
+  },
+  "backdrop": {
+    "source": "/Users/vadim/Desktop/ITECH3209/itech3208-project-1-autopivot-agent/assets/backgrounds/studio-full.png",
+    "sha256": "baafda8af46de05ddeb77724e2dab8aef6a3a03beeed7e76398d4849301a5e27",
+    "preset": "studio_full",
+    "label": "AutoPivot Studio \u2014 Full Car",
+    "source_width": 1448,
+    "source_height": 1086,
+    "horizon_ratio": null
+  },
+  "totals": {
+    "photographs": 5,
+    "edge_fractional_px": 161810,
+    "edge_silhouette_px": 301770,
+    "edge_quality_ratio": 0.5362,
+    "size_spread": 1.0,
+    "mean_elevation_deg": 12.82,
+    "mean_elevation_confidence": 0.279,
+    "measured_elevations": 3,
+    "mean_horizon_offset_px": null
+  },
+  "elevation_methods": {
+    "roof_underside": 1,
+    "shot_angle": 2,
+    "wheel_ellipse": 2
+  },
+  "photographs": [
+    {
+      "name": "front-quarter-crouching.png",
+      "sha256": "be93f929285eff51341522af7f88378ee13000397b79d67e82a8a1359cc3e20f",
+      "synthetic": true,
+      "angle": "front_quarter",
+      "cutout_size": {
+        "width": 1871,
+        "height": 604
+      },
+      "elevation": {
+        "degrees": 16.41,
+        "confidence": 0.319,
+        "method": "roof_underside"
+      },
+      "edge_quality": {
+        "fractional_px": 34956,
+        "silhouette_px": 69288,
+        "ratio": 0.5045
+      },
+      "composite": {
+        "backdrop": "AutoPivot Studio \u2014 Full Car",
+        "backdrop_style": "studio_full",
+        "output_size": {
+          "width": 1280,
+          "height": 960
+        },
+        "ground_aligned": true,
+        "shadow_applied": true,
+        "colour_matched": true,
+        "shot_angle": "front_quarter",
+        "height_normalised": true,
+        "reflection_applied": true,
+        "vehicle_height_px": 265,
+        "contact_y_px": 725
+      },
+      "horizon_offset_px": null,
+      "nominal_elevation_deg": 4.61,
+      "render": "renders/front-quarter-crouching.png"
+    },
+    {
+      "name": "front-standing.png",
+      "sha256": "7fe70e037143894dedee60c6e95d38a078ba3b3f7e416d7aeafef87613051837",
+      "synthetic": true,
+      "angle": "front",
+      "cutout_size": {
+        "width": 897,
+        "height": 604
+      },
+      "elevation": {
+        "degrees": 11.16,
+        "confidence": 0.15,
+        "method": "shot_angle"
+      },
+      "edge_quality": {
+        "fractional_px": 19114,
+        "silhouette_px": 19448,
+        "ratio": 0.9828
+      },
+      "composite": {
+        "backdrop": "AutoPivot Studio \u2014 Full Car",
+        "backdrop_style": "studio_full",
+        "output_size": {
+          "width": 1280,
+          "height": 960
+        },
+        "ground_aligned": true,
+        "shadow_applied": true,
+        "colour_matched": true,
+        "shot_angle": "front",
+        "height_normalised": true,
+        "reflection_applied": true,
+        "vehicle_height_px": 265,
+        "contact_y_px": 725
+      },
+      "horizon_offset_px": null,
+      "nominal_elevation_deg": 11.16,
+      "render": "renders/front-standing.png"
+    },
+    {
+      "name": "side-crouching.png",
+      "sha256": "a4826a1af0631cec1c98913d4d12833564e8b98e3e1dfd3c4bb57add1f8cb87f",
+      "synthetic": true,
+      "angle": "side",
+      "cutout_size": {
+        "width": 1904,
+        "height": 604
+      },
+      "elevation": {
+        "degrees": 11.16,
+        "confidence": 0.2,
+        "method": "shot_angle"
+      },
+      "edge_quality": {
+        "fractional_px": 35964,
+        "silhouette_px": 71094,
+        "ratio": 0.5059
+      },
+      "composite": {
+        "backdrop": "AutoPivot Studio \u2014 Full Car",
+        "backdrop_style": "studio_full",
+        "output_size": {
+          "width": 1280,
+          "height": 960
+        },
+        "ground_aligned": true,
+        "shadow_applied": true,
+        "colour_matched": true,
+        "shot_angle": "side",
+        "height_normalised": true,
+        "reflection_applied": true,
+        "vehicle_height_px": 265,
+        "contact_y_px": 725
+      },
+      "horizon_offset_px": null,
+      "nominal_elevation_deg": 4.61,
+      "render": "renders/side-crouching.png"
+    },
+    {
+      "name": "side-raised.png",
+      "sha256": "038e907da153c601c10e75430467c4dfd868af2b6c0e572e0bcfe9835568407b",
+      "synthetic": true,
+      "angle": "side",
+      "cutout_size": {
+        "width": 1904,
+        "height": 604
+      },
+      "elevation": {
+        "degrees": 16.04,
+        "confidence": 0.458,
+        "method": "wheel_ellipse"
+      },
+      "edge_quality": {
+        "fractional_px": 35864,
+        "silhouette_px": 70914,
+        "ratio": 0.5057
+      },
+      "composite": {
+        "backdrop": "AutoPivot Studio \u2014 Full Car",
+        "backdrop_style": "studio_full",
+        "output_size": {
+          "width": 1280,
+          "height": 960
+        },
+        "ground_aligned": true,
+        "shadow_applied": true,
+        "colour_matched": true,
+        "shot_angle": "side",
+        "height_normalised": true,
+        "reflection_applied": true,
+        "vehicle_height_px": 265,
+        "contact_y_px": 725
+      },
+      "horizon_offset_px": null,
+      "nominal_elevation_deg": 17.43,
+      "render": "renders/side-raised.png"
+    },
+    {
+      "name": "side-standing.png",
+      "sha256": "9ffa042e89752ec871827a59bffbb4d86edb0328f6d0c426f45b898b760f2b21",
+      "synthetic": true,
+      "angle": "side",
+      "cutout_size": {
+        "width": 1904,
+        "height": 604
+      },
+      "elevation": {
+        "degrees": 9.35,
+        "confidence": 0.269,
+        "method": "wheel_ellipse"
+      },
+      "edge_quality": {
+        "fractional_px": 35912,
+        "silhouette_px": 71026,
+        "ratio": 0.5056
+      },
+      "composite": {
+        "backdrop": "AutoPivot Studio \u2014 Full Car",
+        "backdrop_style": "studio_full",
+        "output_size": {
+          "width": 1280,
+          "height": 960
+        },
+        "ground_aligned": true,
+        "shadow_applied": true,
+        "colour_matched": true,
+        "shot_angle": "side",
+        "height_normalised": true,
+        "reflection_applied": true,
+        "vehicle_height_px": 265,
+        "contact_y_px": 725
+      },
+      "horizon_offset_px": null,
+      "nominal_elevation_deg": 11.16,
+      "render": "renders/side-standing.png"
+    }
+  ]
+}

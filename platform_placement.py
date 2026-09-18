@@ -66,7 +66,7 @@ def fit(cutout, box, size):
         raise ValueError('Cannot place an empty vehicle cutout')
     visible_w,visible_h = xs.max()-xs.min()+1,ys.max()-ys.min()+1
     # Fill the stage while retaining roof clearance for taller front views.
-    scale = min((2*rx*.90)/visible_w, ch*.50/visible_h)
+    scale = min((2*rx*.90)/visible_w, ch*.35/visible_h)
     # Keep a small side inset, but use almost the complete measured ellipse for
     # the vertical drop. The previous .79 vertical inset stopped the car before
     # the visible top surface and made the farther/rear tyre appear to float.
