@@ -74,6 +74,7 @@ cat <<'EOF'
 
 Start the API:       source .venv/bin/activate && python autopivot_backend.py
 Start the website:   npm run dev --prefix frontend
+Start both:          bash run.sh
 Then open:           http://localhost:5173
 
 Sign in with the email and password printed above - the password is only

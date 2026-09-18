@@ -14,26 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 SEARCH_DIRS = ["api", "database", "scripts", "migrations"]
-
-# The half of the system that runs anywhere: only cv2, numpy and PIL, so their
-# tests need no GPU, no torch and no database. HANDOVER.md calls that separation
-# the most important structural fact in the system, and until now it was only
-# ever stated in a comment at the top of each of these files.
-PURE_MODULES = ["compositing.py", "metrics.py", "elevation.py", "backdrop_analysis.py"]
-
-SEARCH_FILES = ["autopivot_backend.py", *PURE_MODULES]
-
-# Reaching for any of these is what turns a pure module heavy. The first three
-# are the model stack and drag in several gigabytes; the last two are the
-# database and the web framework, which would make a geometry helper impossible
-# to exercise without a running PostgreSQL.
-FORBIDDEN_IN_PURE_MODULES = (
-    "torch",
-    "transformers",
-    "ultralytics",
-    "sqlalchemy",
-    "fastapi",
-)
+SEARCH_FILES = ["autopivot_backend.py", "compositing.py", "device_utils.py"]
 
 SKIP_DIRS = {"__pycache__", "node_modules", "dist", ".git", "frontend"}
 

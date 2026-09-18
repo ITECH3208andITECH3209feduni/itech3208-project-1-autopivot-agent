@@ -4,6 +4,10 @@
     python scripts/install_torch.py cu118      # force a specific CUDA build
     python scripts/install_torch.py cpu        # force the CPU build
 
+On macOS, the default command installs the normal PyPI wheels. Those wheels
+include the MPS support used by Apple Silicon; the special CUDA indexes are
+only used for NVIDIA machines.
+
 This exists because `pip install torch` does the wrong thing on Windows. PyPI
 serves the CPU-only build there, and it gives no sign of being the wrong one:
 it installs cleanly, imports cleanly, and simply reports that no GPU exists.
@@ -80,12 +84,13 @@ def detect_gpu_name() -> str | None:
     return name[0].strip() if name else None
 
 
-def choose_build() -> str:
-    """The wheel index to install from: a 'cuXXX' tag, or 'cpu'."""
+def choose_build() -> str | None:
+    """Return a CUDA/CPU index tag, or None for the normal macOS wheels."""
     if platform.system() == "Darwin":
-        # Apple Silicon uses the MPS backend, which ships in the ordinary wheel.
-        print("macOS detected — the standard build includes Metal (MPS) support.")
-        return "cpu"
+        # Apple Silicon uses the MPS backend, which ships in the normal PyPI
+        # wheel. Installing from the CPU-only index can remove that support.
+        print("macOS detected — installing the standard PyTorch wheel with MPS support.")
+        return None
 
     driver = detect_driver_version()
     if driver is None:
@@ -115,24 +120,24 @@ def choose_build() -> str:
     return "cpu"
 
 
+def install_command(build: str | None) -> list[str]:
+    """Build the pip command without importing torch in the setup process."""
+    command = [sys.executable, "-m", "pip", "install", "torch", "torchvision"]
+    if build is not None:
+        command.extend(["--index-url", INDEX.format(build)])
+    return command
+
+
 def main() -> int:
     build = sys.argv[1].strip().lower() if len(sys.argv) > 1 else choose_build()
 
-    index_url = INDEX.format(build)
-    print(f"\nInstalling torch and torchvision ({build})")
+    label = "standard PyPI/MPS" if build is None else build
+    index_url = "PyPI" if build is None else INDEX.format(build)
+    print(f"\nInstalling torch and torchvision ({label})")
     print(f"Index: {index_url}")
     print("This downloads about 2.5 GB and takes a few minutes.\n")
 
-    command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "torch",
-        "torchvision",
-        "--index-url",
-        index_url,
-    ]
+    command = install_command(build)
 
     result = subprocess.run(command)
     if result.returncode != 0:
@@ -159,18 +164,28 @@ def main() -> int:
             "print('cuda build', torch.version.cuda);"
             "print('gpu available', torch.cuda.is_available());"
             "print('gpu', torch.cuda.get_device_name(0)"
-            " if torch.cuda.is_available() else 'none')",
+            " if torch.cuda.is_available() else 'none');"
+            "mps = getattr(getattr(torch.backends, 'mps', None), 'is_available', lambda: False)();"
+            "print('mps available', mps)",
         ],
         capture_output=True,
         text=True,
     )
     print(check.stdout.strip() or check.stderr.strip())
 
-    if build != "cpu" and "gpu available True" not in check.stdout:
+    if build is not None and build != "cpu" and "gpu available True" not in check.stdout:
         print(
             "\nWarning: the CUDA build installed but no GPU is visible to it.\n"
             "Check that 'nvidia-smi' runs in a terminal, and update the NVIDIA "
             "driver if it does not.",
+            file=sys.stderr,
+        )
+
+    if build is None and "mps available True" not in check.stdout:
+        print(
+            "\nMPS is not available in this Python/PyTorch installation. "
+            "The application will use the CPU; check that this is an Apple "
+            "Silicon Mac with a supported macOS version.",
             file=sys.stderr,
         )
 

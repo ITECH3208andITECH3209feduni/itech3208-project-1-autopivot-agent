@@ -42,6 +42,8 @@ from typing import Mapping, Optional, Sequence
 from dotenv import load_dotenv
 from PIL import Image
 
+from device_utils import select_device
+
 logger = logging.getLogger("autopivot.classification")
 
 # This module is imported before api.config is, and it can also be run on its
@@ -357,7 +359,7 @@ def _available_device() -> str:
         import torch
     except ImportError:
         return "unavailable"
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    return select_device(torch)
 
 
 class _ClipRegistry:
@@ -403,7 +405,7 @@ class _ClipRegistry:
                 import torch
                 from transformers import CLIPModel, CLIPProcessor
 
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+                device = select_device(torch)
                 model = CLIPModel.from_pretrained(CLIP_MODEL).eval().to(device)
                 processor = CLIPProcessor.from_pretrained(CLIP_MODEL)
 

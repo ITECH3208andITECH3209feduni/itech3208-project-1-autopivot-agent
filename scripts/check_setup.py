@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api.env import BASE_DIR, load_environment  # noqa: E402
+from device_utils import device_info, probe_device, select_device  # noqa: E402
 
 load_environment()
 
@@ -134,69 +135,70 @@ def check_packages() -> bool:
             ml_present = False
             warn(
                 f"{package} is not installed — image processing will be unavailable.",
-                "Run setup.bat, or: pip install -r requirements-ml.txt",
+                "Run setup.bat (Windows) or bash setup.sh (macOS/Linux), or: "
+                "pip install -r requirements-ml.txt",
             )
     return ml_present
 
 
-# ── GPU ───────────────────────────────────────────────────────────────────────
+# ── Compute device ───────────────────────────────────────────────────────────
 def check_gpu() -> None:
-    section("GPU")
+    """Report CUDA, Apple MPS, or CPU without treating CPU as a failure."""
+    section("Compute device")
     try:
         import torch
     except ImportError:
-        warn("torch is not installed, so there is nothing to check.")
+        warn("torch is not installed, so image processing is unavailable.")
         return
 
     ok(f"torch {torch.__version__}")
+    selected = select_device(torch)
+    details = device_info(torch, selected)
 
-    build = getattr(torch.version, "cuda", None)
-    if build is None:
-        fail(
-            "This is the CPU-only build of torch — it cannot use your GPU, ever.",
-            "Reinstall from PyTorch's index:\n"
-            "         pip uninstall -y torch torchvision\n"
-            "         pip install torch torchvision "
-            "--index-url https://download.pytorch.org/whl/cu126",
-        )
-        return
+    if details["cuda_available"]:
+        build = details.get("cuda_build") or "unknown"
+        ok(f"NVIDIA CUDA detected (build {build})")
+        if selected == "cuda":
+            try:
+                name = torch.cuda.get_device_name(0)
+                total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                ok(f"CUDA device selected — {name} ({total:.1f} GB)")
+                if total < 6:
+                    warn(
+                        f"{total:.1f} GB of VRAM is tight for the segmentation models.",
+                        "If processing runs out of memory, lower MAX_FILE_MB in .env.",
+                    )
+            except Exception as exc:  # noqa: BLE001 - diagnostic only
+                warn(f"Could not read CUDA device details: {exc}")
+    else:
+        ok("No NVIDIA CUDA device detected")
 
-    ok(f"Built against CUDA {build}")
+    if details["mps_built"] or details["mps_available"]:
+        if details["mps_available"]:
+            ok("Apple Metal (MPS) detected")
+        else:
+            warn(
+                "PyTorch has MPS support, but this Mac cannot make an MPS device available.",
+                "The application will use the CPU.",
+            )
 
-    if not torch.cuda.is_available():
-        fail(
-            "torch has CUDA support but cannot see a GPU.",
-            "Usually an NVIDIA driver too old for this build. Check that "
-            "'nvidia-smi'\n         runs in a terminal, and update the driver "
-            "from nvidia.com if it does not.",
-        )
-        return
-
-    name = torch.cuda.get_device_name(0)
-    total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-    ok(f"GPU visible — {name} ({total:.1f} GB)")
-
-    if total < 6:
+    if selected in {"cuda", "mps"}:
+        if probe_device(torch, selected):
+            ok(f"Selected device: {selected} ({details['accelerator']})")
+        else:
+            warn(
+                f"The selected {selected} device failed its test computation.",
+                "The application will fall back to CPU. Set AUTOPIVOT_DEVICE=cpu "
+                "to make that explicit.",
+            )
+    elif selected == "cpu":
         warn(
-            f"{total:.1f} GB of VRAM is tight for the segmentation models.",
-            "If processing fails with an out-of-memory error, lower MAX_FILE_MB "
-            "in .env.",
+            "Selected device: CPU — image processing will work but may be slow.",
+            "Use an NVIDIA driver on Windows/Linux or a compatible Apple Silicon "
+            "Mac for acceleration.",
         )
-
-    # A GPU that is visible is not necessarily a GPU that works: a driver and
-    # runtime mismatch usually survives until the first real allocation.
-    try:
-        probe = torch.zeros(256, 256, device="cuda")
-        _ = (probe @ probe).sum().item()
-        del probe
-        torch.cuda.empty_cache()
-        ok("Ran a test computation on the GPU")
-    except Exception as exc:  # noqa: BLE001 — the message is the useful part
-        fail(
-            f"A test computation on the GPU failed: {exc}",
-            "The driver and this torch build disagree. Updating the NVIDIA "
-            "driver usually fixes it.",
-        )
+    else:
+        warn("No usable PyTorch device was found.")
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -208,7 +210,8 @@ def check_config() -> None:
     else:
         fail(
             ".env is missing.",
-            "Copy .env.example to .env, or run setup.bat which does it for you.",
+            "Copy .env.example to .env, or run setup.bat (Windows) / "
+            "bash setup.sh (macOS/Linux).",
         )
 
     secret = os.getenv("JWT_SECRET", "").strip()
@@ -368,7 +371,8 @@ def main() -> int:
     else:
         print("Everything checks out.")
 
-    print("\nStart the site with:  run.bat")
+    print("\nStart the backend with:  python autopivot_backend.py")
+    print("Start the frontend in another terminal with:  npm run dev --prefix frontend")
     return 0
 
 
