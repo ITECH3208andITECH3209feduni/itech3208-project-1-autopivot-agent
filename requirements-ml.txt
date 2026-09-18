@@ -5,8 +5,8 @@
 #     pip install -r requirements-ml.txt
 #     python autopivot_backend.py
 #
-# Several gigabytes, and an NVIDIA GPU to be useful. On a machine without one,
-# install requirements.txt and run the light API instead.
+# Several gigabytes. An NVIDIA CUDA GPU or Apple MPS GPU is useful, but the
+# complete pipeline also works on CPU when no accelerator is available.
 #
 # ── torch and torchvision are NOT in this file, on purpose ────────────────────
 #

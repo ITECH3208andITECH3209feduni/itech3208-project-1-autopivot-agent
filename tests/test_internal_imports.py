@@ -14,7 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 SEARCH_DIRS = ["api", "database", "scripts", "migrations"]
-SEARCH_FILES = ["autopivot_backend.py", "compositing.py"]
+SEARCH_FILES = ["autopivot_backend.py", "compositing.py", "device_utils.py"]
 
 SKIP_DIRS = {"__pycache__", "node_modules", "dist", ".git", "frontend"}
 

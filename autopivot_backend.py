@@ -39,6 +39,7 @@ import compositing
 from api import processing, url_import
 from api.app import create_app
 from api.config import BASE_DIR, HOST, PORT
+from device_utils import as_torch_device, device_info, select_device
 
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -213,7 +214,13 @@ class ModelRegistry:
         self.active_yolo: str = "none"
         self.active_yolo_role: str = "none"
 
-        self._device: str = "cuda" if torch.cuda.is_available() else "cpu"
+        self._device: str = select_device(torch)
+        self._device_info: dict = device_info(torch, self._device)
+        logger.info(
+            "Selected inference device: %s (%s)",
+            self._device,
+            self._device_info["accelerator"],
+        )
 
         # Contributed by Suraj Purella (Autopivot-refactored-pipeline) — one
         # lock per lazily-loaded model. Sync FastAPI endpoints run in a thread
@@ -366,6 +373,7 @@ class ModelRegistry:
                 self._plates = pipeline(
                     "object-detection",
                     model="nickmuchi/yolos-small-finetuned-license-plate-detection",
+                    device=as_torch_device(torch, self._device),
                 )
                 self._plates_ok = True
                 logger.info("YOLOS plate detector loaded")
@@ -396,6 +404,7 @@ class ModelRegistry:
 
         return {
             "device": self._device,
+            "device_info": self._device_info,
             "active_bg_model": active_bg,
             "rmbg_loaded": self._rmbg_ok,
             "birefnet_loaded": self._birefnet_ok,
@@ -709,7 +718,12 @@ def _detect_vehicle(image_rgb: Image.Image, conf: float = 0.35) -> Optional[dict
     """
     detector = registry.vehicle_detector
     try:
-        results = detector(image_rgb, conf=conf, verbose=False)
+        results = detector(
+            image_rgb,
+            conf=conf,
+            verbose=False,
+            device=registry.device,
+        )
     except Exception as exc:
         if registry.active_yolo_role != "primary" or not ENABLE_YOLO_FALLBACK:
             raise
@@ -718,7 +732,12 @@ def _detect_vehicle(image_rgb: Image.Image, conf: float = 0.35) -> Optional[dict
             registry.active_yolo, exc,
         )
         registry.load_vehicle_fallback()
-        results = registry.vehicle_detector(image_rgb, conf=conf, verbose=False)
+        results = registry.vehicle_detector(
+            image_rgb,
+            conf=conf,
+            verbose=False,
+            device=registry.device,
+        )
 
     candidates: list[dict] = []
 
@@ -1318,7 +1337,11 @@ if __name__ == "__main__":
     logger.info("Primary BG model  : briaai/RMBG-2.0")
     logger.info("Fallback BG model : ZhengPeng7/BiRefNet")
     logger.info("YOLO model        : %s", YOLO_MODEL_PATH)
-    logger.info("Device            : %s", "cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(
+        "Device            : %s (%s)",
+        registry.device,
+        registry.health()["device_info"]["accelerator"],
+    )
     uvicorn.run(
         "autopivot_backend:app",
         host=HOST,
