@@ -168,6 +168,15 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
                                 'it does.',
                             onTap: () => context.push(AppRoutes.demo),
                           ),
+                          const SizedBox(height: Space.sm),
+                          _SettingsActionRow(
+                            icon: Icons.info_outline,
+                            title: 'About',
+                            subtitle:
+                                'Version, build and the server this app is '
+                                'talking to — what support will ask for.',
+                            onTap: () => context.push(AppRoutes.about),
+                          ),
                         ],
                       )
                     : const SizedBox.shrink(),

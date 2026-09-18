@@ -24,6 +24,7 @@ import 'features/change_password/change_password_screen.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/listing_detail/listing_detail_screen.dart';
 import 'features/listings/listings_screen.dart';
+import 'features/settings/about_screen.dart';
 import 'features/settings/app_settings_screen.dart';
 import 'features/settings/demo_screen.dart';
 import 'features/settings/dealerships_screen.dart';
@@ -95,6 +96,13 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.demo,
         builder: (context, state) => const DemoScreen(),
+      ),
+      // Outside the shell alongside the two above: its own back button, and
+      // nothing about reporting a build number wants a camera action
+      // floating over it.
+      GoRoute(
+        path: AppRoutes.about,
+        builder: (context, state) => const AboutScreen(),
       ),
       // Same screen as AppRoutes.changePassword, different mode and a
       // different path — see that route constant's own doc comment for why
