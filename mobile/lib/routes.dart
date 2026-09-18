@@ -56,6 +56,12 @@ abstract final class AppRoutes {
   /// Settings row every role gets, same as [settings] itself.
   static const demo = '/settings/demo';
 
+  /// Version, build reference and the API endpoint this build talks to —
+  /// the screen support asks for first. Under [settings] for the same reason
+  /// [demo] is: every role has it, and it is a drill-down rather than a
+  /// destination anyone navigates to directly.
+  static const about = '/settings/about';
+
   /// A voluntary password change, reached from Settings — distinct from
   /// [changePassword] above, which the router forces on anyone whose
   /// account still carries a temporary one. Sharing that path would have
