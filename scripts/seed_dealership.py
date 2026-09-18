@@ -1,6 +1,6 @@
 """Provision a dealership and its first administrator.
 
-    alembic upgrade head
+    python -m scripts.init_db
     python -m scripts.seed_dealership
 
 Creates only what is needed to sign in: one dealership and one admin account.
@@ -30,17 +30,29 @@ from __future__ import annotations
 import os
 import secrets
 import sys
+from pathlib import Path
 
-from dotenv import load_dotenv
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, sessionmaker
+# Lets this run as `python scripts/seed_dealership.py` as well as
+# `python -m scripts.seed_dealership`. VS Code's Run button uses the first form
+# when you simply open the file and press play, and without this it fails on
+# "No module named 'api'" with nothing to suggest the module flag is the cure.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from api.security import hash_password
-from database.connection import get_engine
-from database.models import Dealership, User
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
-load_dotenv(override=False)
+# Loads .env from the project directory rather than the working directory, so
+# seeding from VS Code and seeding from a terminal reach the same database.
+# It runs before api.security is imported because that module reads JWT_SECRET
+# once, at import time, and would otherwise warn about a key that .env does set.
+from api.env import load_environment
+
+load_environment()
+
+from api.security import hash_password  # noqa: E402
+from database.connection import get_engine  # noqa: E402
+from database.models import Dealership, User  # noqa: E402
 
 
 def config() -> dict[str, str]:
@@ -126,8 +138,8 @@ def main() -> int:
     except SQLAlchemyError as exc:
         print(f"\nerror: provisioning failed — {exc}", file=sys.stderr)
         print(
-            "Check that DATABASE_URL points at a running database and that "
-            "'alembic upgrade head' has been applied.",
+            "The schema may not exist yet. Run 'python -m scripts.init_db' "
+            "first, and check DATABASE_URL if you have set one.",
             file=sys.stderr,
         )
         return 1

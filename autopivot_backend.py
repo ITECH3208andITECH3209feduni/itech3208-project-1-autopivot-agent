@@ -3,12 +3,20 @@
 
 from __future__ import annotations
 
-import base64
-import io
-import logging
-import logging.config
-import os
-import threading
+# First, before anything else. huggingface_hub and transformers read HF_HOME at
+# import time and cache it, so .env has to be in the environment by now or the
+# model cache location in it is ignored and several gigabytes download to the
+# default location instead. See api/env.py.
+from api.env import load_environment
+
+load_environment()
+
+import base64  # noqa: E402
+import io  # noqa: E402
+import logging  # noqa: E402
+import logging.config  # noqa: E402
+import os  # noqa: E402
+import threading  # noqa: E402
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional

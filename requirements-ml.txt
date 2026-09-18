@@ -1,31 +1,42 @@
 # AutoPivot — full dependencies, including the vision stack
-# Developed by Vadim Rudoi
 #
 # Installs the core requirements plus everything autopivot_backend.py needs:
 #
 #     pip install -r requirements-ml.txt
 #     python autopivot_backend.py
 #
-# Several gigabytes, and a CUDA GPU to be useful. On a machine without one,
+# Several gigabytes, and an NVIDIA GPU to be useful. On a machine without one,
 # install requirements.txt and run the light API instead.
+#
+# ── torch and torchvision are NOT in this file, on purpose ────────────────────
+#
+# On Windows, `pip install torch` fetches the CPU-only build from PyPI. It
+# installs without complaint, imports without complaint, and then reports
+# torch.cuda.is_available() == False forever — the GPU is simply never used,
+# and nothing in the error output points at the cause.
+#
+# The CUDA build lives on PyTorch's own index and has to be asked for by name:
+#
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#
+# setup.bat does this first, before installing this file. Because torch is
+# already present by then, the packages below that depend on it — ultralytics,
+# timm, kornia — resolve against the CUDA build rather than pulling the CPU one
+# in behind your back.
+#
+# If you are setting up by hand, install torch that way first.
 
 -r requirements.txt
 
 # ML / Vision
 #
-# torch and torchvision are deliberately NOT pinned and usually not installed
-# here at all: a GPU host image ships a build matched to its CUDA driver, and
-# replacing it with a generic wheel is how a working GPU stops being detected.
-#
 # transformers IS pinned, and has to be. It tracks torch's internal APIs
 # closely — releases from 4.46 onward import DTensor from torch.distributed
-# .tensor, which does not exist in the torch that most GPU images still ship.
+# .tensor, which does not exist in every torch build in circulation.
 # Unpinned, pip installs the newest release and the import fails at startup
 # with no obvious connection to the version you actually have.
 huggingface_hub
 transformers>=4.40,<4.46
-torch
-torchvision
 opencv-python-headless
 ultralytics
 numpy

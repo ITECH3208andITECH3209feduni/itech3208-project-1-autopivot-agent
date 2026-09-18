@@ -213,7 +213,20 @@ def run_job(session: Session, job: ProcessingJob) -> None:
     started = datetime.now(timezone.utc)
     job.status = "processing"
     job.started_at = started
-    session.flush()
+    # Committed, not just flushed, before the slow part starts. Two reasons.
+    #
+    # The Processing screen polls for this: a flush is invisible outside this
+    # transaction, so the job used to jump from "pending" straight to its final
+    # state and the screen never showed anything in progress.
+    #
+    # And on SQLite a flush takes a write lock that would then be held for the
+    # entire time the models are working — tens of seconds on a first run —
+    # during which any other write, such as the dealer uploading one more
+    # photograph, waits and can time out. Reads are unaffected either way
+    # (the connection runs in WAL mode), so it is only ever writers that queue.
+    #
+    # expire_on_commit=False on the session factory, so `job` stays usable.
+    session.commit()
 
     try:
         source = session.get(Image, job.input_image_id)
