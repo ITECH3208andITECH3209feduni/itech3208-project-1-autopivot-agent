@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { ApiError, api, type Dealership, type DealershipOnboardRequest, type DealershipProvisioned } from '../api/client'
 import DealershipTeamPanel from '../components/DealershipTeamPanel'
+import DealershipActivityPanel from '../components/DealershipActivityPanel'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 
 const EMPTY_FORM: DealershipOnboardRequest = {
@@ -17,6 +18,7 @@ export default function PlatformAdminPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [activityId, setActivityId] = useState<number | null>(null)
 
   async function load() {
     try { setDealerships(await api.platformDealerships()) }
@@ -79,14 +81,14 @@ export default function PlatformAdminPage() {
       <section>
         <h2 style={{ ...serif(26), color: C.ink }}>Dealerships</h2>
         <p style={{ fontFamily: SANS, fontSize: 13, color: C.inkSoft, margin: '-10px 0 16px' }}>
-          Click a dealership's name to see and manage its team.
+          Click a dealership's name to manage its team, or Activity to view usage and processing metadata.
         </p>
         {loading ? <p style={{ fontFamily: SANS }}>Loading…</p> : <div style={{ display: 'grid', gap: 10 }}>
           {dealerships.map(dealership => {
             const open = expandedId === dealership.id
             return (
               <div key={dealership.id}>
-                <article style={{ display: 'flex', justifyContent: 'space-between', gap: 20, padding: 18, background: C.white, border: `1px solid ${C.line}`, borderBottom: open ? 0 : undefined }}>
+                <article style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 20, padding: 18, background: C.white, border: `1px solid ${C.line}`, borderBottom: open ? 0 : undefined }}>
                   <div>
                     <button
                       type="button"
@@ -102,8 +104,10 @@ export default function PlatformAdminPage() {
                     <div style={{ fontFamily: SANS, fontSize: 13, color: C.inkSoft, marginTop: 4 }}>{[dealership.location, dealership.contact_name, dealership.contact_email, dealership.contact_phone].filter(Boolean).join(' · ')}</div>
                   </div>
                   <div style={{ textAlign: 'right', fontFamily: MONO, fontSize: 12, color: C.inkSoft }}><div>{dealership.status}</div><div>{dealership.user_count} user{dealership.user_count === 1 ? '' : 's'}</div></div>
+                  <button type="button" aria-expanded={activityId === dealership.id} aria-label={`Activity for ${dealership.name}`} onClick={() => setActivityId(activityId === dealership.id ? null : dealership.id)}>Activity</button>
                 </article>
                 {open && <DealershipTeamPanel dealershipId={dealership.id} dealershipName={dealership.name} />}
+                {activityId === dealership.id && <DealershipActivityPanel key={dealership.id} dealershipId={dealership.id} />}
               </div>
             )
           })}

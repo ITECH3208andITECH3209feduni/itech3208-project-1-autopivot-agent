@@ -5,6 +5,34 @@
 
 const TOKEN_KEY = 'autopivot.token'
 
+export type DealershipActivity = {
+  dealership_id: number
+  active_users: number
+  vehicle_count: number
+  original_image_count: number
+  job_count: number
+  jobs_by_status: Record<string, number>
+  latest_job_at: string | null
+}
+
+export type PlatformJobMetadata = {
+  id: number
+  vehicle_listing_id: number
+  processing_type: string
+  status: string
+  review_state: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type PlatformJobs = {
+  items: PlatformJobMetadata[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export type Dealership = {
   id: number
   name: string
@@ -239,6 +267,15 @@ export const api = {
 
   platformDealerships: () =>
     request<Dealership[]>('/api/platform/dealerships'),
+
+  platformActivity: (id: number) =>
+    request<DealershipActivity>(`/api/platform/dealerships/${id}/activity`),
+
+  platformJobs: (id: number, offset = 0, status = '') => {
+    const query = new URLSearchParams({ limit: '20', offset: String(offset) })
+    if (status) query.set('status', status)
+    return request<PlatformJobs>(`/api/platform/dealerships/${id}/jobs?${query}`)
+  },
 
   onboardDealership: (payload: DealershipOnboardRequest) =>
     request<DealershipProvisioned>('/api/platform/dealerships', {
