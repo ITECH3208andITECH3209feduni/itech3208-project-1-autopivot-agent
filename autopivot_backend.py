@@ -11,7 +11,6 @@ from api.env import load_environment
 
 load_environment()
 
-import base64  # noqa: E402
 import io  # noqa: E402
 import logging  # noqa: E402
 import logging.config  # noqa: E402
@@ -25,11 +24,11 @@ import cv2
 import numpy as np
 import torch
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile, Body
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from huggingface_hub import get_token, hf_hub_download, login
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
 from ultralytics import YOLO
@@ -37,7 +36,7 @@ from ultralytics import YOLO
 import classification
 import compositing
 import elevation
-from api import processing, url_import
+from api import processing
 from api.app import create_app
 from api.config import BASE_DIR, HOST, PORT
 from device_utils import as_torch_device, device_info, select_device
@@ -51,8 +50,6 @@ from device_utils import as_torch_device, device_info, select_device
 
 HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
 HF_AUTH_TOKEN: str  = HF_TOKEN or (get_token() or "")
-MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 20))
-MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 
 # Fixed by Vadim Rudoi — YOLO model path is now configurable via environment
 # variable instead of being hardcoded to a non-existent filename.
@@ -130,9 +127,6 @@ _NOT_A_VEHICLE_PHOTO: dict[str, str] = {
     ),
 }
 
-ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset(
-    {"image/jpeg", "image/png", "image/webp"}
-)
 VEHICLE_CLASSES: frozenset[str] = frozenset(
     {"car", "truck", "bus", "motorcycle"}
 )
@@ -405,6 +399,8 @@ class PipelineProcessor:
         image: bytes,
         background: Optional[bytes],
         placement: Optional[processing.BackdropPlacement] = None,
+        *,
+        stored_kind: Optional[str] = None,
     ) -> processing.ProcessOutcome:
         source = _open_image(image).convert("RGB")
 
@@ -415,8 +411,22 @@ class PipelineProcessor:
         # ends up standing on the turntable. Both were in the first real URL
         # import. Judged on the whole photograph rather than a crop, because
         # what makes a banner a banner is the text around the car.
+        #
+        # Except that a photograph already on record as an exterior is not held
+        # back again, whatever the classifier makes of it now. The record is an
+        # earlier verdict or a dealer's "Include anyway", and the include exists
+        # because the classifier got the photograph wrong: gating on a fresh
+        # verdict excluded it again every time it was processed. It is still
+        # classified — the classifier also reports the shot angle, which the
+        # compositor places and shadows the vehicle by. Any other kind on record
+        # is judged afresh, so an improved classifier can include what an older
+        # one left out.
         classified = _classify(source)
-        if classified is not None and not classification.is_processable(classified):
+        if (
+            classified is not None
+            and stored_kind != processing.EXTERIOR
+            and not classification.is_processable(classified)
+        ):
             return processing.ProcessOutcome(
                 image_png=None,
                 vehicle_detected=False,
@@ -499,6 +509,8 @@ class PipelineProcessor:
 #      required by anything here, since BiRefNet needs no token)
 #   2. Load BiRefNet — failure IS fatal, there is no fallback background model
 #   3. Detection models load lazily on first request
+#   4. Work the last server left unfinished is settled, and its queue resumed
+#      in the background
 
 
 @asynccontextmanager
@@ -528,6 +540,14 @@ async def lifespan(app: FastAPI):
     # this runs, POST /api/listings/{id}/process answers 503 rather than
     # queueing work no model can execute.
     processing.set_processor(PipelineProcessor())
+
+    # Before the first request is served, so nothing the last server left
+    # unfinished goes on reading as in progress: the jobs it had in the models
+    # are closed as interrupted, and the queue it left is resumed in the
+    # background instead of waiting for someone to press Process on each
+    # vehicle. Only after the processor is registered, which is what the runs
+    # it starts need.
+    processing.recover_interrupted_jobs()
 
     logger.info(
         "AutoPivot ready — device=%s  active_bg_model=%s  yolo=%s",
@@ -565,30 +585,18 @@ app = create_app(
 # Any payload was passed straight to PIL and produced opaque 500 errors.
 
 
-def _validate_upload(file: UploadFile, content: bytes) -> None:
-    """Raise HTTP 413 / 415 for oversized or unsupported uploads."""
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail=(
-                f"Unsupported media type '{file.content_type}'. "
-                "Accepted formats: JPEG, PNG, WEBP."
-            ),
-        )
-    if len(content) > MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size exceeds the {MAX_FILE_MB} MB limit.",
-        )
-
-
 def _open_image(content: bytes) -> Image.Image:
     """
-    Safely decode image bytes.
+    Safely decode image bytes, turned the way the camera meant them to be seen.
 
     PIL's Image.verify() is destructive (it closes the internal stream), so we
     open the buffer twice — once to verify integrity, once to return a usable
-    object. Corrupt or non-image payloads surface as HTTP 400.
+    object. Corrupt or non-image payloads raise HTTPException(400), which fails
+    the job with that reason.
+
+    Both the photograph and the backdrop are decoded here, and every model and
+    the compositor work on what this returns, which is why the orientation is
+    applied at this point rather than anywhere later: see _upright.
     """
     try:
         probe = Image.open(io.BytesIO(content))
@@ -597,22 +605,34 @@ def _open_image(content: bytes) -> Image.Image:
         raise HTTPException(status_code=400, detail="Cannot identify image file.")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid image data: {exc}")
-    return Image.open(io.BytesIO(content))
+    return _upright(Image.open(io.BytesIO(content)))
 
 
-async def _read_optional_image(upload: Optional[UploadFile]) -> Optional[Image.Image]:
-    """Read and decode an optional UploadFile; return None if not provided."""
-    if upload is None or not upload.filename:
-        return None
-    content = await upload.read()
-    _validate_upload(upload, content)
-    return _open_image(content)
+def _upright(image: Image.Image) -> Image.Image:
+    """
+    The picture as the dealer sees it, with its EXIF orientation applied.
 
+    A phone stores its pixels the way the sensor saw them and records in EXIF
+    which way up they go; the Flutter capture screen writes 1280x720 with
+    Orientation 6 on every portrait shot. Browsers and Flutter honour the tag,
+    so the dealer uploads an upright car and expects one back, while the
+    classifier, the detector, BiRefNet and the compositor were handed the raw
+    pixels and saw it on its side. Only this decoded copy is turned: the stored
+    upload is never rewritten, and the rest of its EXIF is kept.
 
-def _encode_png(image: Image.Image) -> str:
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
+    An orientation that cannot be applied — a malformed EXIF block — leaves the
+    pixels as stored, which is how every photograph was processed before this,
+    rather than failing the job over its metadata.
+    """
+    image.load()  # a file that will not decode is the caller's failure, not this one's
+    try:
+        return ImageOps.exif_transpose(image)
+    except Exception as exc:
+        logger.warning(
+            "EXIF orientation could not be applied, so this image is processed "
+            "as stored: %s", exc,
+        )
+        return image
 
 
 def _resolve_yolo_model_path(model_ref: str) -> str:
@@ -765,9 +785,34 @@ def _crop_with_padding(
 
 
 def _detect_plates(image_rgba: Image.Image) -> list[dict]:
-    """Run YOLOS plate detector and return raw detection dicts above threshold."""
-    detections = registry.plate_detector(image_rgba.convert("RGB"))
+    """
+    Run YOLOS plate detector and return raw detection dicts above threshold.
+
+    The threshold goes to the pipeline itself. transformers' object-detection
+    pipeline discards everything scoring 0.5 or less unless the call names a
+    threshold, so filtering only its output made any PLATE_CONFIDENCE below
+    0.5 a dead setting: a plate scored 0.42 never came back to be kept, and
+    stayed readable. The filter after it stays, so the setting holds even for
+    a detector that applies no threshold of its own.
+    """
+    detections = registry.plate_detector(
+        image_rgba.convert("RGB"), threshold=PLATE_CONFIDENCE
+    )
     return [d for d in detections if d["score"] > PLATE_CONFIDENCE]
+
+
+def _clamp_box(
+    box: tuple[int, int, int, int], size: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    """The part of an (x1, y1, x2, y2) box that lies inside an image of `size`."""
+    width, height = size
+    x1, y1, x2, y2 = box
+    return (
+        min(max(x1, 0), width),
+        min(max(y1, 0), height),
+        min(max(x2, 0), width),
+        min(max(y2, 0), height),
+    )
 
 
 def _plate_coverage(cutout: Image.Image, box: tuple[int, int, int, int]) -> float:
@@ -778,8 +823,14 @@ def _plate_coverage(cutout: Image.Image, box: tuple[int, int, int, int]) -> floa
     in the background — a sign, a wheelie bin, a reflection. After background
     removal that area is transparent, which is a far more reliable signal than
     the detector's own confidence.
+
+    Measured on the part of the box inside the image. YOLOS does not clamp its
+    boxes, so a plate the frame cuts through arrives with, say, xmin=-4, and
+    NumPy reads a negative start as counting from the far end: the slice came
+    out empty, coverage 0, and a real plate was dropped unobscured. What lies
+    beyond the edge is not in the photograph, so it counts neither way.
     """
-    x1, y1, x2, y2 = box
+    x1, y1, x2, y2 = _clamp_box(box, cutout.size)
     alpha = np.array(cutout.convert("RGBA").getchannel("A"), dtype=np.uint8)
     region = alpha[y1:y2, x1:x2]
     if region.size == 0:
@@ -836,6 +887,16 @@ def _filter_plates(
                     100 * coverage, 100 * PLATE_MIN_COVERAGE, plate["score"],
                 )
                 continue
+
+            # Handed on as the part inside the photograph, which is the part
+            # there is to obscure. Shape and size above are still judged on the
+            # detector's own box: a plate the frame cuts through is no less a
+            # plate, though what is left of it in the frame may not look like one.
+            vx1, vy1, vx2, vy2 = _clamp_box((x1, y1, x2, y2), cutout.size)
+            plate = {
+                **plate,
+                "box": {"xmin": vx1, "ymin": vy1, "xmax": vx2, "ymax": vy2},
+            }
 
         kept.append(plate)
 
@@ -1018,9 +1079,11 @@ def _place_on_backdrop(
 
     With a backdrop, hand off to the compositor: the vehicle is scaled to the
     scene, stood on its ground line, given shadows and colour-matched. When the
-    backdrop was measured at upload the vehicle stands on that dealer's own
-    floor rather than on an assumed line, and when the photograph also yielded a
-    usable camera elevation the scene is slid so the two horizons meet.
+    backdrop's floor was measured at upload, or set by hand, the vehicle stands
+    on that dealer's own floor rather than on an assumed line, and when its
+    horizon was too and the photograph yielded a usable camera elevation, the
+    scene is slid so the two horizons meet. What the analyser only assumed is
+    left out, as if nobody had measured the backdrop at all.
 
     Without one, fall back to the old behaviour — the cutout returns to its
     place on a transparent canvas the size of the original photograph. There is
@@ -1031,13 +1094,24 @@ def _place_on_backdrop(
         canvas = Image.new("RGBA", original_size, (0, 0, 0, 0))
         x1, y1, x2, y2 = coords
         patch = cutout.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
-        canvas.paste(patch, (x1, y1), patch.getchannel("A"))
+        # Composited, not pasted through its own alpha: a masked paste blends
+        # the alpha band too, so every soft edge came out with colour times
+        # a/255 and alpha a²/255 — (255, 255, 255, 128) as (128, 128, 128, 64).
+        # Over a transparent canvas this is an exact copy wherever alpha > 0,
+        # and leaves alpha-0 pixels empty rather than carrying the removed
+        # background's colour through, as a paste without the mask would.
+        canvas.alpha_composite(patch, (x1, y1))
         return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
 
+    # Only what was measured, or corrected by hand. An unreadable backdrop is
+    # stored with the analyser's fallback horizon and floor; handed over as
+    # they stand, those moved the vehicle off the line that shipped and slid
+    # the scene toward a horizon nobody found. Left out, the backdrop composes
+    # exactly as one nobody measured. BackdropPlacement has the rule.
     placement = placement or processing.BackdropPlacement()
     preset = compositing.dealer_preset(
-        horizon_y_ratio=placement.horizon_y_ratio,
-        floor_top_y_ratio=placement.floor_top_y_ratio,
+        horizon_y_ratio=placement.measured_horizon_y_ratio,
+        floor_top_y_ratio=placement.measured_floor_top_y_ratio,
     )
 
     # Only an estimate that actually read the photograph may slide the scene.
@@ -1069,11 +1143,21 @@ def _place_on_backdrop(
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 
-# The React client is the only interface. The original single-page demo — its
-# index.html, style.css and app.js, plus the routes that served them — has been
-# removed: the product is a platform with accounts, listings and a backdrop
-# library, and keeping a second, unauthenticated interface alongside it meant two
-# front doors to maintain and one of them bypassing every access control.
+# The React client is the only interface, and the listings API behind it is the
+# only way into the pipeline. The original single-page demo went in two stages.
+# Its page — index.html, style.css and app.js, and the routes that served them —
+# was removed first, but the four endpoints it called stayed behind: POST
+# /remove-background, /process-vehicle, /detect-and-hide and
+# /extract-images-from-url. None of them authenticated, so anyone holding the URL
+# could run the GPU pipeline, and the last would fetch whatever page it was
+# handed. No client used them, and they are gone now as well.
+#
+# Processing starts at POST /api/listings/{id}/process, which checks who is
+# asking and which dealership the photographs belong to, and runs as a
+# background job rather than on the event loop. Importing from a listing URL is
+# POST /api/listings/{id}/images/from-url, which stores what it fetches against
+# the dealer's own listing. tests/test_no_anonymous_processing.py fails if a
+# route anyone can call without signing in comes back.
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 SERVE_REACT_CLIENT = FRONTEND_DIST.is_dir()
 
@@ -1115,225 +1199,6 @@ async def api_status() -> dict:
     }
 
 
-@app.post("/remove-background", tags=["Processing"])
-async def api_remove_background(file: UploadFile = File(...)) -> dict:
-    """
-    Remove image background using BiRefNet. No vehicle detection or plate
-    treatment is performed.
-    """
-    content = await file.read()
-    _validate_upload(file, content)
-    image = _open_image(content)
-
-    # Fixed by Vadim Rudoi — filename sanitised via Path.name to strip any
-    # path-traversal characters from untrusted client input before logging.
-    logger.info(
-        "Background removal — file=%s  size=%d B",
-        Path(file.filename).name, len(content),
-    )
-
-    result, model_used = _remove_background(image)
-    return {
-        "success": True,
-        "processed_image": _encode_png(result),
-        "bg_model_used": model_used,
-        "background_removed": True,
-        "transparency_preserved": True,
-    }
-
-
-@app.post("/process-vehicle", tags=["Processing"])
-async def api_process_vehicle(
-    file: UploadFile = File(...),
-    background: Optional[UploadFile] = File(None),
-    plate_overlay: Optional[UploadFile] = File(None),
-) -> dict:
-    """
-    Full processing pipeline — Developed by Vadim Rudoi:
-
-      Step 1  YOLO vehicle detection — abort early if no vehicle found.
-      Step 2  Crop vehicle region with padding.
-      Step 3  Background removal via BiRefNet.
-      Step 4  Composite background-removed crop back onto full-size canvas.
-      Step 4  YOLOS licence-plate detection on the crop, filtered by geometry
-              and by how much of each box lands on the vehicle cutout.
-      Step 5  Plate treatment via OpenCV:
-                • plate_overlay provided  → resize and alpha-composite onto plate
-                • no plate_overlay        → obscure per PLATE_TREATMENT
-      Step 6  Composite the treated crop back onto a full-size canvas.
-      Step 7  Background compositing:
-                • background provided  → composite vehicle onto custom background
-                • no background        → return transparent PNG
-
-    Accepts three multipart fields:
-      file           (required) — vehicle photograph
-      background     (optional) — custom background image
-      plate_overlay  (optional) — image to apply over detected licence plates
-    """
-    # ── Read uploads ──
-    content = await file.read()
-    _validate_upload(file, content)
-    image = _open_image(content).convert("RGB")
-
-    bg_image      = await _read_optional_image(background)
-    plate_img     = await _read_optional_image(plate_overlay)
-
-    logger.info(
-        "Full pipeline — file=%s  size=%d B  background=%s  plate_overlay=%s",
-        Path(file.filename).name,
-        len(content),
-        "yes" if bg_image else "no",
-        "yes" if plate_img else "no",
-    )
-
-    # ── Step 1 & 2: Vehicle detection ──
-    vehicle = _detect_vehicle(image)
-    if vehicle is None:
-        logger.info("No vehicle detected — pipeline aborted")
-        return {
-            "success": False,
-            "vehicle_detected": False,
-            "message": "No vehicle detected. Please upload a clear vehicle image.",
-        }
-
-    logger.info(
-        "Vehicle detected — class=%s  confidence=%.2f",
-        vehicle["class"], vehicle["score"],
-    )
-
-    # ── Step 3: Background removal (BiRefNet) ──
-    crop, coords = _crop_with_padding(image, vehicle["box"])
-    bg_removed, model_used = _remove_background(crop)
-    logger.info("Background removed — model=%s", model_used)
-
-    # ── Step 4: Licence plate detection ──
-    # Run on the cropped original, not the finished composite: the plate is a
-    # much larger share of the input, and the pixels are photographic rather
-    # than a cutout on transparency.
-    plates = _detect_plates(crop)
-    plates = _filter_plates(plates, _box_area(vehicle["box"]), bg_removed)
-    logger.info("Plates detected — count=%d", len(plates))
-
-    # ── Step 5: Plate treatment ──
-    # Before compositing: the cutout is rescaled to fit the scene, after which
-    # coordinates measured on the crop no longer apply.
-    bg_removed = _apply_plate_treatment(bg_removed, plates, plate_img)
-
-    # ── Steps 6 & 7: Placement ──
-    # With a backdrop this scales the vehicle to the scene, stands it on the
-    # ground line, lays down shadows and matches its colour to the light —
-    # compositing contributed by Suraj Purella (Auto_pivot_Scaling). Without
-    # one, the cutout returns to its place on a transparent canvas the size of
-    # the original photograph.
-    final, composite_meta = _place_on_backdrop(bg_removed, bg_image, image.size, coords)
-
-    logger.info(
-        "Pipeline complete — plates_treated=%d  bg_applied=%s",
-        len(plates),
-        "custom" if bg_image else "transparent",
-    )
-
-    return {
-        "success": True,
-        "processed_image": _encode_png(final),
-        "vehicle_detected": True,
-        "vehicle": {
-            "class": vehicle["class"],
-            "score": round(vehicle["score"], 4),
-            "box": vehicle["box"],
-        },
-        "bg_model_used": model_used,
-        "plates_detected": len(plates),
-        "plate_treatment": "overlay" if plate_img else PLATE_TREATMENT,
-        "background_applied": "custom" if bg_image else "transparent",
-        "background_removed": True,
-        "transparency_preserved": bg_image is None,
-        "detections": [
-            {
-                "score": round(float(p["score"]), 4),
-                "box": {k: int(v) for k, v in p["box"].items()},
-            }
-            for p in plates
-        ],
-        **composite_meta,
-    }
-
-
-@app.post("/detect-and-hide", tags=["Processing"])
-async def api_detect_and_hide(
-    file: UploadFile = File(...),
-    plate_overlay: Optional[UploadFile] = File(None),
-) -> dict:
-    """
-    Detect and treat licence plates only — no background removal or vehicle
-    detection. Accepts an optional plate_overlay image (same OpenCV compositing
-    as the full pipeline).
-    """
-    content = await file.read()
-    _validate_upload(file, content)
-    image = _open_image(content).convert("RGBA")
-    plate_img = await _read_optional_image(plate_overlay)
-
-    logger.info(
-        "Plate detection — file=%s  size=%d B  overlay=%s",
-        Path(file.filename).name, len(content),
-        "yes" if plate_img else "no",
-    )
-
-    # No vehicle box and no cutout here, so only the shape check applies —
-    # passing 0.0 skips the relative-area test rather than rejecting everything.
-    plates = _filter_plates(_detect_plates(image), 0.0, None)
-    if not plates:
-        return {
-            "success": False,
-            "plates_detected": 0,
-            "message": "No licence plates detected.",
-        }
-
-    result = _apply_plate_treatment(image, plates, plate_img)
-    logger.info("Plates treated — count=%d  method=%s",
-                len(plates), "overlay" if plate_img else PLATE_TREATMENT)
-
-    return {
-        "success": True,
-        "plates_detected": len(plates),
-        "processed_image": _encode_png(result),
-        "plate_treatment": "overlay" if plate_img else PLATE_TREATMENT,
-        "transparency_preserved": True,
-        "detections": [
-            {
-                "score": round(float(p["score"]), 4),
-                "box": {k: int(v) for k, v in p["box"].items()},
-            }
-            for p in plates
-        ],
-    }
-
-@app.post("/extract-images-from-url", tags=["Extract Images from URL"])
-async def api_extract_images_from_url(url: str = Body(..., embed=True)) -> dict:
-    """
-    Extract images from a URL. Accepts JSON body: {"url": "https://..."}
-
-    The fetching and parsing are Akhanda Bhandari's and now live in
-    api/url_import.py, shared with the authenticated listing importer at
-    POST /api/listings/{id}/images/from-url. This endpoint returns base64 to
-    the caller and stores nothing.
-    """
-    try:
-        result = await url_import.fetch_images(url)
-    except url_import.UrlImportError as exc:
-        return {"success": False, "message": str(exc)}
-    except Exception as exc:  # a clean message beats a raw 500
-        logger.exception("URL import failed unexpectedly")
-        return {"success": False, "message": f"Unexpected error while fetching images: {exc}"}
-
-    return {
-        "success": True,
-        "images": [image.as_payload() for image in result.images],
-        "note": result.note,
-    }
-
-
 # ── React client (single-page fallback) ────────────────────────────────────────
 # Registered last on purpose. Starlette matches routes in registration order, so
 # every API route above wins; this only sees what nothing else claimed.
@@ -1364,8 +1229,10 @@ if SERVE_REACT_CLIENT:
     logger.info("Serving the React client from %s", FRONTEND_DIST)
 else:
     logger.info(
-        "frontend/dist not found — serving the original demo page at /. "
-        "Run 'npm run build --prefix frontend' to serve the React client."
+        "frontend/dist not found — the React client has not been built, so only "
+        "the API is served and / answers 503 with the build command. Run "
+        "'npm ci --prefix frontend && npm run build --prefix frontend' and "
+        "restart to serve the client."
     )
 
 

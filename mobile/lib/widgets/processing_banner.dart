@@ -65,12 +65,17 @@ class _ProcessingBannerState extends ConsumerState<ProcessingBanner> {
   Future<void> _poll() async {
     final api = ref.read(apiClientProvider);
     try {
-      final counted = await Future.wait([
-        api.listings(processingStatus: 'pending', limit: 50),
-        api.listings(processingStatus: 'processing', limit: 50),
-      ]);
+      // 'processing' only. A listing still 'pending' has never had anything
+      // queued (the server's word for no jobs at all, not jobs waiting), so
+      // counting it announced vehicles "still processing" that nothing was
+      // working on — for good, on a server without the vision stack, which
+      // refuses to queue anything.
+      final processing = await api.listings(
+        processingStatus: 'processing',
+        limit: 50,
+      );
       if (!mounted) return;
-      setState(() => _count = counted[0].length + counted[1].length);
+      setState(() => _count = processing.length);
     } on ApiException {
       // A failed background check is not worth surfacing — the banner
       // simply keeps whatever it last knew, or stays absent if it has never
@@ -93,10 +98,15 @@ class _ProcessingBannerState extends ConsumerState<ProcessingBanner> {
           // The full vehicle list, not the dashboard's own abbreviated
           // "recent" gallery — this banner exists to let someone track down
           // exactly what is still processing, which the unfiltered list
-          // shows in full. go() rather than push() so tapping this twice
-          // from two different screens cannot stack the same destination on
-          // top of itself.
-          onTap: () => context.go(AppRoutes.vehicles),
+          // shows in full. Pushed over wherever this was tapped, not go()'s
+          // replacing everything beneath it: the list is nobody's home
+          // screen, and with the Overview gone from under it there was no
+          // way back. Not pushed again over itself, though.
+          onTap: () {
+            final router = GoRouter.of(context);
+            if (router.state.uri.path == AppRoutes.vehicles) return;
+            router.push(AppRoutes.vehicles);
+          },
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(

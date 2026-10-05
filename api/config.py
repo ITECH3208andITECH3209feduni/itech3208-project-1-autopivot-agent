@@ -1,8 +1,8 @@
 """Settings shared by the light API and the full ML application.
 
-Only values both halves need live here. Model paths, upload limits and the
-HuggingFace token stay in autopivot_backend.py, since nothing in the light API
-has any use for them.
+Only values both halves need live here. Model paths and the HuggingFace token
+stay in autopivot_backend.py, since nothing in the light API has any use for
+them.
 """
 
 from __future__ import annotations

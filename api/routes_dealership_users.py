@@ -106,6 +106,14 @@ def add_user(payload: DealershipUserCreate, request: Request,
 def reset_password(user_id: int, request: Request,
                    administrator: DealershipAdministrator, session: DbSession):
     user = _target(session, administrator, request, user_id, "dealership_user_reset")
+    if user.id == administrator.id:
+        # A reset revokes its target's sessions and forces a new password.
+        # Done to yourself, it ends the session you are using and leaves a
+        # one-time password, shown once, as the only way back in.
+        raise HTTPException(
+            status_code=409,
+            detail="You cannot reset your own password. Use Change password instead.",
+        )
     if not user.is_active:
         raise HTTPException(status_code=409, detail="Activate this account before resetting its password.")
     initial_password = secrets.token_urlsafe(24)

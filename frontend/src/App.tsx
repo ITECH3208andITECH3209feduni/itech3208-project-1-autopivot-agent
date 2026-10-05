@@ -7,7 +7,7 @@ import { useEffect, type ReactNode } from 'react'
 
 import AppShell from './components/AppShell'
 import Guidelines from './Guidelines'
-import { AuthProvider, useAuth } from './auth/AuthContext'
+import { AuthProvider, useAuth, type SignInRedirect } from './auth/AuthContext'
 import { api } from './api/client'
 import { C, SANS, serif } from './design'
 import ComingSoonPage from './pages/ComingSoonPage'
@@ -23,7 +23,7 @@ import ResultsView from './views/ResultsView'
 import UploadView from './views/UploadView'
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth()
+  const { user, loading, sessionEnded } = useAuth()
   const location = useLocation()
 
   // Waiting on the stored token to be validated. Redirecting here would bounce
@@ -39,7 +39,12 @@ function RequireAuth({ children }: { children: ReactNode }) {
     )
   }
 
-  if (!user) return <Navigate to="/" replace state={{ from: location }} />
+  // The sign-in page sends them back here afterwards and, if the session ended
+  // under them, opens straight away and says so.
+  if (!user) {
+    const redirect: SignInRedirect = { from: location, sessionEnded }
+    return <Navigate to="/" replace state={redirect} />
+  }
   if (user.must_change_password && location.pathname !== '/app/change-password') {
     return <Navigate to="/app/change-password" replace />
   }

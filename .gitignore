@@ -9,6 +9,19 @@ venv/
 storage/
 .DS_Store
 
+# The local SQLite database a fresh setup creates in the project root, and its
+# write-ahead log files. It holds every account's password hash.
+autopivot.db
+autopivot.db-*
+
+# YOLO weights, which ultralytics downloads into the working directory, and
+# the settings folder it creates there when its own config directory is not
+# writable.
+*.pt
+Ultralytics/
+
+.pytest_cache/
+
 # Realism evidence (scripts/realism_report.py, --out defaults here).
 # The renders are large binaries and there is a fresh set of them every run;
 # the metrics file and its summary are a few kilobytes and are the record a

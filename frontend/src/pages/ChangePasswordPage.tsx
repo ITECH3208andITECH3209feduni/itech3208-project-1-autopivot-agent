@@ -5,7 +5,10 @@ import { useAuth } from '../auth/AuthContext'
 import { C, RADIUS_CONTROL, SANS, serif } from '../design'
 
 export default function ChangePasswordPage() {
-  const { changePassword } = useAuth()
+  const { user, changePassword } = useAuth()
+  // Forced after an account is created or reset; otherwise reached from the
+  // team page to change a password that is already private.
+  const initial = user?.must_change_password ?? true
   const navigate = useNavigate()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -42,9 +45,13 @@ export default function ChangePasswordPage() {
 
   return (
     <div style={{ maxWidth: 480, margin: '60px auto', padding: 28, background: C.white, border: `1px solid ${C.line}` }}>
-      <h1 style={{ ...serif(32), marginTop: 0, color: C.ink }}>Change your initial password</h1>
+      <h1 style={{ ...serif(32), marginTop: 0, color: C.ink }}>
+        {initial ? 'Change your initial password' : 'Change your password'}
+      </h1>
       <p style={{ fontFamily: SANS, color: C.inkSoft }}>
-        You must choose a private password before using the platform.
+        {initial
+          ? 'You must choose a private password before using the platform.'
+          : 'Changing it signs you out everywhere else you are signed in.'}
       </p>
       <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
         <label style={{ fontFamily: SANS }}>Current password<input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required style={inputStyle} /></label>

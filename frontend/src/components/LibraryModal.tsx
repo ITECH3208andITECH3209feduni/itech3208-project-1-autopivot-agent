@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 
+import { lockPageScroll } from './pageScrollLock'
 import { Modal } from './primitives'
 
 const FOCUSABLE = [
@@ -29,27 +30,6 @@ const FOCUSABLE = [
 // Dialogs stack: a delete confirmation opens over a preview. Only the topmost
 // one may act on Escape, or one keypress would dismiss the entire stack.
 const openDialogs: symbol[] = []
-
-// Saved once, when the first dialog opens, and put back when the last closes.
-let savedOverflow = ''
-let savedPaddingRight = ''
-
-function lockPageScroll() {
-  const { body } = document
-  savedOverflow = body.style.overflow
-  savedPaddingRight = body.style.paddingRight
-  // Removing the scrollbar reflows the page underneath the dialog, which is
-  // visible as a sideways jump through the translucent ground. Its width is
-  // given back as padding so nothing moves.
-  const gap = window.innerWidth - document.documentElement.clientWidth
-  body.style.overflow = 'hidden'
-  if (gap > 0) body.style.paddingRight = `${gap}px`
-}
-
-function unlockPageScroll() {
-  document.body.style.overflow = savedOverflow
-  document.body.style.paddingRight = savedPaddingRight
-}
 
 /**
  * Escape to close, Tab confined to the dialog, and focus returned to whatever
@@ -79,7 +59,11 @@ export function useDialogKeys({
 
     const token = Symbol('dialog')
     openDialogs.push(token)
-    if (openDialogs.length === 1) lockPageScroll()
+    // Every dialog that uses this hook is also a Modal, which takes this same
+    // counted lock. The two used to keep separate copies of the page's
+    // overflow — which is how closing a removal confirmation left the whole
+    // app unable to scroll.
+    const releaseScroll = lockPageScroll()
 
     const opener = document.activeElement as HTMLElement | null
 
@@ -139,7 +123,7 @@ export function useDialogKeys({
       document.removeEventListener('keydown', onKeyDown, true)
       const index = openDialogs.indexOf(token)
       if (index >= 0) openDialogs.splice(index, 1)
-      if (openDialogs.length === 0) unlockPageScroll()
+      releaseScroll()
       // Only if the opener is still on the page: the button that opened a
       // delete confirmation is gone by the time the deletion finishes.
       if (opener && document.contains(opener)) opener.focus()

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { api, type DealershipUser, type DealershipUserCreate } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -90,8 +91,15 @@ export default function DealershipUsersPage() {
             <div style={{ fontSize: 13, color: C.inkSoft, marginTop: 4 }}>{target.email} · {target.role === 'dealership_admin' ? 'Administrator' : 'Staff'} · {target.is_active ? 'Active' : 'Deactivated'}</div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
-            {target.is_active && <button type="button" disabled={busy} onClick={() => void manage(target, 'reset')} style={{ fontFamily: SANS }}>Reset password</button>}
-            {target.is_active && target.id !== administrator?.id && <button type="button" disabled={busy} onClick={() => void manage(target, 'deactivate')} style={{ fontFamily: SANS, color: C.rust }}>Deactivate</button>}
+            {/* Never on your own row: a reset signs its target out and leaves
+                a one-time password as the only way back in, and a
+                deactivation would lock you out outright. */}
+            {target.id === administrator?.id
+              ? <Link to="/app/change-password" style={{ fontFamily: SANS, color: C.forest }}>Change password</Link>
+              : target.is_active && <>
+                  <button type="button" disabled={busy} onClick={() => void manage(target, 'reset')} style={{ fontFamily: SANS }}>Reset password</button>
+                  <button type="button" disabled={busy} onClick={() => void manage(target, 'deactivate')} style={{ fontFamily: SANS, color: C.rust }}>Deactivate</button>
+                </>}
           </div>
         </article>)}
         {!users.length && <p style={{ fontFamily: SANS, color: C.inkSoft }}>No team accounts yet.</p>}

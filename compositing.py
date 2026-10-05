@@ -41,6 +41,7 @@ height normalisation, the angle profiles and the reflection extend them.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -147,6 +148,13 @@ class BackdropPreset:
     # eye-level room has its floor receding at the wrong rate, and no amount of
     # shadow or colour matching repairs that.
     horizon_y_ratio: float | None = None
+    # Where the floor begins — the wall-floor junction, the furthest back a
+    # vehicle could stand — measured the same way and on the same terms as the
+    # horizon, and None for a backdrop nobody has measured. `dealer_preset` has
+    # already turned it into the line the car stands on. It is kept as well
+    # because Phase 1 moves the scene and the floor moves with it: see
+    # `_fit_backdrop`, which is the only place the floor can be lost afterwards.
+    floor_top_y_ratio: float | None = None
 
 
 # Measured by Suraj Purella against the rendered showroom. The reference was
@@ -251,6 +259,11 @@ def dealer_preset(
     A dealer happy with their listings therefore sees nothing change, and the
     dealer whose showroom floor starts three quarters of the way down the frame
     stops having cars stood in the middle of their back wall.
+
+    The ground line is worked out against the backdrop as uploaded, and horizon
+    alignment then moves the backdrop, so the floor itself travels with the
+    preset too: `compose` holds the alignment to the same rule on the canvas
+    the car actually ends up in.
     """
     if horizon_y_ratio is None and floor_top_y_ratio is None:
         return DEALER_BACKDROP
@@ -264,6 +277,7 @@ def dealer_preset(
         DEALER_BACKDROP,
         ground_y_ratio=ground,
         horizon_y_ratio=horizon_y_ratio,
+        floor_top_y_ratio=floor_top_y_ratio,
     )
 
 
@@ -417,6 +431,8 @@ def _fit_backdrop(
     size: tuple[int, int],
     horizon_y_ratio: float | None = None,
     target_horizon_y: float | None = None,
+    floor_top_y_ratio: float | None = None,
+    lowest_floor_top_y: float | None = None,
 ) -> tuple[Image.Image, float | None]:
     """
     Cover the canvas without distorting: scale to fill, then crop.
@@ -435,11 +451,30 @@ def _fit_backdrop(
     the result rather than assuming it is what lets the caller report a
     shortfall honestly, and an alignment half made is a different outcome from
     one made in full.
+
+    Given where the scene's floor begins and the lowest canvas row it may be
+    moved to, `lowest_floor_top_y`, an alignment also stops before it carries
+    the floor out from under the car. The floor goes wherever the horizon goes:
+    sliding the scene down to meet a lower horizon moves the wall-floor
+    junction down by the same pixels, and enlarging it with the crop pinned to
+    the top edge moves the junction further still, because it is further from
+    that edge. Nothing looked at the floor again afterwards, so a showroom
+    whose floor starts low had its cars stood in the back wall — 97 pixels up
+    it, for a standing photograph in a 1600x1200 scene with its horizon at 0.45
+    and its floor at 0.88. Standing on the floor is not negotiable and the
+    horizon already is — it is given up at the enlargement cap — so this is one
+    more reason an alignment can fall short, reported through the same
+    residual. The crop is taken no further down the frame than keeps the
+    junction on that row, and where even the highest crop the scene allows
+    leaves it lower, the highest crop is what is used; a backdrop the shape of
+    its canvas has no crop to spare, so one whose floor was already short
+    before anything was aligned stays exactly as short.
     """
     target_w, target_h = size
     source = backdrop.convert("RGBA")
     cover = max(target_w / source.width, target_h / source.height)
     aligning = horizon_y_ratio is not None and target_horizon_y is not None
+    floored = aligning and floor_top_y_ratio is not None and lowest_floor_top_y is not None
 
     scale = cover
     if aligning:
@@ -459,6 +494,18 @@ def _fit_backdrop(
             cover * MAX_ALIGNMENT_OVERSCALE,
             max(cover, needed_for_top, needed_for_bottom),
         )
+        if floored and needed_for_top > cover:
+            # Enlarged to slide the scene down, which pins the crop to the top
+            # edge and takes the junction down with every step. Past the scale
+            # that puts it exactly on the lowest row allowed, holding it there
+            # means starting the crop further down the scene, which lifts the
+            # horizon back up the frame faster than enlarging lowers it — so
+            # that scale is as far down as this scene can go, and enlarging
+            # further buys nothing but a lost floor.
+            scale = min(
+                scale,
+                max(cover, lowest_floor_top_y / max(1e-6, floor_top_y_ratio * source.height)),
+            )
 
     resized = source.resize(
         (max(1, round(source.width * scale)), max(1, round(source.height * scale))),
@@ -468,6 +515,11 @@ def _fit_backdrop(
     left = max(0, (resized.width - target_w) // 2)
     if aligning:
         top = round(horizon_y_ratio * resized.height - target_horizon_y)
+        if floored:
+            # A crop starting this far down the scene, or further, keeps the
+            # junction on or above the lowest row allowed. The clamp below still
+            # has the last word: a scene with no crop to spare keeps its own.
+            top = max(top, math.ceil(floor_top_y_ratio * resized.height - lowest_floor_top_y))
     else:
         top = (resized.height - target_h) // 2
     top = max(0, min(resized.height - target_h, top))
@@ -508,6 +560,25 @@ def _fit_vehicle(
     """
     Scale the cutout to the scene. Returns the vehicle and whether height
     normalisation was used rather than the older fill-the-box rule.
+
+    The rule itself is `_vehicle_scale`, which the studio platform shares.
+    """
+    scale, normalised = _vehicle_scale(cutout, preset, size)
+    return (
+        cutout.resize(
+            (max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale))),
+            Image.Resampling.LANCZOS,
+        ),
+        normalised,
+    )
+
+
+def _vehicle_scale(
+    cutout: Image.Image, preset: BackdropPreset, size: tuple[int, int]
+) -> tuple[float, bool]:
+    """
+    How much to scale the cutout for this scene, and whether that is height
+    normalisation rather than the older fill-the-box rule.
 
     Filling the box independently per photograph is what made a listing's
     gallery look like several different cars. A head-on shot is roughly as wide
@@ -573,13 +644,7 @@ def _fit_vehicle(
         if clamped >= candidate * NORMALISE_CLAMP_FLOOR:
             scale, normalised = clamped, True
 
-    return (
-        cutout.resize(
-            (max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale))),
-            Image.Resampling.LANCZOS,
-        ),
-        normalised,
-    )
+    return scale, normalised
 
 
 def _mass_skew(vehicle: Image.Image) -> float:
@@ -929,13 +994,41 @@ def match_colour(
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _is_dealer_preset(preset: BackdropPreset) -> bool:
+    """
+    Whether this is the dealer preset, measured or not.
+
+    `dealer_preset` hands back DEALER_BACKDROP itself only when nothing about
+    the backdrop was measured, and every backdrop uploaded through the app is
+    measured — `backdrop_analysis.analyse` assumes rather than declines — so
+    what the listing pipeline actually supplies is DEALER_BACKDROP with its
+    ground line, horizon and floor filled in. Comparing on everything else
+    keeps any preset a caller built deliberately out of this, including one
+    derived from DEALER_BACKDROP with a different size or reflection.
+    """
+    return replace(
+        preset,
+        ground_y_ratio=DEALER_BACKDROP.ground_y_ratio,
+        horizon_y_ratio=DEALER_BACKDROP.horizon_y_ratio,
+        floor_top_y_ratio=DEALER_BACKDROP.floor_top_y_ratio,
+    ) == DEALER_BACKDROP
+
+
 def _recognise_studio(backdrop: Image.Image, preset: BackdropPreset) -> BackdropPreset:
     """Recover measured stage geometry for studio images uploaded via listings.
 
-    The listing pipeline supplies the generic dealer preset. Only near-identical
-    copies of the bundled full studio qualify; unrelated scenes stay generic.
+    The listing pipeline supplies the dealer preset, measured or not. Only
+    near-identical copies of the bundled full studio qualify; unrelated scenes
+    stay generic.
+
+    Once recognised, the studio's own geometry replaces all of the dealer
+    preset, the measured ratios included. The measured floor is the wall-floor
+    junction behind the turntable, not the top the car stands on; and the
+    measured horizon would let Phase 1 slide the scene, while the platform is
+    measured against the studio frame as it stands, so the car would end up
+    beside its own turntable.
     """
-    if preset != DEALER_BACKDROP:
+    if not _is_dealer_preset(preset):
         return preset
     try:
         with Image.open(BACKGROUND_DIR / STUDIO_FULL.filename) as reference:
@@ -993,8 +1086,25 @@ def compose(
     # runs the same way regardless of which branch produced `vehicle`.
     tyre_points = []
     if preset.platform_box and preset.placement == "ground":
-        vehicle, x, y, tyre_points = platform_placement.fit(cutout, preset.platform_box, size)
-        normalised = True
+        # Sized by the rule every other scene uses — one visible height for
+        # every photograph of a listing — and only then stood on the platform.
+        # The platform fit used to choose its own size by filling the stage,
+        # which is the per-photograph scaling `_vehicle_scale` exists to
+        # remove: a side-on shot ran out of stage width, a head-on one out of
+        # height, and the gallery changed size. It may still shrink the car,
+        # but only as far as it takes to get every estimated tyre inside the
+        # ellipse.
+        scale, normalised = _vehicle_scale(cutout, preset, size)
+        vehicle, x, y, tyre_points = platform_placement.fit(
+            cutout, preset.platform_box, size, scale=scale
+        )
+        # Reported, not assumed. A car that had to give up more than
+        # `NORMALISE_CLAMP_FLOOR` of its size to get its tyres onto the base is
+        # no longer at the listing's height, and saying otherwise is how this
+        # branch hid a gallery that changed size.
+        normalised = normalised and (
+            vehicle.width >= cutout.width * scale * NORMALISE_CLAMP_FLOOR
+        )
         # The platform's own measured line, not this car's lowest tyre pixel:
         # the ellipse arc puts different tyres at different heights, and the
         # backdrop's floor does not move depending on which car is on it.
@@ -1025,8 +1135,24 @@ def compose(
             elevation_deg, ground_y, int(visible_bottom - visible_top)
         )
 
+    # The lowest the scene's floor may start once it has been moved and still
+    # have this car standing on it: `dealer_preset`'s own rule, ground =
+    # junction + FLOOR_CONTACT_MARGIN * (height - junction), solved for the
+    # junction and applied to the canvas the car is actually standing in rather
+    # than to the backdrop as it was uploaded.
+    lowest_floor_top_y: float | None = None
+    if preset.placement == "ground" and preset.floor_top_y_ratio is not None:
+        lowest_floor_top_y = (ground_y - FLOOR_CONTACT_MARGIN * size[1]) / (
+            1.0 - FLOOR_CONTACT_MARGIN
+        )
+
     canvas, backdrop_horizon_y = _fit_backdrop(
-        backdrop, size, preset.horizon_y_ratio, vehicle_horizon_y
+        backdrop,
+        size,
+        preset.horizon_y_ratio,
+        vehicle_horizon_y,
+        preset.floor_top_y_ratio,
+        lowest_floor_top_y,
     )
     vehicle = match_colour(vehicle, canvas, x, y)
 

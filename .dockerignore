@@ -1,0 +1,27 @@
+# Build context for Dockerfile.api. `fly deploy` uploads this directory, minus
+# what is excluded here, to a remote builder — so without this file it sent
+# .env (HF_TOKEN, JWT_SECRET), .venv (gigabytes of torch), node_modules,
+# autopivot.db (password hashes), storage/ and mobile/ off this machine.
+#
+# Everything is left out except what the image copies. A secret or a large
+# directory added later is then left out by default rather than uploaded.
+# Adding a COPY to Dockerfile.api? Add its source below as well —
+# tests/test_ignore_files.py fails until you do.
+*
+!Dockerfile.api
+!requirements.txt
+!alembic.ini
+!backdrop_analysis.py
+!api
+!database
+!migrations
+!scripts
+
+# And inside those, nothing local: caches, databases, secrets.
+**/__pycache__
+**/*.py[cod]
+**/.DS_Store
+**/.env
+**/.env.*
+**/*.db
+**/*.db-*

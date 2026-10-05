@@ -3,8 +3,24 @@
 Contacts are silhouette estimates, not a trained wheel detector. The original
 perspective is retained: each contact keeps its own vertical offset.
 """
+import math
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+
+# The tallest a vehicle may stand, as a fraction of the canvas, whatever size
+# the caller asks for: it keeps the roof clear of the top of the scene.
+MAX_HEIGHT_RATIO = .35
+
+# How tall a vehicle stands when the caller has not already decided, as a
+# fraction of the stage's measured width. 0.86 / 3.2 is the size compositing
+# gives every photograph on the studio platform — a side-on car filling 86% of
+# the platform (STUDIO_FULL.vehicle_width_ratio) at 3.2 times as long as it is
+# tall (compositing.REFERENCE_VEHICLE_ASPECT) — so fit() on its own and compose()
+# agree. What matters more than the value is that it is one number for every
+# cutout: a car turning on the spot keeps its height, so standing every
+# photograph at one height is what renders one car at one size.
+STAGE_HEIGHT_RATIO = .86 / 3.2
 
 
 def contacts(image):
@@ -54,8 +70,59 @@ def contacts(image):
     return found
 
 
-def fit(cutout, box, size):
-    """Uniformly scale and translate; all estimated tyre contacts fit on top."""
+def _sheared(vehicle, slope, ref_x):
+    """The vehicle sheared vertically, y_out = y_in + slope * (x - ref_x).
+
+    Drawn on a canvas made taller by whatever the shear needs, so nothing is
+    lost off either edge. Transforming onto a canvas the size of the input cut
+    off everything it moved past an edge — the roof over the raised end when
+    the slope is negative, the lower body at the far end when it is positive —
+    and the only headroom was the two pixels `compositing.trim_transparent`
+    leaves round a cutout, so up to 4% of an oblique car went missing.
+
+    Only what is needed is added, on each edge separately, so a car the shear
+    barely moves keeps its size to the pixel. It is measured to the faintest
+    pixel of the resized edge rather than to the solid body, which is what
+    leaves the body itself clear of the kernel at the new edge.
+    """
+    ys, xs = np.nonzero(np.asarray(vehicle.getchannel('A')))
+    if not ys.size:
+        return vehicle
+    moved = ys + slope*(xs-ref_x)
+    above = max(0, math.ceil(-moved.min()))
+    below = max(0, math.ceil(moved.max()-(vehicle.height-1)))
+    if above or below:
+        # The shear moves nothing sideways, so it is the same transform on the
+        # taller canvas: every row simply starts `above` further down.
+        canvas = Image.new('RGBA', (vehicle.width, vehicle.height+above+below), (0, 0, 0, 0))
+        canvas.paste(vehicle, (0, above))
+        vehicle = canvas
+    return vehicle.transform(
+        vehicle.size,
+        Image.Transform.AFFINE,
+        (1, 0, 0, -slope, 1, slope*ref_x),
+        resample=Image.Resampling.BICUBIC,
+    )
+
+
+def fit(cutout, box, size, scale=None):
+    """Uniformly scale and translate; all estimated tyre contacts fit on top.
+
+    The size is settled before any tyre is looked at, and it is one visible
+    height for every cutout: `scale` when the caller has already chosen one for
+    the scene — compositing sizes every photograph of a listing to the same
+    visible height, see `compositing._vehicle_scale` — and otherwise
+    STAGE_HEIGHT_RATIO of the stage's width. Either way the car is never taller
+    than MAX_HEIGHT_RATIO of the canvas nor wider than the stage, and after
+    that it is only ever made smaller: by whatever the tyre-levelling shear
+    would otherwise add to its drawn height, and while its estimated contacts
+    will not fit inside the inset ellipse with the roof still in the scene.
+
+    What this replaced sized each cutout to fill the stage, and that undid the
+    gallery on the platform: a wide side-on view ran out of stage width first
+    and a narrow head-on one ran out of height, so the same car came out a
+    third taller head-on than side-on.
+    """
     cw, ch = size
     x1,y1,x2,y2 = box
     cx,cy = (x1+x2)*cw/2, (y1+y2)*ch/2
@@ -65,8 +132,14 @@ def fit(cutout, box, size):
     if not xs.size:
         raise ValueError('Cannot place an empty vehicle cutout')
     visible_w,visible_h = xs.max()-xs.min()+1,ys.max()-ys.min()+1
-    # Fill the stage while retaining roof clearance for taller front views.
-    scale = min((2*rx*.90)/visible_w, ch*.35/visible_h)
+    if scale is None:
+        scale = 2*rx*STAGE_HEIGHT_RATIO/visible_h
+    # Hard limits, whoever chose the size: roof clearance, and a car no wider
+    # than the stage it stands on, which would otherwise overhang it.
+    scale = min(scale, ch*MAX_HEIGHT_RATIO/visible_h, 2*rx/visible_w)
+    # The visible height all of that settled on, which is the size the car is
+    # drawn at — sheared or not, see below.
+    goal = visible_h*scale
     # Keep a small side inset, but use almost the complete measured ellipse for
     # the vertical drop. The previous .79 vertical inset stopped the car before
     # the visible top surface and made the farther/rear tyre appear to float.
@@ -96,16 +169,25 @@ def fit(cutout, box, size):
                 if abs(slope) <= .20:
                     # y_out = y_in + slope * (x - reference_x)
                     ref_x = pts[0][0]
-                    vehicle = vehicle.transform(
-                        vehicle.size,
-                        Image.Transform.AFFINE,
-                        (1, 0, 0, -slope, 1, slope*ref_x),
-                        resample=Image.Resampling.BICUBIC,
-                    )
+                    straight_h = int(vy.max())-int(vy.min())+1
+                    vehicle = _sheared(vehicle, slope, ref_x)
                     pts = contacts(vehicle)
                     a = np.asarray(vehicle.getchannel('A')) >= 128
                     vy,vx = np.where(a)
                     x = round(cx-(int(vx.min())+int(vx.max()))/2)
+                    # A shear keeps the height of every column and not of the
+                    # silhouette: it moves the ends of the car up and down by
+                    # the slope times their distance from the pivot, so what it
+                    # draws is taller than what it was given — 4% on the
+                    # oblique test car. That was hidden while the shear cropped
+                    # the car to its old canvas, and the listing's one height
+                    # and MAX_HEIGHT_RATIO both hold for the car as drawn, so a
+                    # shear that grows it is redone at the size that draws it
+                    # at the height asked for.
+                    drawn_h = int(vy.max())-int(vy.min())+1
+                    if drawn_h-straight_h > 1 and drawn_h > goal+1:
+                        scale *= goal/drawn_h
+                        continue
         lower,upper = -float('inf'),float('inf')
         # The top of the turntable is the lower arc of the measured ellipse.
         # Aligning the support points to this arc follows the platform's
@@ -132,6 +214,7 @@ def fit(cutout, box, size):
             y = int(round(np.clip(desired,lower+1,upper-1)))
             return vehicle,x,y,pts
         scale*=.97
+        goal*=.97
     raise ValueError('The cutout cannot be placed inside the display base')
 
 

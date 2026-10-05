@@ -60,7 +60,7 @@ def test_box_covering_most_of_the_vehicle_is_rejected():
 
 
 def test_area_check_is_skipped_when_no_vehicle_area_is_known():
-    # /detect-and-hide has no vehicle box; passing 0.0 must not reject.
+    # A caller with no vehicle box passes 0.0, and that must not reject.
     kept = backend._filter_plates([plate(0, 0, 280, 100)], 0.0, None)
     assert len(kept) == 1
 

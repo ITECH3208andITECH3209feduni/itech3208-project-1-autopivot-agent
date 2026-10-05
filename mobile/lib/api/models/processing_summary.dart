@@ -40,6 +40,16 @@ class ProcessingJobSummary {
   /// back to a transparent background.
   final int? backdropId;
 
+  /// Queued or running: still on its way to an outcome.
+  bool get isInFlight => status == 'pending' || status == 'processing';
+
+  /// Finished without a usable result: the pipeline failed on it, or ran and
+  /// found no vehicle to cut out. Either way a person has to look, and
+  /// processing it again is what can change the outcome. A failed job's
+  /// [reviewState] stays null, so [status] has to be read as well.
+  bool get needsAttention =>
+      status == 'failed' || reviewState == 'needs_review';
+
   factory ProcessingJobSummary.fromJson(Map<String, dynamic> json) =>
       ProcessingJobSummary(
         inputImageId: json['input_image_id'] as int,
@@ -63,7 +73,8 @@ class ProcessingSummary {
 
   final int listingId;
 
-  /// One of 'pending', 'processing', 'complete', 'needs_review'.
+  /// One of 'pending' (nothing ever queued), 'processing', 'complete',
+  /// 'needs_review'.
   final String processingStatus;
 
   final int total;
@@ -72,10 +83,16 @@ class ProcessingSummary {
   final int needsReview;
   final List<ProcessingJobSummary> jobs;
 
-  /// True while there is still work the pipeline could be doing — the signal
-  /// a poller uses to decide whether to keep asking.
+  /// True while the pipeline has work in hand — the signal a poller uses to
+  /// decide whether to keep asking.
+  ///
+  /// 'pending' is not that. The server leaves a listing 'pending' until
+  /// anything at all is queued for it (no jobs, not jobs waiting), and a
+  /// server without the vision stack never queues anything. Counting it had
+  /// the listing screen poll every few seconds for as long as it was open,
+  /// over "Processing — 0 of 0 done", for work nobody had started.
   bool get isInProgress =>
-      processingStatus == 'pending' || processingStatus == 'processing';
+      processingStatus == 'processing' || jobs.any((job) => job.isInFlight);
 
   factory ProcessingSummary.fromJson(Map<String, dynamic> json) =>
       ProcessingSummary(

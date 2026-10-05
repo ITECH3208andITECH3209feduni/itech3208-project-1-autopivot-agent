@@ -195,9 +195,24 @@ def camera_height_for_elevation(elevation_deg: float) -> float:
     estimate was made against. Deriving it here rather than in the compositor is
     what stops the two modules assuming different geometry and disagreeing about
     where the same photograph's eye level falls.
+
+    Never below the ground, and that is the one place this stops being the exact
+    inverse. At the assumed distance the camera reaches the floor at
+    atan(-0.316 / 6), about -3.01 deg, and the range admits down to
+    MIN_ELEVATION_DEG: the underside rung reads a high-riding vehicle seen
+    end-on, with more daylight under it than the reference car, as anything
+    down to -5 deg at its full confidence. The ANGLE is not the mistake — a
+    phone on the ground nearer than six metres really does look up at the wheel
+    centres that steeply, which is why the estimate and what the job records
+    are left alone. The HEIGHT is: taken literally it is a camera under the
+    floor, and the compositor would put the photograph's horizon below the
+    car's own tyres and slide the dealer's scene down to meet it. The lowest a
+    camera can be is on the ground, so that is where it is put.
     """
-    return WHEEL_CENTRE_HEIGHT_M + TYPICAL_SHOOTING_DISTANCE_M * math.tan(
-        math.radians(elevation_deg)
+    return max(
+        0.0,
+        WHEEL_CENTRE_HEIGHT_M
+        + TYPICAL_SHOOTING_DISTANCE_M * math.tan(math.radians(elevation_deg)),
     )
 
 

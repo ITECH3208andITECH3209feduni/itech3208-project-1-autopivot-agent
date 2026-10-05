@@ -17,11 +17,20 @@
 // before the photographs are uploaded, so a failed upload leaves a listing to
 // retry into rather than losing the typed details; the URL import runs last,
 // against the saved listing, because it is the step most likely to fail.
+//
+// The same form also adds photographs to a vehicle that already exists, at
+// /app/upload?listing=12. It used to have no such mode, so every "Add
+// photographs" on a vehicle landed on a blank form, and typing the details in
+// again made a duplicate listing (or a 409, if the stock number was reused).
+// Opened for a vehicle, the form shows it rather than asking for it, and starts
+// out in the state it is in once it has saved a vehicle of its own — so the
+// rest of the flow, and everything that guards against a second listing, is
+// the code that already runs after a save.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
-import { api, type Backdrop } from '../api/client'
+import { api, ApiError, type Backdrop, type VehicleListingDetail } from '../api/client'
 import AuthedImage from '../components/AuthedImage'
 import { Card, Field, SolidBtn, Stepper, TextBtn, type Step } from '../components/primitives'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
@@ -121,8 +130,60 @@ function BackdropChoice({
   )
 }
 
+/** A saved vehicle's details, to read rather than to type in again. */
+function VehicleFacts({ listing }: { listing: VehicleListingDetail }) {
+  const facts: [string, string][] = [
+    ['Make', listing.make],
+    ['Model', listing.model],
+    ['Year', String(listing.year)],
+    ['Variant', listing.variant ?? '—'],
+    ['Stock number', listing.stock_number ?? '—'],
+  ]
+
+  return (
+    // The same grid and label style as the fields it replaces, so the page
+    // keeps its shape; a description list because label and value is what
+    // each pair is.
+    <dl style={{
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+      gap: 12, margin: 0,
+    }}>
+      {facts.map(([label, value]) => (
+        <div key={label}>
+          <dt style={{
+            fontFamily: MONO, fontSize: 11, letterSpacing: '0.08em', color: C.inkSoft,
+            textTransform: 'uppercase', marginBottom: 5,
+          }}>
+            {label}
+          </dt>
+          <dd style={{ fontFamily: SANS, fontSize: 14, color: C.ink, margin: 0 }}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 export default function UploadView() {
+  // Present when the form was opened for a vehicle that already exists (see
+  // addPhotographsHref); absent for a new one.
+  const [searchParams] = useSearchParams()
+  const reference = searchParams.get('listing')
+
+  // Keyed on it: "+ New vehicle" from vehicle #12's form is the same route
+  // with the query dropped, so the router keeps the form mounted — and with it
+  // vehicle #12's id, which the "new" vehicle's photographs would go into.
+  return <UploadForm key={reference === null ? 'new vehicle' : `vehicle ${reference}`} reference={reference} />
+}
+
+function UploadForm({ reference }: { reference: string | null }) {
   const navigate = useNavigate()
+
+  const parsedReference = reference === null ? Number.NaN : Number(reference)
+  const targetId = Number.isInteger(parsedReference) && parsedReference > 0 ? parsedReference : null
+
+  // The vehicle being added to, once it has loaded.
+  const [existing, setExisting] = useState<VehicleListingDetail | null>(null)
+  const [existingError, setExistingError] = useState<string | null>(null)
 
   const [make, setMake] = useState('')
   const [model, setModel] = useState('')
@@ -182,6 +243,32 @@ export default function UploadView() {
       })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (targetId === null) return
+    let cancelled = false
+    api.listing(targetId)
+      .then(listing => {
+        if (cancelled) return
+        setExisting(listing)
+        // From here the form is exactly where it would be had it just saved
+        // this vehicle itself: no second listing can be created, and what is
+        // already on the vehicle counts towards what there is to process.
+        setSavedListingId(listing.id)
+        setAttachedCount(listing.images.filter(image => image.image_type === 'original').length)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        // The API answers 404 for a vehicle that belongs to another dealership
+        // as well as for one that has gone, so this does not guess which.
+        setExistingError(
+          err instanceof ApiError && err.status === 404
+            ? `Vehicle #${targetId} could not be found. It may have been deleted, or the link may be wrong.`
+            : `Vehicle #${targetId} could not be loaded. ${(err as Error).message}`,
+        )
+      })
+    return () => { cancelled = true }
+  }, [targetId])
 
   function addFiles(incoming: FileList | File[]) {
     const rejected: string[] = []
@@ -337,24 +424,77 @@ export default function UploadView() {
   const plan = savedListingId !== null
     ? queuedHere
       ? `Uploads ${queuedPhrase} to the vehicle that is already saved, then starts processing ${backdropPhrase}.`
-      : `Starts processing the ${attachedCount} photograph${attachedCount === 1 ? '' : 's'} already on this vehicle, ${backdropPhrase}.`
+      : existing
+        // A vehicle opened here may have been through the pipeline before,
+        // and the server queues only what has not.
+        ? `Starts processing whatever on this vehicle has not been processed yet, ${backdropPhrase}.`
+        : `Starts processing the ${attachedCount} photograph${attachedCount === 1 ? '' : 's'} already on this vehicle, ${backdropPhrase}.`
     : queuedHere
       ? `Saves the vehicle, uploads ${queuedPhrase}, then starts processing ${backdropPhrase}.`
       : 'Saves the vehicle so you can add photographs to it later. Nothing is processed until there are some.'
+
+  // A new vehicle needs its details; an existing one only needs something to
+  // add, or something already on it to process.
+  const ready = existing ? queuedHere || attachedCount > 0 : detailsValid
+
+  if (reference !== null && existing === null) {
+    // Nothing is offered until the vehicle has loaded. The form without it is
+    // the new-vehicle form, and its button would create one.
+    const problem = targetId === null
+      ? `“${reference}” is not a vehicle reference.`
+      : existingError
+
+    return (
+      <div style={{ maxWidth: FORM_MAX_WIDTH }}>
+        <Stepper steps={WORKFLOW_STEPS} current="upload" onNavigate={goToStep} />
+        <h1 style={{ ...serif(40), color: C.ink, margin: '0 0 24px', letterSpacing: '-0.02em', lineHeight: 1 }}>
+          Add photographs
+        </h1>
+        {problem ? (
+          <>
+            <div role="alert" style={{
+              fontFamily: SANS, fontSize: 14, color: C.rust, background: C.rustTint,
+              borderRadius: 8, padding: '12px 16px', marginBottom: 24, lineHeight: 1.6,
+            }}>
+              {problem}
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <SolidBtn onClick={() => navigate('/app/vehicles')}>All vehicles</SolidBtn>
+              <TextBtn onClick={() => navigate('/app/upload')}>Add a new vehicle</TextBtn>
+            </div>
+          </>
+        ) : (
+          <p style={{ fontFamily: SANS, fontSize: 14, color: C.inkSoft, margin: 0 }}>
+            Loading the vehicle…
+          </p>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={{ maxWidth: FORM_MAX_WIDTH }}>
       <Stepper steps={WORKFLOW_STEPS} current="upload" onNavigate={goToStep} />
 
       <h1 style={{ ...serif(40), color: C.ink, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1 }}>
-        Add a vehicle
+        {existing ? 'Add photographs' : 'Add a vehicle'}
       </h1>
       <p style={{
         fontFamily: SANS, fontSize: 15, color: C.inkSoft, margin: '0 0 32px',
         lineHeight: 1.6, maxWidth: 640,
       }}>
-        Details, photographs, then the backdrop they are placed onto. The last
-        button here starts the run and takes you to it.
+        {existing ? (
+          <>
+            For the <strong style={{ fontWeight: 500, color: C.ink }}>{existing.title}</strong>,
+            which is already saved: photographs, then the backdrop they are placed
+            onto. The last button here starts the run and takes you to it.
+          </>
+        ) : (
+          <>
+            Details, photographs, then the backdrop they are placed onto. The last
+            button here starts the run and takes you to it.
+          </>
+        )}
       </p>
 
       {error && (
@@ -366,28 +506,38 @@ export default function UploadView() {
         </div>
       )}
 
-      <Section
-        step="01"
-        title="Vehicle details"
-        description="Make, model and year identify the listing. Everything else is optional."
-      >
-        {/* auto-fit rather than a column count: three fields side by side on a
-            wide monitor, stacked on a laptop, without either being named. */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          gap: 12, marginBottom: 12,
-        }}>
-          <Field label="Make" value={make} onChange={setMake} placeholder="Mazda" disabled={busy} />
-          <Field label="Model" value={model} onChange={setModel} placeholder="CX-5" disabled={busy} />
-          <Field label="Year" value={year} onChange={setYear} placeholder="2021" disabled={busy} />
-        </div>
-        <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12,
-        }}>
-          <Field label="Variant" value={variant} onChange={setVariant} placeholder="GT (optional)" disabled={busy} />
-          <Field label="Stock number" value={stockNumber} onChange={setStockNumber} placeholder="4471 (optional)" disabled={busy} />
-        </div>
-      </Section>
+      {existing ? (
+        <Section
+          step="01"
+          title="Vehicle"
+          description="Already saved, so there is nothing to fill in. Photographs added below go onto this vehicle."
+        >
+          <VehicleFacts listing={existing} />
+        </Section>
+      ) : (
+        <Section
+          step="01"
+          title="Vehicle details"
+          description="Make, model and year identify the listing. Everything else is optional."
+        >
+          {/* auto-fit rather than a column count: three fields side by side on a
+              wide monitor, stacked on a laptop, without either being named. */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 12, marginBottom: 12,
+          }}>
+            <Field label="Make" value={make} onChange={setMake} placeholder="Mazda" disabled={busy} />
+            <Field label="Model" value={model} onChange={setModel} placeholder="CX-5" disabled={busy} />
+            <Field label="Year" value={year} onChange={setYear} placeholder="2021" disabled={busy} />
+          </div>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12,
+          }}>
+            <Field label="Variant" value={variant} onChange={setVariant} placeholder="GT (optional)" disabled={busy} />
+            <Field label="Stock number" value={stockNumber} onChange={setStockNumber} placeholder="4471 (optional)" disabled={busy} />
+          </div>
+        </Section>
+      )}
 
       <Section
         step="02"
@@ -527,8 +677,11 @@ export default function UploadView() {
             fontFamily: SANS, fontSize: 14, color: C.rust, background: C.rustTint,
             borderRadius: 8, padding: '12px 16px', marginTop: 16, lineHeight: 1.6,
           }}>
-            {importError} The vehicle was saved, and so was anything you uploaded
-            — pick up from below.
+            {importError}{' '}
+            {existing
+              ? 'Anything you uploaded is on the vehicle'
+              : 'The vehicle was saved, and so was anything you uploaded'}
+            {' '}— pick up from below.
           </div>
         )}
       </Section>
@@ -605,17 +758,23 @@ export default function UploadView() {
         )}
       </Section>
 
-      {savedListingId === null ? (
+      {/* The saved-vehicle panel below is news only when this screen did the
+          saving. A vehicle that was opened here keeps the ordinary row. */}
+      {savedListingId === null || existing ? (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 24,
         }}>
-          <SolidBtn onClick={handleSubmit} disabled={!detailsValid || busy}>
+          <SolidBtn onClick={handleSubmit} disabled={!ready || busy}>
             {primaryLabel}
           </SolidBtn>
           <span style={{
             fontFamily: SANS, fontSize: 14, color: C.inkSoft, lineHeight: 1.6, maxWidth: 520,
           }}>
-            {detailsValid ? plan : 'Make, model and a year between 1886 and 2100 are required.'}
+            {ready
+              ? plan
+              : existing
+                ? 'Add photographs above, from your files or a listing URL.'
+                : 'Make, model and a year between 1886 and 2100 are required.'}
           </span>
         </div>
       ) : (

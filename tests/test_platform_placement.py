@@ -46,4 +46,53 @@ class PlacementTests(unittest.TestCase):
     def test_empty_rejected(self):
         with self.assertRaises(ValueError):p.fit(Image.new('RGBA',(40,40)),c.STUDIO_FULL.platform_box,(1280,960))
 
+
+def solid_bounds(v):
+    """Bounding box of the opaque vehicle, the same alpha >= 128 fit() measures."""
+    return v.getchannel("A").point(lambda a: 255 if a >= 128 else 0).getbbox()
+
+
+class OneSizeTests(unittest.TestCase):
+    """The stage decides where a car stands, never how big it is.
+
+    Sizing each cutout to fill the stage is what made the gallery change size
+    on the studio platform: a wide side-on view ran out of stage width and a
+    narrow head-on one ran out of height, so the same car came out a third
+    taller head-on than side-on.
+    """
+
+    SHAPES = [(400, 380, False), (1000, 350, False), (650, 420, True), (250, 550, False)]
+
+    def test_one_visible_height_whatever_the_aspect(self):
+        for size in [(1280, 960), (640, 480)]:
+            heights = {}
+            for w, h, oblique in self.SHAPES:
+                v, _, _, _ = p.fit(vehicle(w, h, oblique), c.STUDIO_FULL.platform_box, size)
+                top, bottom = solid_bounds(v)[1], solid_bounds(v)[3]
+                heights[(w, h)] = bottom - top
+            with self.subTest(size=size):
+                self.assertLess(max(heights.values()) / min(heights.values()), 1.03, heights)
+
+    def test_a_requested_scale_is_kept_when_every_tyre_fits(self):
+        cutout = vehicle(700, 320)
+        v, x, y, pts = p.fit(cutout, c.STUDIO_FULL.platform_box, (1280, 960), scale=.8)
+        self.assertEqual(v.size, (round(cutout.width * .8), round(cutout.height * .8)))
+        mask = c._platform_mask(c.STUDIO_FULL, (1280, 960))
+        for px, py in pts:
+            self.assertEqual(mask.getpixel((x + px, y + py)), 255)
+
+    def test_the_stage_still_bounds_whatever_scale_is_asked_for(self):
+        box = c.STUDIO_FULL.platform_box
+        for size in [(1280, 960), (640, 480)]:
+            for w, h, oblique in self.SHAPES:
+                with self.subTest(w=w, h=h, size=size):
+                    v, x, y, pts = p.fit(vehicle(w, h, oblique), box, size, scale=10)
+                    left, top, right, bottom = solid_bounds(v)
+                    self.assertLessEqual(bottom - top, size[1] * .35 + 2)
+                    self.assertLessEqual(right - left, size[0] * (box[2] - box[0]) + 2)
+                    mask = c._platform_mask(c.STUDIO_FULL, size)
+                    for px, py in pts:
+                        self.assertEqual(mask.getpixel((x + px, y + py)), 255)
+
+
 if __name__=='__main__':unittest.main()

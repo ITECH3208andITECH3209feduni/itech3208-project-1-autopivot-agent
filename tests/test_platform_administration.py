@@ -168,11 +168,15 @@ def test_initial_password_change_is_enforced(environment):
     })
     user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     assert client.get("/api/dashboard/counts", headers=user_headers).status_code == 403
-    assert client.post("/auth/change-password", headers=user_headers, json={
+    changed = client.post("/auth/change-password", headers=user_headers, json={
         "current_password": created["initial_password"],
         "new_password": "A-new-private-password-123",
-    }).status_code == 200
-    assert client.get("/api/dashboard/counts", headers=user_headers).status_code == 200
+    })
+    assert changed.status_code == 200
+    # The change revokes the token it was made with and hands back a new one.
+    assert client.get("/api/dashboard/counts", headers=user_headers).status_code == 401
+    new_headers = {"Authorization": f"Bearer {changed.json()['access_token']}"}
+    assert client.get("/api/dashboard/counts", headers=new_headers).status_code == 200
 
 
 def test_no_public_registration_route_exists(environment):

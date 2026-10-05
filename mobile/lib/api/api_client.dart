@@ -25,7 +25,8 @@ import 'models/url_vehicle_guess.dart';
 import 'models/user.dart';
 import 'models/vehicle_listing.dart';
 
-/// What a successful sign-in returns.
+/// What a successful sign-in returns — and a password change, which hands the
+/// session a new token the same way (see [ApiClient.changePassword]).
 class LoginResult {
   const LoginResult({
     required this.accessToken,
@@ -62,7 +63,11 @@ String defaultBaseUrl() {
 }
 
 class ApiClient {
-  ApiClient({String? baseUrl})
+  /// [httpClientAdapter] replaces only the transport, leaving dio's own
+  /// platform one when null. It is how the tests answer requests without a
+  /// network while every status still goes through the mapping below, which
+  /// is the part worth testing.
+  ApiClient({String? baseUrl, HttpClientAdapter? httpClientAdapter})
     : _dio = Dio(
         BaseOptions(
           baseUrl: baseUrl ?? defaultBaseUrl(),
@@ -74,7 +79,9 @@ class ApiClient {
           // message — can be read.
           validateStatus: (_) => true,
         ),
-      );
+      ) {
+    if (httpClientAdapter != null) _dio.httpClientAdapter = httpClientAdapter;
+  }
 
   final Dio _dio;
 
@@ -86,6 +93,13 @@ class ApiClient {
   String? _token;
 
   set token(String? value) => _token = value;
+
+  /// Told when the server refuses the token this client holds: expired,
+  /// revoked by an admin, or the account deactivated. Without it every
+  /// screen shows that 401 as its own error and the user stays signed in to
+  /// an app that can no longer do anything. Wired by `AuthController.build`,
+  /// which owns what ending a session means.
+  void Function(String message)? onSessionExpired;
 
   String get baseUrl => _dio.options.baseUrl;
 
@@ -112,13 +126,16 @@ class ApiClient {
       // which addresses have accounts. One message for all three.
       onUnauthorised: () => const ApiInvalidCredentialsException(),
     );
-
-    return LoginResult(
-      accessToken: json['access_token'] as String,
-      expiresIn: json['expires_in'] as int? ?? 0,
-      user: User.fromJson(json['user'] as Map<String, dynamic>),
-    );
+    return _loginResult(json);
   }
+
+  /// `LoginResponse` in `api/schemas.py`, which POST /auth/login and POST
+  /// /auth/change-password both answer with.
+  static LoginResult _loginResult(Map<String, dynamic> json) => LoginResult(
+    accessToken: json['access_token'] as String,
+    expiresIn: json['expires_in'] as int? ?? 0,
+    user: User.fromJson(json['user'] as Map<String, dynamic>),
+  );
 
   /// The signed-in user, re-read from the server.
   ///
@@ -130,7 +147,15 @@ class ApiClient {
     return User.fromJson(json);
   }
 
-  Future<User> changePassword({
+  /// Changes the signed-in user's password.
+  ///
+  /// The server revokes every token issued before the change — the one this
+  /// request is sent with included, so that a session left signed in
+  /// elsewhere, or a stolen token, stops working at once — and answers the
+  /// way sign-in does, with the session's new token. Whoever calls this has
+  /// to carry on with that token (AuthController.changePassword does), or
+  /// the very next request is refused and the session ends.
+  Future<LoginResult> changePassword({
     required String currentPassword,
     required String newPassword,
   }) async {
@@ -144,7 +169,7 @@ class ApiClient {
         options: _options(),
       ),
     );
-    return User.fromJson(json);
+    return _loginResult(json);
   }
 
   // ── Listings ────────────────────────────────────────────────────────────
@@ -236,6 +261,28 @@ class ApiClient {
     for (final path in filePaths) {
       formData.files.add(MapEntry('files', await MultipartFile.fromFile(path)));
     }
+    return _uploadOriginals(listingId, formData);
+  }
+
+  /// [uploadImages] for one photograph already in memory rather than on
+  /// disk — the sample car's, which is bundled with the app and has no file
+  /// of its own to upload from.
+  Future<List<ListingImage>> uploadImageBytes(
+    int listingId,
+    List<int> bytes, {
+    required String filename,
+  }) {
+    final formData = FormData()
+      ..files.add(
+        MapEntry('files', MultipartFile.fromBytes(bytes, filename: filename)),
+      );
+    return _uploadOriginals(listingId, formData);
+  }
+
+  Future<List<ListingImage>> _uploadOriginals(
+    int listingId,
+    FormData formData,
+  ) async {
     final json = await _sendList(
       () => _dio.post(
         '/api/listings/$listingId/images',
@@ -640,11 +687,29 @@ class ApiClient {
     if (status >= 200 && status < 300) return;
 
     if (status == 401) {
-      throw onUnauthorised?.call() ?? const ApiUnauthorisedException();
+      // A caller with its own reading of a 401 is sign-in, where it means
+      // wrong credentials and says nothing about a session.
+      if (onUnauthorised != null) throw onUnauthorised();
+      const error = ApiUnauthorisedException();
+      if (_refusedHeldToken(response)) onSessionExpired?.call(error.message);
+      throw error;
     }
     if (status >= 500) throw const ApiServerException();
 
     throw ApiRequestException(_detail(response.data), statusCode: status);
+  }
+
+  /// Whether [response] refused the token this client still holds.
+  ///
+  /// A request can outlive its session: an upload still going when another
+  /// request's refusal ended it, answered only after the person has signed
+  /// straight back in. Its 401 is about a token already gone, and must not
+  /// end the session that replaced it. A request sent with no token at all
+  /// refused nothing either.
+  bool _refusedHeldToken(Response<dynamic> response) {
+    final bearer = _bearer;
+    return bearer != null &&
+        response.requestOptions.headers['Authorization'] == bearer;
   }
 
   /// FastAPI's `detail`, which is a string for errors we raise and a list of

@@ -6,6 +6,7 @@
 import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { useSignInRedirect } from '../auth/AuthContext'
 import DemoModal from '../components/DemoModal'
 import LoginModal from '../components/LoginModal'
 import PreviewToggle from '../components/PreviewToggle'
@@ -214,7 +215,8 @@ function Footer({ onLogin }: { onLogin: () => void }) {
 type ModalState = 'none' | 'login' | 'demo'
 
 export default function LandingPage() {
-  const [modal, setModal] = useState<ModalState>('none')
+  const { destination, notice } = useSignInRedirect()
+  const [modal, setModal] = useState<ModalState>(notice !== null ? 'login' : 'none')
   const navigate = useNavigate()
 
   return (
@@ -222,8 +224,9 @@ export default function LandingPage() {
       {modal === 'demo' && <DemoModal onClose={() => setModal('none')} />}
       {modal === 'login' && (
         <LoginModal
+          notice={notice}
           onClose={() => setModal('none')}
-          onSuccess={() => { setModal('none'); navigate('/app') }}
+          onSuccess={() => { setModal('none'); navigate(destination, { replace: true }) }}
           onSwitchToDemo={() => setModal('demo')}
         />
       )}

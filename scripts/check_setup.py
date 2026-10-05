@@ -166,7 +166,7 @@ def check_gpu() -> None:
                 if total < 6:
                     warn(
                         f"{total:.1f} GB of VRAM is tight for the segmentation models.",
-                        "If processing runs out of memory, lower MAX_FILE_MB in .env.",
+                        "If processing runs out of memory, set AUTOPIVOT_DEVICE=cpu in .env.",
                     )
             except Exception as exc:  # noqa: BLE001 - diagnostic only
                 warn(f"Could not read CUDA device details: {exc}")

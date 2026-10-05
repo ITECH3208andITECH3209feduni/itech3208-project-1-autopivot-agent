@@ -33,7 +33,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 logger = logging.getLogger("autopivot.backdrop_analysis")
 
@@ -405,6 +405,29 @@ def _camera_elevation_deg(
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _upright(image: Image.Image) -> Image.Image:
+    """
+    The backdrop as the dealer sees it, with its EXIF orientation applied.
+
+    A phone stores a photograph taken in portrait on its side, with a tag
+    saying to turn it a quarter. Measured as stored, a showroom's floor would be
+    a vertical edge, which nothing here looks for, so the backdrop would fall
+    back to the assumed ground line with its horizon read off the wrong axis.
+
+    A tag that cannot be applied — a malformed EXIF block — leaves the image as
+    it is and it is measured as stored, because analyse promises never to raise.
+    """
+    image.load()  # a file that will not decode is the caller's failure, not this one's
+    try:
+        return ImageOps.exif_transpose(image)
+    except Exception as exc:
+        logger.warning(
+            "EXIF orientation could not be applied, so this backdrop is measured "
+            "as stored: %s", exc,
+        )
+        return image
+
+
 def analyse(image: Image.Image) -> BackdropGeometry:
     """
     Measure a backdrop. Never raises, never returns None.
@@ -414,8 +437,13 @@ def analyse(image: Image.Image) -> BackdropGeometry:
     into the compositor — and says so through its methods and confidences, so
     the difference between a measured backdrop and an unreadable one is visible
     rather than silently absorbed.
+
+    The backdrop is measured the way the dealer sees it, which is also the way
+    the pipeline composites onto it: see _upright. The focal length is still
+    read from the image as given, because turning a copy upright leaves the
+    original's EXIF alone.
     """
-    rgb = image.convert("RGB")
+    rgb = _upright(image).convert("RGB")
     width, height = rgb.size
     gray = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2GRAY)
 

@@ -25,8 +25,9 @@
 ///     not blown out by glare (a cheap sampled-gradient/overexposure check,
 ///     also new).
 ///  4. A short "hold steady" window — all three above have to stay good for
-///     [_holdSteadyDuration], not just be true on one lucky frame, before
-///     the shutter actually enables (see [_updateHoldSteady]).
+///     [_holdSteadyDuration], not just be true on one lucky frame, and for
+///     the angle actually being shot, before the shutter actually enables
+///     (see [_updateHoldSteady]).
 ///
 /// Exposure and focus lock to whatever the first successful shot of a set
 /// metered ([_lockExposureAndFocus]), rather than each of the 8 shots
@@ -95,16 +96,19 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../api/api_exception.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
 import '../../routes.dart';
 import '../../settings/app_preferences.dart';
 import '../dashboard/dashboard_screen.dart';
+import 'camera_session.dart';
 import 'capture_angles.dart';
 import 'capture_draft.dart';
+import 'capture_submission.dart';
 import 'device_tilt_detector.dart';
+import 'draft_resume_prompt.dart';
+import 'hold_steady.dart';
 import 'image_quality_detector.dart';
 import 'review_screen.dart';
 import 'vehicle_frame_detector.dart';
@@ -155,6 +159,10 @@ final class _NoCameraHardware extends _CameraState {
   const _NoCameraHardware();
 }
 
+/// An initialised controller and the zoom ceiling it reported — what
+/// [_CaptureScreenState._openCamera] hands the [CameraSession].
+typedef _LiveCamera = ({CameraController controller, double maxZoomLevel});
+
 // ── Screen ───────────────────────────────────────────────────────────────────
 
 class CaptureScreen extends ConsumerStatefulWidget {
@@ -197,12 +205,23 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// blank.
   ReviewDraft _reviewDraft = const ReviewDraft();
 
+  /// Sends the set once the review screen asks for it — see [_submitListing].
+  final _submission = CaptureSubmission();
+
   /// Every camera the device offers — front, back, and (where the plugin
   /// exposes them) any extra back lenses — so [_switchCamera] has something
-  /// to cycle through. Populated once, the first time [_initCamera] runs;
+  /// to cycle through. Populated once, the first time [_openCamera] runs;
   /// switching cameras reuses it rather than re-querying the hardware.
   List<CameraDescription> _availableCameras = [];
   int _cameraIndex = 0;
+
+  /// Owns the open [CameraController] — see camera_session.dart. Nothing
+  /// else opens or disposes one; [_state] follows it through [_showCamera].
+  late final _camera = CameraSession<_LiveCamera>(
+    open: _openCamera,
+    close: (camera) => camera.controller.dispose(),
+    onChanged: _showCamera,
+  );
 
   /// On-device "is a car actually in frame, and is it framed well" check —
   /// see vehicle_frame_detector.dart for why this exists and what it does
@@ -233,11 +252,11 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// convention as [_frameGuidance]: null never blocks.
   ImageQuality? _imageQuality;
 
-  /// When the current shot first became fully unblocked (every check
-  /// passing at once), or null while something is still wrong. Read by
-  /// [build] to require that state to have held for [_holdSteadyDuration]
+  /// How long the current shot has been fully unblocked (every check passing
+  /// at once, about the angle being asked for). Read by [build] and
+  /// [_capture] to require that state to have held for [_holdSteadyDuration]
   /// before the shutter actually enables — see [_updateHoldSteady].
-  DateTime? _allGoodSince;
+  final _holdSteady = HoldSteady(_holdSteadyDuration);
 
   static const _holdSteadyDuration = Duration(milliseconds: 600);
 
@@ -338,7 +357,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     // an unlocked landscape rotation here is what made the feed look
     // squashed rather than simply rotated.
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    _initCamera();
+    _camera.start();
     _tiltDetector.start((reading) {
       if (!mounted) return;
       setState(() {
@@ -354,43 +373,41 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
 
   /// Checks for a draft saved by a previous "Save Draft" (see
   /// [_handleCloseRequest]) and, if one exists, asks whether to pick up where
-  /// it left off. Declining discards it outright rather than leaving it to be
+  /// it left off. Discarding deletes it outright rather than leaving it to be
   /// silently overwritten by whatever gets saved next — an abandoned draft
-  /// sitting around unseen is worse than none at all.
+  /// sitting around unseen is worse than none at all. Only an explicit tap on
+  /// Discard does, though: see [askToResumeDraft] for why Back, or the prompt
+  /// closing without an answer, resumes instead.
   Future<void> _offerDraftResume() async {
     final draft = await loadCaptureDraft();
     if (draft == null || !mounted) return;
 
-    final resume = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Resume your last capture?'),
-        content: Text(
-          '${draft.shotCount} of ${CaptureAngle.values.length} photographs '
-          'were saved before you left the camera.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Discard'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Resume'),
-          ),
-        ],
-      ),
-    );
+    final resume = await askToResumeDraft(context, shotCount: draft.shotCount);
     if (!mounted) return;
 
-    if (resume == true) {
+    if (resume) {
       setState(() {
         for (final MapEntry(key: angle, value: file) in draft.files.entries) {
           _captured[angle] = XFile(file.path);
         }
         _skipped.addAll(draft.skipped);
+        _updateHoldSteady();
       });
+      // A submit of this set that stopped short before the camera closed:
+      // retrying it carries on with the listing it created, and the form
+      // comes back filled in with what it was for, as it does after a submit
+      // that fails here (see _submitListing), so the retry is the same
+      // submission rather than a retyped one that might differ.
+      if (draft.unfinishedSubmission case final attempt?) {
+        _submission.resume(attempt);
+        final details = attempt.details;
+        _reviewDraft = ReviewDraft(
+          make: details.make,
+          model: details.model,
+          year: '${details.year}',
+          variant: details.variant ?? '',
+        );
+      }
     } else {
       await clearCaptureDraft();
     }
@@ -400,8 +417,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     SystemChrome.setPreferredOrientations(const []);
-    final state = _state;
-    if (state is _CameraReady) state.controller.dispose();
+    _camera.dispose();
     _frameDetector.dispose();
     _tiltDetector.dispose();
     super.dispose();
@@ -413,83 +429,119 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// so a shot isn't taken on the one frame where every check happened to
   /// line up for an instant. Called from inside every setState that can
   /// change [_blockingMessage]'s inputs (frame guidance, tilt, image
-  /// quality) — mutating a field inside those closures, not in [build],
-  /// which only reads the result.
+  /// quality, and the angle being asked for) — mutating a field inside those
+  /// closures, not in [build], which only reads the result.
+  ///
+  /// A new angle starts the window over (see [HoldSteady.update]), and takes
+  /// the frame guidance and image quality with it: both were read off frames
+  /// taken wherever the photographer stood for the previous angle, and are
+  /// left to the next analysis to say again about this one, rather than
+  /// shown, or counted, as though they had been.
   void _updateHoldSteady() {
-    if (_blockingMessage != null || _currentAngle == null) {
-      _allGoodSince = null;
-    } else {
-      _allGoodSince ??= DateTime.now();
-    }
-  }
-
-  /// The camera hardware is released while the app is backgrounded and
-  /// re-acquired on return — a controller left open behind a backgrounded
-  /// app is a known source of crashes on both platforms, not a theoretical
-  /// one, which is why this is here even though nothing else on this screen
-  /// needs lifecycle awareness.
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
-    final state = _state;
-    if (state is! _CameraReady) return;
-
-    if (lifecycleState == AppLifecycleState.inactive) {
-      state.controller.dispose();
-      setState(() => _state = const _CameraInitializing());
-    } else if (lifecycleState == AppLifecycleState.resumed) {
-      _initCamera();
-    }
-  }
-
-  Future<void> _initCamera() async {
-    setState(() => _state = const _CameraInitializing());
-    try {
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) {
-        if (!mounted) return;
-        setState(() => _state = const _NoCameraHardware());
-        return;
-      }
-
-      _availableCameras = cameras;
-      _cameraIndex = cameras.indexWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-      );
-      if (_cameraIndex < 0) _cameraIndex = 0;
-      await _openCamera(cameras[_cameraIndex]);
-    } on CameraException catch (e) {
-      if (!mounted) return;
-      setState(() => _state = _CameraUnavailable(_messageFor(e)));
-    }
-  }
-
-  Future<void> _openCamera(CameraDescription description) async {
-    final controller = CameraController(
-      description,
-      ResolutionPreset.high,
-      enableAudio: false,
-      // bgra8888 is what inputImageFromCameraImage expects and is the one
-      // format group ML Kit documents support on iOS; left unset on other
-      // platforms since on-device detection does not run there yet (see
-      // that function's doc comment) and there is no reason to force an
-      // unusual format group for a feature that will not use it.
-      imageFormatGroup: Platform.isIOS ? ImageFormatGroup.bgra8888 : null,
-    );
-    await controller.initialize();
-    // Queried once per camera opened, not assumed: the ceiling this reports
-    // varies by device and by which lens _switchCamera has landed on, and a
-    // front-facing camera in particular often cannot zoom at all.
-    final maxZoom = await controller.getMaxZoomLevel();
-
-    if (!mounted) {
-      await controller.dispose();
-      return;
-    }
-    setState(() {
-      _state = _CameraReady(controller);
+    final target = _currentAngle;
+    if (target != _holdSteady.target) {
       _frameGuidance = null;
       _imageQuality = null;
-      _allGoodSince = null;
+    }
+    _holdSteady.update(
+      target: target,
+      ready: _blockingMessage == null,
+      now: DateTime.now(),
+    );
+  }
+
+  /// The camera hardware is released while the app is out of the foreground
+  /// and re-acquired on return — a controller left open behind a
+  /// backgrounded app is a known source of crashes on both platforms, not a
+  /// theoretical one, which is why this is here even though nothing else on
+  /// this screen needs lifecycle awareness. Which states count, and what
+  /// happens to a camera still opening when one arrives, is
+  /// [CameraSession.lifecycleChanged]'s to decide.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    _camera.lifecycleChanged(lifecycleState);
+  }
+
+  /// Opens the camera at [_cameraIndex] for [_camera], asking the device
+  /// what it has first if that is not known yet. Null, with [_state] already
+  /// saying why, when there is nothing to open.
+  ///
+  /// Never throws, and every failure lands on [_CameraUnavailable] with its
+  /// "Try again": nothing else moves [_state] on from the initialising state
+  /// this sets first, so an error let out of here left "Starting camera…" up
+  /// for good. That is any error, not only a [CameraException]: the plugin
+  /// wraps the platform's own exceptions only when they are thrown straight
+  /// away, and getMaxZoomLevel() in particular lets a failed platform call's
+  /// PlatformException through untouched. A controller that initialised is
+  /// closed again when a later step fails (see [startOrClose]).
+  Future<_LiveCamera?> _openCamera() async {
+    if (!mounted) return null;
+    setState(() => _state = const _CameraInitializing());
+    try {
+      if (_availableCameras.isEmpty) {
+        final cameras = await availableCameras();
+        if (cameras.isEmpty) {
+          if (mounted) setState(() => _state = const _NoCameraHardware());
+          return null;
+        }
+        _availableCameras = cameras;
+        _cameraIndex = cameras.indexWhere(
+          (c) => c.lensDirection == CameraLensDirection.back,
+        );
+        if (_cameraIndex < 0) _cameraIndex = 0;
+      }
+
+      final description = _availableCameras[_cameraIndex];
+      final controller = CameraController(
+        description,
+        ResolutionPreset.high,
+        enableAudio: false,
+        // bgra8888 is what inputImageFromCameraImage expects and is the one
+        // format group ML Kit documents support on iOS; left unset on other
+        // platforms since on-device detection does not run there yet (see
+        // that function's doc comment) and there is no reason to force an
+        // unusual format group for a feature that will not use it.
+        imageFormatGroup: Platform.isIOS ? ImageFormatGroup.bgra8888 : null,
+      );
+      return await startOrClose(
+        controller,
+        start: (controller) async {
+          await controller.initialize();
+          // Queried once per camera opened, not assumed: the ceiling this
+          // reports varies by device and by which lens _switchCamera has
+          // landed on, and a front-facing camera in particular often cannot
+          // zoom at all.
+          final maxZoomLevel = await controller.getMaxZoomLevel();
+          if (Platform.isIOS) {
+            await controller.startImageStream(
+              (image) => _onCameraFrame(image, description),
+            );
+          }
+          return (controller: controller, maxZoomLevel: maxZoomLevel);
+        },
+        close: (controller) => controller.dispose(),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => _state = _CameraUnavailable(_messageFor(error)));
+      }
+      return null;
+    }
+  }
+
+  /// [_camera]'s camera mirrored into [_state]: one to show, or none, which
+  /// shows as starting up until the next one opens.
+  void _showCamera(_LiveCamera? camera) {
+    if (!mounted) return;
+    setState(() {
+      if (camera == null) {
+        _state = const _CameraInitializing();
+        return;
+      }
+      _state = _CameraReady(camera.controller);
+      _frameGuidance = null;
+      _imageQuality = null;
+      _holdSteady.restart();
       // A fresh CameraController always starts back on auto exposure/focus
       // regardless of what the previous one was set to — nothing carries
       // over across a camera switch, so neither should this flag.
@@ -497,14 +549,8 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       // Nor does zoom — a fresh controller always opens at 1x regardless of
       // where the last one was left.
       _zoomLevel = 1.0;
-      _maxZoomLevel = maxZoom;
+      _maxZoomLevel = camera.maxZoomLevel;
     });
-
-    if (Platform.isIOS) {
-      await controller.startImageStream(
-        (image) => _onCameraFrame(image, description),
-      );
-    }
   }
 
   /// Runs at most one detection pass every [_frameAnalysisInterval] — ML
@@ -516,6 +562,9 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   static const _frameAnalysisInterval = Duration(milliseconds: 400);
 
   void _onCameraFrame(CameraImage image, CameraDescription description) {
+    // A controller can still deliver a frame or two while it is being closed,
+    // after this screen, and the detector below with it, has gone.
+    if (!mounted) return;
     final now = DateTime.now();
     final last = _lastFrameAnalysisAt;
     if (last != null && now.difference(last) < _frameAnalysisInterval) return;
@@ -550,19 +599,8 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// in that case rather than doing something pointless.
   Future<void> _switchCamera() async {
     if (_availableCameras.length < 2) return;
-
-    final state = _state;
-    if (state is _CameraReady) await state.controller.dispose();
-    if (!mounted) return;
-    setState(() => _state = const _CameraInitializing());
-
     _cameraIndex = (_cameraIndex + 1) % _availableCameras.length;
-    try {
-      await _openCamera(_availableCameras[_cameraIndex]);
-    } on CameraException catch (e) {
-      if (!mounted) return;
-      setState(() => _state = _CameraUnavailable(_messageFor(e)));
-    }
+    await _camera.restart();
   }
 
   /// [CameraController]'s own continuous zoom — see the doc comment on
@@ -571,23 +609,41 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// rather than trusting the caller's requested level, since [_maxZoomLevel]
   /// can be lower than 2.0 on a camera with no optical or digital headroom
   /// for it (most often the front-facing one).
+  ///
+  /// A level the camera refuses leaves the zoom where it was. So does a tap
+  /// that lands as the controller is being closed (the app leaving the
+  /// foreground releases it), which the plugin reports as a
+  /// [CameraException], and the platform can fail the call with a
+  /// [PlatformException] of its own. Nothing awaits this, it runs straight
+  /// from the zoom control's tap, so an error let out of here had nowhere to
+  /// go but the zone's uncaught-error handler.
   Future<void> _setZoom(double level) async {
     final state = _state;
     if (state is! _CameraReady) return;
     final clamped = level.clamp(1.0, _maxZoomLevel);
     if (clamped == _zoomLevel) return;
-    await state.controller.setZoomLevel(clamped);
+    try {
+      await state.controller.setZoomLevel(clamped);
+    } on CameraException {
+      return;
+    } on PlatformException {
+      return;
+    }
     if (!mounted) return;
     setState(() => _zoomLevel = clamped);
   }
 
-  String _messageFor(CameraException e) => switch (e.code) {
-    'CameraAccessDenied' ||
-    'CameraAccessDeniedWithoutPrompt' ||
-    'CameraAccessRestricted' =>
+  String _messageFor(Object error) => switch (error) {
+    CameraException(
+      code:
+          'CameraAccessDenied' ||
+          'CameraAccessDeniedWithoutPrompt' ||
+          'CameraAccessRestricted',
+    ) =>
       'AutoPivot needs camera access to take photographs. '
           'Enable it for AutoPivot in Settings.',
-    _ => e.description ?? 'The camera could not be started.',
+    CameraException(:final description?) => description,
+    _ => 'The camera could not be started.',
   };
 
   Future<void> _capture() async {
@@ -595,11 +651,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     final angle = _currentAngle;
     if (state is! _CameraReady || _capturing || angle == null) return;
     if (_blockingMessage != null) return;
-    final goodSince = _allGoodSince;
-    if (goodSince == null ||
-        DateTime.now().difference(goodSince) < _holdSteadyDuration) {
-      return;
-    }
+    if (!_holdSteady.isSettled(target: angle, now: DateTime.now())) return;
 
     setState(() => _capturing = true);
     try {
@@ -614,6 +666,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         _captured[angle] = photo;
         _skipped.remove(angle);
         if (_jumpTarget == angle) _jumpTarget = null;
+        _updateHoldSteady();
       });
       // A firmer tap than the alignment one above — this is the shot
       // actually being taken, the moment worth the most feedback in the
@@ -627,7 +680,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       // save that loses a race with the very next one still leaves the
       // draft at the most recent capture it finished writing, never a
       // corrupt one.
-      unawaited(_saveDraftInBackground());
+      unawaited(_saveDraft());
       // Locks in whatever auto exposure/focus metered for THIS shot — the
       // first one, specifically, since it's the first moment there was
       // actually a well-framed car to meter against. Every shot after it
@@ -646,12 +699,16 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   }
 
   /// The current set, written to disk — see [_capture]'s own call site for
-  /// why this runs after every shot rather than only at exit.
-  Future<void> _saveDraftInBackground() => saveCaptureDraft(
+  /// why this runs after every shot rather than only at exit — with the
+  /// submit of it that stopped short, if one did (see
+  /// [CaptureSubmission.unfinished]), so a retry after the camera closes
+  /// still carries on with the listing that submit created.
+  Future<void> _saveDraft() => saveCaptureDraft(
     capturedPaths: _captured.map(
       (angle, file) => MapEntry(angle, file.path),
     ),
     skipped: _skipped,
+    unfinishedSubmission: _submission.unfinished,
   );
 
   /// Best-effort — not every camera on every device actually supports a
@@ -701,6 +758,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       _captured.remove(angle);
       _skipped.remove(angle);
       _jumpTarget = angle;
+      _updateHoldSteady();
     });
   }
 
@@ -717,6 +775,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       // forever — skip only clears from the normal sequence, and the jump
       // target bypasses that check on purpose.
       if (_jumpTarget == angle) _jumpTarget = null;
+      _updateHoldSteady();
     });
   }
 
@@ -750,6 +809,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       _captured
         ..clear()
         ..addAll(result.photos);
+      _updateHoldSteady();
     });
 
     switch (result) {
@@ -767,80 +827,99 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// for processing — the pipeline used to only start once someone opened
   /// the listing on the platform and asked for it there; this is the whole
   /// reason the review screen asks for a backdrop up front rather than
-  /// leaving it for later.
+  /// leaving it for later. [_submission] outlives a failed attempt, so
+  /// trying again carries on from where that one stopped instead of making
+  /// a second listing — see [CaptureSubmission.submit].
   Future<void> _submitListing(VehicleDetails details, int? backdropId) async {
     setState(() => _submitting = true);
-    final api = ref.read(apiClientProvider);
     try {
-      final listing = await api.createListing(
-        make: details.make,
-        model: details.model,
-        year: details.year,
-        variant: details.variant,
+      final result = await _submission.submit(
+        api: ref.read(apiClientProvider),
+        details: details,
+        photoPaths: _orderedCaptures.map((e) => e.value.path).toList(),
+        backdropId: backdropId,
       );
-      final paths = _orderedCaptures.map((e) => e.value.path).toList();
-      await api.uploadImages(listing.id, paths);
+      switch (result) {
+        case SubmitFailed(:final message):
+          // Saved now, not when the camera closes: whatever the attempt left
+          // on the server has to be in the draft already if the app is
+          // killed, or the screen closes without the quit dialog, before
+          // anyone retries.
+          unawaited(_saveDraft());
+          // The review form comes back filled in with what was just sent, so
+          // a retry is two taps rather than typing the vehicle in again, and
+          // is the same submission [_submission] can pick up from.
+          _reviewDraft = ReviewDraft(
+            make: details.make,
+            model: details.model,
+            year: '${details.year}',
+            variant: details.variant ?? '',
+            backdropId: backdropId,
+          );
+          if (!mounted) return;
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Could not submit'),
+              content: Text(message),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        case Submitted(
+          :final listingTitle,
+          :final photoCount,
+          :final processingWarning,
+        ):
+          try {
+            await clearCaptureDraft();
+          } catch (_) {
+            // The set is on the server by now, so this is tidying up after a
+            // finished submit, not part of it. A draft left behind only means
+            // being offered those photographs again next time; reporting the
+            // submit as failed would invite retrying what is already done.
+          }
+          if (!mounted) return;
+          haptic(ref, HapticFeedbackType.medium);
 
-      // A processing failure here does not undo the upload above — the
-      // photographs and the listing both exist either way, which is why
-      // this is its own try block with its own message rather than folding
-      // into the outer catch and implying the whole submit failed.
-      String? processingWarning;
-      try {
-        await api.processListing(listing.id, backdropId: backdropId);
-      } on ApiException catch (e) {
-        processingWarning = e.message;
+          final photographs =
+              '$photoCount photograph${photoCount == 1 ? '' : 's'}';
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Uploaded'),
+              content: Text(
+                processingWarning == null
+                    ? '$photographs added to "$listingTitle" and sent for '
+                          'processing.'
+                    : '$photographs added to "$listingTitle", but processing '
+                          'could not be started: $processingWarning',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          if (!mounted) return;
+          // Land back on Overview, refreshed, rather than wherever the camera
+          // bubble happened to be tapped from — the dealer just added a car
+          // and that is the one screen built to show it. go() rather than
+          // push(): this replaces the current location instead of stacking a
+          // new one, so the back gesture from Overview can't return to a stale
+          // screen. If Overview is already the screen underneath, go() alone
+          // would not reconstruct it, so the ticker bump covers that case
+          // explicitly.
+          ref.read(dashboardRefreshProvider.notifier).bump();
+          context.go(AppRoutes.home);
+          (widget.onClose ?? () => Navigator.of(context).pop()).call();
       }
-      await clearCaptureDraft();
-      if (!mounted) return;
-      haptic(ref, HapticFeedbackType.medium);
-
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Uploaded'),
-          content: Text(
-            processingWarning == null
-                ? '${paths.length} photograph${paths.length == 1 ? '' : 's'} '
-                      'added to "${listing.title}" and sent for processing.'
-                : '${paths.length} photograph${paths.length == 1 ? '' : 's'} '
-                      'added to "${listing.title}", but processing could not '
-                      'be started: $processingWarning',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-      if (!mounted) return;
-      // Land back on Overview, refreshed, rather than wherever the camera
-      // bubble happened to be tapped from — the dealer just added a car and
-      // that is the one screen built to show it. go() rather than push():
-      // this replaces the current location instead of stacking a new one,
-      // so the back gesture from Overview can't return to a stale screen.
-      // If Overview is already the screen underneath, go() alone would not
-      // reconstruct it, so the ticker bump covers that case explicitly.
-      ref.read(dashboardRefreshProvider.notifier).bump();
-      context.go(AppRoutes.home);
-      (widget.onClose ?? () => Navigator.of(context).pop()).call();
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Could not submit'),
-          content: Text(e.message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -887,12 +966,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     if (action == null || !mounted) return;
 
     if (action == _QuitAction.saveDraft) {
-      await saveCaptureDraft(
-        capturedPaths: _captured.map(
-          (angle, file) => MapEntry(angle, file.path),
-        ),
-        skipped: _skipped,
-      );
+      await _saveDraft();
     } else {
       await clearCaptureDraft();
     }
@@ -910,10 +984,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     // the shutter silently becomes tappable.
     final instantaneouslyGood =
         blockingMessage == null && _currentAngle != null;
-    final goodSince = _allGoodSince;
-    final settled =
-        goodSince != null &&
-        DateTime.now().difference(goodSince) >= _holdSteadyDuration;
+    final settled = _holdSteady.isSettled(
+      target: _currentAngle,
+      now: DateTime.now(),
+    );
     final canCapture = canAct && instantaneouslyGood && settled;
 
     return PopScope(
@@ -933,7 +1007,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
                 ),
                 _CameraUnavailable(:final message) => _CenteredMessage(
                   message: message,
-                  onRetry: _initCamera,
+                  onRetry: _camera.start,
                 ),
                 _NoCameraHardware() => _CaptureBody(
                   controller: null,
