@@ -21,7 +21,7 @@ import backdrop_analysis
 from api import storage
 from api.deps import DbSession, ReadyUser
 from api.schemas import BackdropGeometryIn, BackdropOut
-from database.models import Backdrop
+from database.models import AuditLog, Backdrop
 
 logger = logging.getLogger("autopivot.backdrops")
 
@@ -261,13 +261,21 @@ def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> No
 
 
 @router.get("/files/{storage_path:path}", include_in_schema=False)
-def serve_file(storage_path: str, user: ReadyUser) -> FileResponse:
+def serve_file(storage_path: str, user: ReadyUser, session: DbSession) -> FileResponse:
     """Serve a stored file to a member of the dealership that owns it.
 
     Authorisation is by path prefix rather than a database lookup, because every
     stored path begins with the owning dealership's id and that is cheaper and
     harder to get wrong than joining back to whichever table referenced it.
     """
+    if user.role == "platform_admin":
+        session.add(AuditLog(
+            actor_user_id=user.id, action="platform_photo_access", outcome="denied",
+            request_path="/api/files/[redacted]",
+            details="Platform photograph access is disabled; metadata access only.",
+        ))
+        session.commit()
+        raise HTTPException(status_code=404, detail="File not found.")
     owner = storage.dealership_of(storage_path)
     if owner is None or owner != user.dealership_id:
         # Same response for "not yours" and "does not exist", so the route
