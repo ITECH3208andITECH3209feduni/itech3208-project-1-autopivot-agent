@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image as PilImage
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 import backdrop_analysis
@@ -247,7 +247,16 @@ def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> No
             detail="This backdrop has been used to process images and cannot be deleted.",
         )
 
-    storage.delete(path)
+    # Backdrop files are content-addressed and backdrops.storage_path is not
+    # unique, so the same image uploaded under two names is one file shared by
+    # two rows (see the upload handler's own note). Remove the file only once
+    # the row just deleted was the last to reference it — otherwise deleting one
+    # backdrop would 404 the other's preview and break any job composed with it.
+    still_referenced = session.scalar(
+        select(func.count(Backdrop.id)).where(Backdrop.storage_path == path)
+    )
+    if not still_referenced:
+        storage.delete(path)
     logger.info("Backdrop deleted — dealership=%s id=%s", dealership_id, backdrop_id)
 
 

@@ -4,8 +4,8 @@
 /// itself. A failed or declined unlock is not a reason to end the session:
 /// [AuthController] is "the only thing allowed to change" [AuthState] per
 /// its own doc comment, and a wrong Face ID read is not that — the token
-/// stays valid, [AppLockController] just keeps showing [AppLockScreen] until
-/// it succeeds.
+/// stays valid, and [AppLockScreen] stays over the app until the check
+/// succeeds, or until the person signs out and back in with their password.
 library;
 
 import 'package:flutter/material.dart';
@@ -17,15 +17,30 @@ import '../design/typography.dart';
 import 'app_preferences.dart';
 import 'biometric_auth.dart';
 
-/// True once unlocked for this app session. Starts locked — the same
-/// "assume nothing until proven" as [AuthState] starting at [AuthChecking].
+/// True once unlocked for this app session. A session restored at cold start
+/// starts locked — the same "assume nothing until proven" as [AuthState]
+/// starting at [AuthChecking] — and one begun by typing the password does
+/// not.
 final appLockProvider = NotifierProvider<AppLockController, bool>(
   AppLockController.new,
 );
 
 class AppLockController extends Notifier<bool> {
+  /// A fresh sign-in has just reauthenticated the person by password, which
+  /// is the stronger proof; demanding the phone's biometric on top makes the
+  /// lock ask for a face or fingerprint that has nothing to do with the
+  /// account just signed into — a company-assigned or shared device, refusing
+  /// its user because *this phone's* enrolled biometric is someone else's.
+  /// This used to start locked however the session began, with nothing but
+  /// the biometric check able to unlock it, so for anyone the phone could not
+  /// recognise (a passcode since removed, a shared device), "Sign out
+  /// instead" led through the password sign-in straight back to the lock,
+  /// for good: the setting belongs to the phone and survives sign-out.
+  /// Watched, so every sign-in decides afresh.
   @override
-  bool build() => false;
+  bool build() => ref.watch(
+    authProvider.select((auth) => auth is AuthSignedIn && auth.byPassword),
+  );
 
   void unlock() => state = true;
 
@@ -34,22 +49,23 @@ class AppLockController extends Notifier<bool> {
   /// OS level) is picked up by someone else while this app is what was left
   /// open.
   ///
-  /// Deliberately *not* also called on a sign-out-then-sign-in: an earlier
-  /// version relocked there too, reasoning that the previous session's
-  /// unlock should not silently carry over to whoever signs in next. In
-  /// practice that makes the lock demand a face or fingerprint that has
-  /// nothing to do with the account just signed into — a company-assigned
-  /// or shared device, signed into with a password that just proved who is
-  /// there, then immediately refusing them because *this phone's* enrolled
-  /// biometric is someone else's. Backgrounding is the actual signal this
-  /// screen exists to react to; a fresh sign-in already reauthenticated the
-  /// person by password, which is not nothing.
+  /// Deliberately *not* also called on a sign-out-then-sign-in — see
+  /// [build] for why a password sign-in counts as unlocked. Backgrounding is
+  /// the actual signal this screen exists to react to.
   void relock() => state = false;
 }
 
-/// Wraps the signed-in app. Shows [AppLockScreen] instead of [child] exactly
-/// when biometric lock is on and this app session has not been unlocked yet;
-/// otherwise transparent.
+/// Wraps the signed-in app, and covers it with [AppLockScreen] exactly when
+/// biometric lock is on and this app session has not been unlocked yet.
+///
+/// Covers it rather than replacing it. Swapping the lock screen in for
+/// [child] — the router, with every route, dialog and half-filled form on
+/// it — disposed all of that on every trip to the background, a one-time
+/// password shown "only now" included (team_screen.dart,
+/// dealerships_screen.dart), and unlocking started the app over from its
+/// route alone. Kept mounted underneath, it is also kept out of reach while
+/// covered: no taps, no keyboard focus, nothing read out by a screen
+/// reader, and no animations running.
 class AppLockGate extends ConsumerStatefulWidget {
   const AppLockGate({super.key, required this.child});
 
@@ -91,10 +107,27 @@ class _AppLockGateState extends ConsumerState<AppLockGate>
     // frame is not a disclosure — the phone's own lock screen already had to
     // be open for this app to be in the foreground at all — so this treats
     // "not loaded yet" the same as "lock is off" rather than blocking on it.
-    if (!prefs.loaded || !prefs.biometricLockEnabled || unlocked) {
-      return widget.child;
-    }
-    return const AppLockScreen();
+    final locked = prefs.loaded && prefs.biometricLockEnabled && !unlocked;
+
+    // The same widgets around the child whether locked or not, so that
+    // locking changes their settings rather than the tree's shape, which
+    // would rebuild the child from scratch.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ExcludeFocus(
+          excluding: locked,
+          child: ExcludeSemantics(
+            excluding: locked,
+            child: IgnorePointer(
+              ignoring: locked,
+              child: TickerMode(enabled: !locked, child: widget.child),
+            ),
+          ),
+        ),
+        if (locked) const AppLockScreen(),
+      ],
+    );
   }
 }
 

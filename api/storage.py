@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from PIL import Image, UnidentifiedImageError
+from PIL import ExifTags, Image, UnidentifiedImageError
 
 StorageKind = Literal["original", "processed", "backdrop", "plate_overlay"]
 
@@ -50,6 +50,10 @@ MIME_FOR_PIL_FORMAT: dict[str, str] = {
     "PNG": "image/png",
     "WEBP": "image/webp",
 }
+
+# EXIF orientations 5 to 8 are quarter turns, with or without a mirror, so the
+# picture a viewer sees is as wide as the stored pixel grid is tall.
+_QUARTER_TURN_ORIENTATIONS = frozenset({5, 6, 7, 8})
 
 
 class StorageError(Exception):
@@ -95,6 +99,12 @@ def inspect_image(content: bytes) -> tuple[str, int, int]:
 
     PIL's verify() consumes the stream, so the buffer is opened twice: once to
     confirm the file is intact, once to read its dimensions.
+
+    The dimensions are the ones the picture is seen at, which are not always
+    the stored ones. A phone held upright writes a landscape grid of pixels and
+    an EXIF note saying to turn it a quarter; browsers, the Flutter app and the
+    pipeline all honour that note, so the size recorded is the turned one. The
+    file itself is never rewritten — see save_image.
     """
     try:
         probe = Image.open(io.BytesIO(content))
@@ -111,7 +121,28 @@ def inspect_image(content: bytes) -> tuple[str, int, int]:
             f"{image.format or 'That'} images are not supported. "
             "Use JPEG, PNG or WEBP."
         )
-    return mime, image.width, image.height
+    width, height = image.size
+    if _orientation(image) in _QUARTER_TURN_ORIENTATIONS:
+        width, height = height, width
+    return mime, width, height
+
+
+def _orientation(image: Image.Image) -> int:
+    """The EXIF orientation, or 1 — as stored — when there is none to read.
+
+    Cheap for JPEG and WEBP, which carry EXIF in their headers. For a PNG with
+    no EXIF chunk ahead of its pixel data, PIL decodes the image to look for one
+    after it: a fraction of a second on a large upload, and the price of
+    reading exactly what ImageOps.exif_transpose reads when the pipeline
+    decodes the same file, so the recorded size and the processed one agree.
+
+    A malformed block counts as no orientation. Metadata nobody can read is no
+    reason to refuse a photograph.
+    """
+    try:
+        return int(image.getexif().get(ExifTags.Base.Orientation, 1))
+    except Exception:
+        return 1
 
 
 def save_image(
@@ -128,6 +159,11 @@ def save_image(
     byte-identical results, and images.storage_path is globally unique. Without
     it, reprocessing an image, or two listings sharing a photograph, would
     collide on a path that is supposed to identify one row.
+
+    The bytes are written exactly as received. A photograph is turned upright
+    when it is decoded, never by re-encoding the upload: that would cost
+    quality and the camera's own metadata, and move the file off the address
+    its contents give it.
     """
     if not content:
         raise StorageError("The uploaded file is empty.")
@@ -152,11 +188,38 @@ def save_image(
     return StoredImage(relative, mime, len(content), width, height)
 
 
+def _safe_segments(storage_path: str) -> list[str] | None:
+    """Split a stored path into segments, or None if it is not safe to use.
+
+    A well-formed stored path is forward-slash separated segments living under
+    the storage root: `<dealership>/<kind>/<name>.<ext>`. Anything that could
+    climb out of a dealership's own subtree is rejected outright rather than
+    normalised — an absolute path, a "." or ".." segment, an empty segment (a
+    leading, trailing or doubled slash), a NUL, or a backslash that a Windows
+    filesystem would read as a separator.
+
+    Rejecting rather than normalising is the point: ownership is read from the
+    first segment, and `1/../2/...` must not be allowed to pass dealership 1's
+    check and then resolve to dealership 2's file. `%2e%2e` is decoded to `..`
+    before a route sees the path, so the traversal arrives here intact.
+    """
+    if not storage_path:
+        return None
+    segments = storage_path.split("/")
+    for segment in segments:
+        if segment in ("", ".", "..") or "\\" in segment or "\x00" in segment:
+            return None
+    return segments
+
+
 def resolve(storage_path: str) -> Path:
     """Map a stored relative path to a real file, refusing to leave the root."""
+    if _safe_segments(storage_path) is None:
+        # A crafted path — traversal, absolute, or an empty/dot segment.
+        raise StorageError("Invalid storage path.")
     candidate = (STORAGE_ROOT / storage_path).resolve()
     if not candidate.is_relative_to(STORAGE_ROOT):
-        # Reached only via a crafted path such as "../../etc/passwd".
+        # Defence in depth: a symlink under the root could still point outside.
         raise StorageError("Invalid storage path.")
     if not candidate.is_file():
         raise StorageError("That file is no longer available.")
@@ -167,9 +230,14 @@ def dealership_of(storage_path: str) -> int | None:
     """The dealership a path belongs to, or None if it is not well formed.
 
     Callers use this to confirm a file belongs to the requesting user's
-    dealership before serving it.
+    dealership before serving it, so ownership is decided on the *normalised*
+    path: a path carrying a traversal, absolute or empty segment is not well
+    formed and belongs to nobody.
     """
-    head = storage_path.split("/", 1)[0]
+    segments = _safe_segments(storage_path)
+    if segments is None:
+        return None
+    head = segments[0]
     return int(head) if head.isdigit() else None
 
 

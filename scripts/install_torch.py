@@ -14,9 +14,11 @@ it installs cleanly, imports cleanly, and simply reports that no GPU exists.
 People lose an afternoon to it. The CUDA builds are on PyTorch's own package
 index and have to be requested explicitly.
 
-Which build depends on the NVIDIA driver, not on the card. Thanks to CUDA minor
-version compatibility, any 12.x runtime runs on a 527.41+ Windows driver, so
-the choice is really just "recent driver or not".
+Which build depends mostly on the NVIDIA driver. Thanks to CUDA minor version
+compatibility, any 12.x runtime runs on a 527.41+ Windows driver, so for most
+cards the choice is just "recent driver or not". The exception is the card
+itself being newer than the build: Blackwell (the RTX 50 series) has no kernels
+in anything before CUDA 12.8, so its compute capability is checked as well.
 
 Uses only the standard library: it runs before anything is installed.
 """
@@ -42,46 +44,65 @@ INDEX = "https://download.pytorch.org/whl/{}"
 DEFAULT_CUDA = "cu126"
 OLD_DRIVER_CUDA = "cu118"
 
+# Blackwell cards — compute capability 10.x for the data-centre parts, 12.x for
+# the RTX 50 series — have no kernels in any build before CUDA 12.8. A cu126
+# build still installs on one, imports, and reports the GPU as available; it
+# then fails on the first real operation ("no kernel image is available"), and
+# the application's startup probe falls back to the CPU without anything
+# looking wrong. Any card that can be this new has a driver new enough for
+# CUDA 12.8, since older drivers do not support the card at all.
+BLACKWELL_CUDA = "cu128"
+FIRST_BLACKWELL_CAPABILITY = (10, 0)
 
-def detect_driver_version() -> float | None:
-    """The installed NVIDIA driver version, or None if there is no NVIDIA GPU."""
+
+def query_gpus(field: str) -> list[str] | None:
+    """nvidia-smi's answer for one --query-gpu field, a line per GPU.
+
+    None if there is no nvidia-smi, or it cannot answer — which is also what
+    an older driver does for a field it does not know.
+    """
     try:
         result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=driver_version",
-                "--format=csv,noheader",
-            ],
+            ["nvidia-smi", f"--query-gpu={field}", "--format=csv,noheader"],
             capture_output=True,
             text=True,
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-
     if result.returncode != 0:
         return None
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return lines or None
 
-    match = re.search(r"(\d+)\.(\d+)", result.stdout)
+
+def detect_driver_version() -> float | None:
+    """The installed NVIDIA driver version, or None if there is no NVIDIA GPU."""
+    lines = query_gpus("driver_version")
+    match = re.search(r"(\d+)\.(\d+)", lines[0]) if lines else None
     if not match:
         return None
     return float(f"{match.group(1)}.{match.group(2)}")
 
 
 def detect_gpu_name() -> str | None:
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    name = result.stdout.strip().splitlines()
-    return name[0].strip() if name else None
+    lines = query_gpus("name")
+    return lines[0] if lines else None
+
+
+def detect_compute_capability() -> tuple[int, int] | None:
+    """The newest compute capability among the GPUs, e.g. (12, 0) for an RTX 5090.
+
+    The newest, because a build without kernels for it leaves that card — most
+    likely the one that was bought for this — unusable. None when nvidia-smi
+    does not report it.
+    """
+    found = []
+    for line in query_gpus("compute_cap") or []:
+        match = re.fullmatch(r"(\d+)\.(\d+)", line)
+        if match:
+            found.append((int(match.group(1)), int(match.group(2))))
+    return max(found) if found else None
 
 
 def choose_build() -> str | None:
@@ -99,9 +120,18 @@ def choose_build() -> str | None:
         return "cpu"
 
     gpu = detect_gpu_name() or "NVIDIA GPU"
+    capability = detect_compute_capability()
     print(f"Found: {gpu}")
     print(f"Driver version: {driver}")
+    if capability is not None:
+        print(f"Compute capability: {capability[0]}.{capability[1]}")
 
+    if capability is not None and capability >= FIRST_BLACKWELL_CAPABILITY:
+        print(
+            "\nThat is a Blackwell card, which only CUDA 12.8 and newer builds "
+            f"can run on, so {BLACKWELL_CUDA} will be used."
+        )
+        return BLACKWELL_CUDA
     if driver >= WINDOWS_DRIVER_FOR_CUDA_12:
         return DEFAULT_CUDA
     if driver >= WINDOWS_DRIVER_FOR_CUDA_11_8:
@@ -118,6 +148,61 @@ def choose_build() -> str | None:
     )
     print("Update the driver from nvidia.com to use the GPU.")
     return "cpu"
+
+
+# Run in a fresh interpreter after pip, so it sees the torch just installed.
+CHECK_SCRIPT = """\
+import torch
+print("torch", torch.__version__)
+print("cuda build", torch.version.cuda)
+available = torch.cuda.is_available()
+print("gpu available", available)
+print("gpu", torch.cuda.get_device_name(0) if available else "none")
+if available:
+    # is_available() only asks the driver. A build with no kernels for this
+    # card says True as well, then fails on the first operation, which is the
+    # probe the application runs at startup before falling back to the CPU.
+    try:
+        torch.zeros((1,), device="cuda").sum().item()
+        print("gpu runs", True)
+    except Exception as exc:
+        print("gpu runs", False)
+        print("gpu error", (str(exc).strip().splitlines() or [type(exc).__name__])[0])
+mps = getattr(getattr(torch.backends, "mps", None), "is_available", lambda: False)()
+print("mps available", mps)
+"""
+
+
+def gpu_problem(build: str, check_output: str) -> str | None:
+    """What is wrong with an installed CUDA build, from CHECK_SCRIPT's output."""
+    if "gpu available True" not in check_output:
+        return (
+            "\nWarning: the CUDA build installed but no GPU is visible to it.\n"
+            "Check that 'nvidia-smi' runs in a terminal, and update the NVIDIA "
+            "driver if it does not."
+        )
+    if "gpu runs True" not in check_output:
+        warning = (
+            f"\nWarning: this {build} build sees the GPU but cannot run on it, so "
+            "the application will fall back to the CPU and process images very "
+            "slowly."
+        )
+        if "no kernel image" in check_output and build != BLACKWELL_CUDA:
+            # The card is newer than the build: an RTX 50 series, for one.
+            return (
+                f"{warning} The card is newer than this build supports; install "
+                f"the newer one:\n    python scripts/install_torch.py {BLACKWELL_CUDA}"
+            )
+        return (
+            f"{warning} Update the NVIDIA driver from nvidia.com and run this "
+            "again. The error was:\n    "
+            + next(
+                (line[len("gpu error "):] for line in check_output.splitlines()
+                 if line.startswith("gpu error ")),
+                "(none reported)",
+            )
+        )
+    return None
 
 
 def install_command(build: str | None) -> list[str]:
@@ -146,7 +231,8 @@ def main() -> int:
             "If the download timed out, run this again — pip resumes from its "
             "cache.\n"
             "To choose a different build by hand:\n"
-            f"    python scripts/install_torch.py cu118\n"
+            f"    python scripts/install_torch.py {BLACKWELL_CUDA}\n"
+            f"    python scripts/install_torch.py {OLD_DRIVER_CUDA}\n"
             f"    python scripts/install_torch.py cpu",
             file=sys.stderr,
         )
@@ -156,30 +242,15 @@ def main() -> int:
     # is worth catching now, while the fix is still one command away.
     print("\nChecking the installed build ...")
     check = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import torch;"
-            "print('torch', torch.__version__);"
-            "print('cuda build', torch.version.cuda);"
-            "print('gpu available', torch.cuda.is_available());"
-            "print('gpu', torch.cuda.get_device_name(0)"
-            " if torch.cuda.is_available() else 'none');"
-            "mps = getattr(getattr(torch.backends, 'mps', None), 'is_available', lambda: False)();"
-            "print('mps available', mps)",
-        ],
+        [sys.executable, "-c", CHECK_SCRIPT],
         capture_output=True,
         text=True,
     )
     print(check.stdout.strip() or check.stderr.strip())
 
-    if build is not None and build != "cpu" and "gpu available True" not in check.stdout:
-        print(
-            "\nWarning: the CUDA build installed but no GPU is visible to it.\n"
-            "Check that 'nvidia-smi' runs in a terminal, and update the NVIDIA "
-            "driver if it does not.",
-            file=sys.stderr,
-        )
+    problem = gpu_problem(build, check.stdout) if build not in (None, "cpu") else None
+    if problem:
+        print(problem, file=sys.stderr)
 
     if build is None and "mps available True" not in check.stdout:
         print(

@@ -5,9 +5,12 @@
 /// Wraps go_router's `ShellRoute` child — the header and the camera action
 /// stay mounted and keep their own state as the user moves between screens
 /// inside the shell; only the content below the header changes. Sign-in and
-/// the forced password change sit outside this shell entirely and are
-/// unaffected — a screen the user is not meant to leave has no business
-/// showing a sign-out button.
+/// the forced password change sit outside this shell entirely: neither
+/// should show the account header, or a camera action that goes anywhere,
+/// before the user is actually in. The forced change has a "Sign out
+/// instead" of its own (change_password_screen.dart) — the one way off a
+/// screen the user otherwise cannot leave, which is what a way to sign out
+/// is for there, not a reason to hide one.
 ///
 /// The account sheet slides up from the bottom with a drag handle and rounded
 /// top corners — the same shape iOS uses for its own sheets, and the one an

@@ -38,7 +38,8 @@ def load_environment() -> None:
         return
 
     # override=False: a variable already set in the shell beats the file, which
-    # is what lets a one-off `set MAX_FILE_MB=50` work without editing .env.
+    # is what lets a one-off `set PLATE_TREATMENT=pixelate` work without
+    # editing .env.
     load_dotenv(BASE_DIR / ".env", override=False)
 
     for name in _PATH_SETTINGS:

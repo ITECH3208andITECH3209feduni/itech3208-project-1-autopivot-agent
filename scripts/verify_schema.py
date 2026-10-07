@@ -15,11 +15,23 @@ Exits non-zero with the missing tables named.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from sqlalchemy import inspect
+# Runs as `python scripts/verify_schema.py` too, as scripts/seed_dealership.py
+# does, rather than failing on "No module named 'database'".
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database.base import Base
-from database.connection import get_database_url, get_engine
+from sqlalchemy import inspect  # noqa: E402
+
+# Before anything reads DATABASE_URL. Without it a URL set only in .env is
+# never seen, and this checks the default SQLite file instead of the database
+# the application uses — the exact mismatch it exists to catch.
+from api.env import load_environment  # noqa: E402
+
+load_environment()
+
+from database.base import Base  # noqa: E402
+from database.connection import get_database_url, get_engine  # noqa: E402
 
 
 def main() -> int:

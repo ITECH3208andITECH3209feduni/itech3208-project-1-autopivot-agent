@@ -24,15 +24,28 @@ from __future__ import annotations
 import argparse
 import io
 import sys
+from pathlib import Path
 
-from PIL import Image
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+# Runs as `python scripts/measure_backdrops.py` too, as
+# scripts/seed_dealership.py does, rather than failing on "No module named".
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import backdrop_analysis
-from api import storage
-from database.connection import get_engine
-from database.models import Backdrop
+from PIL import Image  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
+# Before api.storage, which reads STORAGE_ROOT at import time, and before
+# anything reads DATABASE_URL. Without it a setting made only in .env is never
+# seen: this would measure the default SQLite file's backdrops, and read their
+# images from the default storage folder.
+from api.env import load_environment  # noqa: E402
+
+load_environment()
+
+import backdrop_analysis  # noqa: E402
+from api import storage  # noqa: E402
+from database.connection import get_engine  # noqa: E402
+from database.models import Backdrop  # noqa: E402
 
 
 def measure(backdrop: Backdrop) -> backdrop_analysis.BackdropGeometry | None:

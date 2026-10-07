@@ -13,12 +13,17 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { useSignInRedirect } from '../auth/AuthContext'
 import LoginModal from '../components/LoginModal'
 import PreviewToggle from '../components/PreviewToggle'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 
 export default function ComingSoonPage() {
-  const [showLogin, setShowLogin] = useState(false)
+  const { destination, notice } = useSignInRedirect()
+  // Sent here because the session ended mid-use: straight back into signing
+  // in, told why, rather than left on a page that looks signed out for no
+  // reason.
+  const [showLogin, setShowLogin] = useState(notice !== null)
   const navigate = useNavigate()
 
   return (
@@ -28,8 +33,11 @@ export default function ComingSoonPage() {
     }}>
       {showLogin && (
         <LoginModal
+          notice={notice}
           onClose={() => setShowLogin(false)}
-          onSuccess={() => { setShowLogin(false); navigate('/app') }}
+          // Replacing this page, so Back from where they land does not
+          // reopen a sign-in they have already done.
+          onSuccess={() => { setShowLogin(false); navigate(destination, { replace: true }) }}
           onSwitchToDemo={() => setShowLogin(false)}
         />
       )}

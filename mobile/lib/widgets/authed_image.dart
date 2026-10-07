@@ -17,9 +17,11 @@
 /// content-addressed — so there is nothing to invalidate, only a first fetch
 /// to avoid repeating on every cold start. Without it, reopening a listing
 /// you looked at yesterday re-downloads every photograph again before
-/// showing a single pixel.
+/// showing a single pixel. Both belong to whoever is signed in: signing out
+/// empties them ([clearAuthedImageCache]).
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -37,13 +39,17 @@ import 'skeleton.dart';
 String _cacheKey(String storagePath) =>
     storagePath.replaceAll('/', '_').replaceAll(RegExp(r'^_+'), '');
 
-Future<Directory> _imageCacheDir() async {
+Future<String> _imageCachePath() async {
   // The OS-managed cache directory, not documents: this is exactly what that
   // distinction is for — content worth keeping around for speed, never
   // backed up, and the platform is free to reclaim it under storage
   // pressure without this app needing to know or care.
   final base = await getApplicationCacheDirectory();
-  final dir = Directory('${base.path}/image_cache');
+  return '${base.path}/image_cache';
+}
+
+Future<Directory> _imageCacheDir() async {
+  final dir = Directory(await _imageCachePath());
   if (!await dir.exists()) await dir.create(recursive: true);
   return dir;
 }
@@ -76,18 +82,48 @@ Future<Uint8List> _diskCached(ApiClient api, String storagePath) async {
 
 /// Decoded bytes, keyed by storage path.
 ///
-/// `autoDispose` would refetch every time a tile scrolled out of view and back,
-/// which on a gallery is a lot of round trips for bytes that have not changed —
-/// stored files are content-addressed, so a path's contents never change. The
-/// disk cache in [_diskCached] carries that same guarantee across cold starts,
-/// where this in-memory one cannot help at all.
-final _imageBytesProvider = FutureProvider.family<Uint8List, String>((
-  ref,
-  path,
-) async {
-  final api = ref.watch(apiClientProvider);
-  return _diskCached(api, path);
-});
+/// Kept once they have arrived, and only then (the [Ref.keepAlive] below).
+/// Dropping a photograph whenever its tile scrolled out of view would refetch
+/// it every time it scrolled back, which on a gallery is a lot of round trips
+/// for bytes that have not changed — stored files are content-addressed, so a
+/// path's contents never change. A failure is not worth keeping: this used to
+/// hold every outcome for the life of the process, so a photograph refused
+/// once — lot Wi-Fi dropping out, a session expiring — stayed a grey box until
+/// the app was restarted, however many times it was shown again. The disk
+/// cache in [_diskCached] carries successes across cold starts, where this
+/// in-memory one cannot help at all.
+///
+/// Every photograph here belongs to the session it was fetched in: watching
+/// who is signed in rebuilds them all when that changes, so the next session
+/// never shows one fetched for (or refused to) the last. While nobody is
+/// signed in there is nothing to fetch with, so a photograph waits rather than
+/// asking the server without a session — its tile is about to go with the
+/// rest of the signed-in app anyway.
+final _imageBytesProvider = FutureProvider.autoDispose
+    .family<Uint8List, String>((ref, path) async {
+      final signedIn =
+          ref.watch(currentUserProvider.select((user) => user?.id)) != null;
+      if (!signedIn) return Completer<Uint8List>().future;
+
+      final api = ref.watch(apiClientProvider);
+      final bytes = await _diskCached(api, path);
+      if (ref.mounted) ref.keepAlive();
+      return bytes;
+    });
+
+/// Forgets every photograph fetched so far, in memory and on disk — what
+/// signing out does (`AuthController.signOut`), so that nothing one account
+/// was shown stays on the phone after it has gone.
+Future<void> clearAuthedImageCache(Ref ref) async {
+  ref.invalidate(_imageBytesProvider);
+  final dir = Directory(await _imageCachePath());
+  if (await dir.exists()) await dir.delete(recursive: true);
+}
+
+/// The bytes provider itself, for the tests that pin down what it keeps and
+/// for how long (test/medium_sign_out_test.dart).
+@visibleForTesting
+final authedImageBytes = _imageBytesProvider;
 
 class AuthedImage extends ConsumerWidget {
   const AuthedImage({

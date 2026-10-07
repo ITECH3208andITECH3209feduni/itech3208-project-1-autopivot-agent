@@ -7,7 +7,8 @@ Two databases are supported and the URL decides which:
   what a local development machine uses.
 * **PostgreSQL** — set `DATABASE_URL` to a `postgresql+psycopg://...` URL and
   everything behaves exactly as it did before. Deployments and anyone already
-  running a PostgreSQL instance are unaffected.
+  running a PostgreSQL instance are unaffected. A provider's `postgres://...`
+  or `postgresql://...` URL works as given; see get_database_url().
 
 The schema is identical on both: `database/models.py` carries SQLite variants
 for the two PostgreSQL-specific types it uses.
@@ -45,14 +46,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_SQLITE_PATH = BASE_DIR / "autopivot.db"
 
 
+# Schemes that name PostgreSQL but no driver. `postgres://` is what Fly
+# (`fly postgres attach`) and most hosted-Postgres dashboards hand out, and
+# SQLAlchemy 2 rejects it outright; a bare `postgresql://` means SQLAlchemy's
+# default driver, which on 2.0 is psycopg2 — not installed. psycopg 3 is.
+_DRIVERLESS_POSTGRES_SCHEMES = ("postgres", "postgresql")
+
+
 def get_database_url() -> str:
     """The configured database URL, defaulting to a local SQLite file.
 
     An explicit DATABASE_URL always wins, so pointing this at PostgreSQL is a
-    one-line change in `.env`.
+    one-line change in `.env`. A PostgreSQL URL that names no driver is given
+    psycopg, the one installed; every other URL is returned as configured.
     """
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
+        scheme, separator, rest = database_url.partition("://")
+        if separator and scheme.lower() in _DRIVERLESS_POSTGRES_SCHEMES:
+            return f"postgresql+psycopg://{rest}"
         return database_url
     # as_posix() keeps the URL well-formed on Windows, where the path contains
     # backslashes that SQLAlchemy would otherwise read as escape characters.

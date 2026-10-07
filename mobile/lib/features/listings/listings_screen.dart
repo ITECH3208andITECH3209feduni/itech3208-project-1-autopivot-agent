@@ -27,8 +27,8 @@
 /// in `AppShell` instead — persistent chrome that wraps this screen and the
 /// listing detail screen it leads to, rather than something each screen
 /// inside that shell would otherwise have to repeat. This screen keeps only
-/// what is specifically its own: the page title, the filter bar, and the
-/// list.
+/// what is specifically its own: the page title with its way back to the
+/// overview (see [_Header]), the filter bar, and the list.
 library;
 
 import 'package:flutter/material.dart';
@@ -184,8 +184,8 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
             slivers: [
               const SliverPadding(
                 padding: EdgeInsets.fromLTRB(
-                  Space.lg,
-                  Space.lg,
+                  Space.sm,
+                  Space.md,
                   Space.lg,
                   Space.md,
                 ),
@@ -264,7 +264,7 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
   };
 }
 
-/// The page title.
+/// The page title, and the way back to the overview.
 ///
 /// Not an [AppBar]: the brief calls for a serif display heading at 28px or
 /// larger for the screen title, and `AppBarTheme` styles every app bar's
@@ -272,12 +272,35 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
 /// inside the scrollable body sidesteps that clash and scrolls away with the
 /// rest of the content, which reads better on a small screen than a title
 /// that stays pinned above an otherwise short list.
+///
+/// The back button is always there, because this list is nobody's home
+/// screen: without one, arriving here with nothing underneath (a deep link,
+/// or the processing banner, which used to replace the whole stack to get
+/// here) left no way back to the overview at all — the account sheet does
+/// not link to it.
 class _Header extends StatelessWidget {
   const _Header();
 
   @override
   Widget build(BuildContext context) {
-    return Text('Vehicles', style: serif(32));
+    return Row(
+      children: [
+        IconButton(
+          onPressed: () {
+            final navigator = Navigator.of(context);
+            if (navigator.canPop()) {
+              navigator.pop();
+            } else {
+              context.go(AppRoutes.home);
+            }
+          },
+          icon: const Icon(Icons.arrow_back, color: C.inkSoft),
+          tooltip: 'Back to overview',
+        ),
+        const SizedBox(width: Space.xs),
+        Text('Vehicles', style: serif(32)),
+      ],
+    );
   }
 }
 

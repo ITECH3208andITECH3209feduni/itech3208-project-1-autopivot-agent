@@ -81,11 +81,30 @@ def add_original(session):
     return image
 
 
-def add_job(session, image, status, review_state):
+def add_processed(session, original):
+    """The composite a successful run leaves behind, linked to its original."""
+    output = Image(
+        vehicle_listing_id=LISTING_ID,
+        image_type="processed",
+        source_image_id=original.id,
+        original_filename=original.original_filename,
+        storage_path=f"{DEALERSHIP_ID}/processed/{next(_storage_paths)}.png",
+        mime_type="image/png",
+        file_size_bytes=1024,
+        width=1600,
+        height=1200,
+    )
+    session.add(output)
+    session.flush()
+    return output
+
+
+def add_job(session, image, status, review_state, output=None):
     job = ProcessingJob(
         vehicle_listing_id=LISTING_ID,
         dealership_id=DEALERSHIP_ID,
         input_image_id=image.id,
+        output_image_id=output.id if output is not None else None,
         processing_type="full_pipeline",
         status=status,
         review_state=review_state,
@@ -116,9 +135,16 @@ def test_a_needs_review_photograph_is_queued_again_by_reprocess(session):
 
 def test_a_successfully_processed_photograph_is_not_queued_again(session):
     """Unchanged behaviour: real success is still skipped, so Reprocess does
-    not duplicate work that already produced a usable result."""
+    not duplicate work that already produced a usable result.
+
+    Real success means a composite exists. A completed job whose composite has
+    since been deleted is queued again on purpose — see
+    tests/test_reprocess_deleted_output.py."""
     image = add_original(session)
-    add_job(session, image, status="completed", review_state="ok")
+    add_job(
+        session, image, status="completed", review_state="ok",
+        output=add_processed(session, image),
+    )
 
     listing = session.get(VehicleListing, LISTING_ID)
     queued = processing.create_jobs(session, listing, backdrop=None)

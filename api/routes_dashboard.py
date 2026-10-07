@@ -76,12 +76,17 @@ def dashboard_stats(user: ReadyUser, session: DbSession) -> DashboardStats:
         )
     )
 
+    # "Images processed" — the composites the pipeline produced this month, not
+    # the originals a dealer uploaded. DashboardStats is scoped to the current
+    # month (see the NavCounts docstring), so this uses the same month boundary
+    # as vehicles_this_month above.
     images_processed = session.scalar(
         select(func.count(Image.id))
         .join(VehicleListing, VehicleListing.id == Image.vehicle_listing_id)
         .where(
             VehicleListing.dealership_id == dealership_id,
-            Image.image_type == "original",
+            Image.image_type == "processed",
+            Image.created_at >= month_start,
         )
     )
 

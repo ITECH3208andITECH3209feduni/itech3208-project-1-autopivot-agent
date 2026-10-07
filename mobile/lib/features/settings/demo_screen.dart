@@ -12,21 +12,20 @@
 /// exists purely so this has something to submit without a camera.
 ///
 /// The listing it creates is a real row in the dealership's own vehicle
-/// list, and mobile has no way to delete a whole listing yet — only one
-/// photograph at a time (`ApiClient.deleteImage`). Rather than hide that,
-/// [_demoMake]/[_demoModel] make the result unmistakable in "All vehicles"
-/// instead of quietly resembling real inventory.
+/// list. Rather than hide that, [_demoMake]/[_demoModel] make the result
+/// unmistakable in "All vehicles" instead of quietly resembling real
+/// inventory — and every run after the first goes back to that same listing
+/// rather than making another (see [_DemoScreenState._sampleListing]).
 library;
-
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../../api/api_client.dart';
 import '../../api/api_exception.dart';
+import '../../api/models/listing_detail.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
@@ -48,16 +47,57 @@ class _DemoScreenState extends ConsumerState<DemoScreen> {
   bool _running = false;
   String? _errorMessage;
 
-  /// Copies the bundled asset out to a real file — `ApiClient.uploadImages`
-  /// takes filesystem paths, the same multipart contract a photograph fresh
-  /// out of the camera satisfies, and an asset bundled into the app package
-  /// is not one of those until it exists somewhere on disk.
-  Future<String> _demoImagePath() async {
-    final bytes = await rootBundle.load(_demoAssetPath);
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/autopivot-demo-car.jpg');
-    await file.writeAsBytes(bytes.buffer.asUint8List(), flush: true);
-    return file.path;
+  /// Puts the bundled photograph on [listingId]. Straight from the asset
+  /// bundle: it used to be copied out to a temporary file first, only for
+  /// [ApiClient.uploadImages] to read it back in.
+  Future<void> _uploadSample(ApiClient api, int listingId) async {
+    final asset = await rootBundle.load(_demoAssetPath);
+    await api.uploadImageBytes(
+      listingId,
+      asset.buffer.asUint8List(asset.offsetInBytes, asset.lengthInBytes),
+      filename: 'autopivot-demo-car.jpg',
+    );
+  }
+
+  /// The sample listing with its photograph on it: the one an earlier run
+  /// left, or else a new one.
+  ///
+  /// The server stores a photograph once, under a content hash that has to
+  /// be unique, so a second copy of the same bundled sample is refused ("One
+  /// of those photographs has already been uploaded."). Making a new listing
+  /// every time failed there on every run after the first, and left another
+  /// empty "Demo Sample Vehicle" behind each time. A new listing whose upload
+  /// is refused anyway — the sample already on a listing since renamed — is
+  /// taken back out rather than left empty.
+  Future<VehicleListingDetail> _sampleListing(ApiClient api) async {
+    final earlier = (await api.listings(query: '$_demoMake $_demoModel'))
+        .where((l) => l.make == _demoMake && l.model == _demoModel)
+        .firstOrNull;
+    if (earlier != null) {
+      final listing = await api.listing(earlier.id);
+      // Its photograph deleted since, the way to be rid of the sample, so it
+      // goes back on.
+      if (listing.originals.isEmpty) await _uploadSample(api, listing.id);
+      return listing;
+    }
+
+    final created = await api.createListing(
+      make: _demoMake,
+      model: _demoModel,
+      year: DateTime.now().year,
+    );
+    try {
+      await _uploadSample(api, created.id);
+    } on ApiException {
+      try {
+        await api.deleteListing(created.id);
+      } on ApiException {
+        // Left behind after all, empty and plainly named; the refusal that
+        // caused this is the thing worth reporting.
+      }
+      rethrow;
+    }
+    return created;
   }
 
   Future<void> _startDemo() async {
@@ -69,17 +109,13 @@ class _DemoScreenState extends ConsumerState<DemoScreen> {
 
     final api = ref.read(apiClientProvider);
     try {
-      final path = await _demoImagePath();
-      final listing = await api.createListing(
-        make: _demoMake,
-        model: _demoModel,
-        year: DateTime.now().year,
-      );
-      await api.uploadImages(listing.id, [path]);
+      final listing = await _sampleListing(api);
       // A processing failure here does not undo the listing or the upload —
       // both are real either way — so it is worth reaching the listing
       // screen regardless; see capture_screen.dart's own _submitListing for
-      // the same reasoning between these two calls.
+      // the same reasoning between these two calls. A second run over a
+      // sample already processed is refused as "nothing to process", which
+      // is no reason not to show it again either.
       try {
         await api.processListing(listing.id);
       } on ApiException {
@@ -148,8 +184,9 @@ class _DemoScreenState extends ConsumerState<DemoScreen> {
               Text(
                 "It creates a real listing on this dealership's account, "
                 'titled "$_demoMake $_demoModel" so it stays obviously '
-                "separate from real inventory — delete its photograph "
-                'afterward from the listing screen if you want it gone.',
+                'separate from real inventory, and runs again on that same '
+                'listing next time — delete it from the listing screen if '
+                'you want it gone.',
                 style: T.bodySmall,
               ),
               if (_errorMessage != null) ...[

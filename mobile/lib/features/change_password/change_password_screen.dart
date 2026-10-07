@@ -8,6 +8,10 @@
 /// been rotated once. The router enforces the redirect that keeps such a
 /// user here; this screen's job is only to not undermine that, which is why
 /// this mode has no app bar, no back button and no way to pop the route.
+/// Its one way out is signing out, which leaves the account rather than
+/// skipping the change (the next sign-in lands back here). Without it,
+/// someone who cannot set a password now (the wrong account, a temporary
+/// password they no longer have) is stuck until the app is killed.
 /// [AuthController.changePassword] updates the signed-in user in place on
 /// success, `mustChangePassword` becomes false, and the router moves the
 /// user on by itself — this screen does not navigate anywhere in this mode.
@@ -303,6 +307,23 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                                       : const Text('Change password'),
                                 ),
                               ),
+                              if (!widget.dismissible) ...[
+                                const SizedBox(height: Space.sm),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: TextButton(
+                                    // Not while a change is in flight: its
+                                    // success would sign this account back
+                                    // in after it had left.
+                                    onPressed: _submitting
+                                        ? null
+                                        : () => ref
+                                              .read(authProvider.notifier)
+                                              .signOut(),
+                                    child: const Text('Sign out instead'),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),

@@ -12,6 +12,16 @@ against PostgreSQL and use `UPDATE ... FROM`, bare `ALTER COLUMN` and
 `DROP CONSTRAINT`, none of which SQLite implements. The end state is the same
 schema either way — the migrations and the models describe the same tables.
 
+`create_all` only creates tables that are missing. It never adds a column to a
+table that already exists, so an `autopivot.db` built from older models comes
+through it unchanged — and stamping that file at head would record it as
+current when it is not, leaving the first login to fail with
+`no such column: users.token_version`. So the file is compared with the models
+before it is stamped, and if a column is missing the script names it, says how
+to rebuild, and exits non-zero without stamping. It never alters or deletes
+what is already there: bringing such a file up to date means rebuilding it, a
+rebuilt database starts empty, and that is the developer's call to make.
+
 **PostgreSQL** — `alembic upgrade head` is run, exactly as before. Nothing
 about the deployed path changes.
 
@@ -29,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
+from sqlalchemy import Engine, inspect  # noqa: E402
 
 from api.env import load_environment  # noqa: E402
 from database.base import Base  # noqa: E402
@@ -49,6 +60,66 @@ def alembic_config() -> Config:
     return config
 
 
+def compare_with_models(engine: Engine) -> tuple[list[str], list[str]]:
+    """Columns the models declare that the database lacks, and the reverse.
+
+    Each is written "table.column". Only names are compared, not types,
+    defaults, constraints or indexes: a missing column is the difference that
+    breaks the application outright, because loading a model selects every
+    column it declares — one absent column fails every query on that table.
+
+    A column the database has and the models do not — left by another branch,
+    say — is never selected, so it is returned to be mentioned rather than
+    treated as a problem. (It is mentioned at all because an insert into its
+    table would still fail if it were NOT NULL with no default.)
+    """
+    in_database = {
+        table: {column["name"] for column in reflected}
+        for (_schema, table), reflected in inspect(engine).get_multi_columns().items()
+    }
+    missing: list[str] = []
+    extra: list[str] = []
+    for name, table in sorted(Base.metadata.tables.items()):
+        present = in_database.get(name, set())
+        declared = [column.name for column in table.columns]
+        missing += [f"{name}.{column}" for column in declared if column not in present]
+        extra += [f"{name}.{column}" for column in sorted(present) if column not in declared]
+    return missing, extra
+
+
+def report_missing_columns(db_path: str, missing: list[str]) -> None:
+    name = Path(db_path).name
+    lines = [
+        "",
+        "error: this database is older than database/models.py. It is missing:",
+        "",
+        *(f"  {column}" for column in missing),
+        "",
+        "Running this script again will not add them: create_all creates missing",
+        "tables, never missing columns. The backend would fail with 'no such",
+        "column' the first time it read one, so this stops here rather than",
+        "stamping the file as current. Nothing that was already in the database",
+        "has been changed or deleted.",
+        "",
+        "To rebuild it, stop the backend, then:",
+        "",
+        f"  1. Rename {db_path}",
+        f"     to keep it as a backup (for example to {name}.old), along with",
+        f"     {name}-wal and {name}-shm if they are there.",
+        "  2. python -m scripts.init_db",
+        "  3. python -m scripts.seed_dealership",
+        "     (and python -m scripts.seed_platform_admin for the platform admin)",
+        "",
+        "The rebuilt database starts empty. Nothing in the old file is copied",
+        "across: dealerships, accounts, listings and backdrops have to be created",
+        "again, and you sign in with what seed_dealership prints.",
+    ]
+    # With output piped, stdout is buffered and stderr is not, so the progress
+    # lines printed before this would otherwise turn up after it.
+    sys.stdout.flush()
+    print("\n".join(lines), file=sys.stderr)
+
+
 def main() -> int:
     url = get_database_url()
 
@@ -60,6 +131,21 @@ def main() -> int:
 
         engine = get_engine()
         Base.metadata.create_all(engine)
+
+        # create_all has added every missing table by now, so anything still
+        # missing is a column in a table that already existed — one holding the
+        # developer's own rows. Changing those tables is not a decision to take
+        # on their behalf, so the columns are named, the tables are left alone,
+        # and the file is not stamped.
+        missing, extra = compare_with_models(engine)
+        if extra:
+            print(
+                "  Note: columns database/models.py does not declare, left as"
+                f" they are: {', '.join(extra)}"
+            )
+        if missing:
+            report_missing_columns(db_path, missing)
+            return 1
 
         created = sorted(Base.metadata.tables)
         print(f"  {len(created)} tables ready: {', '.join(created)}")

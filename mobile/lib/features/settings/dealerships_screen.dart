@@ -182,9 +182,9 @@ class _DealershipsScreenState extends ConsumerState<DealershipsScreen> {
 
   /// Empty when there is nothing to pop to — true when this screen is
   /// platform_admin's home rather than a Settings drill-down (see
-  /// `app.dart`'s route registration for [AppRoutes.dealerships]), the same
-  /// way `listings_screen.dart` has never needed a back button for the same
-  /// reason.
+  /// `app.dart`'s route registration for [AppRoutes.dealerships]). A home
+  /// screen has nowhere further back to go; `listings_screen.dart`, which is
+  /// nobody's home, always has one instead.
   Widget _backButton() {
     if (!Navigator.of(context).canPop()) return const SizedBox.shrink();
     return IconButton(

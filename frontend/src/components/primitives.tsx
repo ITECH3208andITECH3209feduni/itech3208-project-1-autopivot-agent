@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import { C, CARD_SHADOW, MONO, RADIUS_CARD, RADIUS_CONTROL, SANS, serif } from '../design'
+import { lockPageScroll } from './pageScrollLock'
 
 export function SolidBtn({
   children, onClick, type = 'button', full = false, disabled = false,
@@ -144,16 +145,19 @@ export function Modal({
     }
 
     document.addEventListener('keydown', onKeyDown, true)
-    // The page behind must not scroll while a dialog is over it.
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
 
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
-      document.body.style.overflow = previousOverflow
       opener?.focus?.()
     }
   }, [onClose])
+
+  // The page behind must not scroll while a dialog is over it. The lock is
+  // shared with useDialogKeys, which callers stack on top of this, so neither
+  // can put back a value the other wrote. Its own effect with no dependencies,
+  // so the hold lasts exactly as long as the dialog: the one above re-runs
+  // whenever a caller passes a fresh inline onClose, which is most renders.
+  useEffect(() => lockPageScroll(), [])
 
   return (
     <div

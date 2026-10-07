@@ -424,9 +424,11 @@ async def import_images_from_url(
     Attach photographs found on a listing page.
 
     Fetching and parsing are Akhanda Bhandari's, in api/url_import.py. This
-    route adds authentication, dealership scoping and storage — the standalone
-    /extract-images-from-url endpoint has none of those and returns base64 to
-    the caller instead of saving anything.
+    route adds authentication, dealership scoping and storage, and it is now
+    the only way to reach them: the standalone /extract-images-from-url
+    endpoint, which had none of those and handed base64 back to anyone who
+    asked instead of saving anything, has been removed (see the note above the
+    routes in autopivot_backend.py).
 
     Not every site works. url_import raises UrlImportError with a message that
     names the reason, and that message is what the dealer sees.
@@ -674,7 +676,15 @@ def process_listing(
             )
 
     jobs = processing.create_jobs(session, listing, backdrop)
-    if not jobs:
+    # A photograph whose job is still in flight is not queued again, so a press
+    # during a run can queue nothing and still be no mistake: it answers with
+    # that run's progress, which is what the client goes on to poll for.
+    # "Every photograph is already done" would be untrue while one is not.
+    in_flight = any(
+        job.status in ("pending", "processing")
+        for job in processing.latest_jobs(session, listing.id)
+    )
+    if not jobs and not in_flight:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="There is nothing to process — every photograph is already done.",
@@ -683,6 +693,12 @@ def process_listing(
 
     # Runs after the response, so the client gets its job list immediately and
     # can start polling rather than holding a connection open for minutes.
+    #
+    # Scheduled even when nothing new was queued. During a run it simply
+    # leaves the listing to that run. Otherwise it picks up any job left
+    # pending — which the full application also does by itself as it starts
+    # (processing.recover_interrupted_jobs), so this is only the fallback for
+    # one that recovery could not reach.
     background.add_task(processing.run_listing_jobs, listing.id)
 
     session.refresh(listing)
@@ -720,6 +736,12 @@ def include_image(
     an acceptable cost for a manual override a dealer chose on purpose, but it
     does mean this is a one-way door — there is no "undo" back to the
     original classification once this has been called.
+
+    Processing honours it. A photograph on record as an exterior is processed
+    whatever the classifier makes of it next time, and the classifier's verdict
+    is never written over it (processing.run_job). Before, the next Process
+    asked the classifier again, held the photograph back on the same verdict,
+    and wrote that verdict over this one.
     """
     listing = _owned_listing(session, user, listing_id)
     image = session.scalar(
@@ -762,6 +784,12 @@ def delete_image(
     try:
         paths.extend(_release_job_references(session, {image.id}))
         session.delete(image)
+        session.flush()
+        # The listing's status is rolled up from its jobs, and a job just went.
+        # A run keeps it up to date while there is one; with none going, a
+        # listing whose last unfinished photograph was deleted went on saying
+        # "processing" or "needs review" for good.
+        processing._refresh_listing_status(session, listing.id)
         session.commit()
     except IntegrityError:
         session.rollback()

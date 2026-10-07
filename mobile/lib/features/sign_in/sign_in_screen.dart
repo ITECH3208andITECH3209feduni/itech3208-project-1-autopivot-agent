@@ -49,6 +49,19 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Why the last session ended, when it ended on its own (expired, revoked,
+    // the account deactivated) rather than by signing out. It is the first
+    // thing someone sent back here needs to read, so it opens in the error
+    // banner, and the next attempt's outcome replaces it: once they are
+    // signing in again, the reason they had to is no longer news.
+    if (ref.read(authProvider) case AuthSignedOut(:final message?)) {
+      _error = message;
+    }
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();

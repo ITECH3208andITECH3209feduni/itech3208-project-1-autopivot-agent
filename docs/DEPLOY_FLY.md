@@ -31,6 +31,9 @@ document).
     `fly postgres attach` to this app. Check `flyctl postgres --help` for the
     exact current subcommands; Fly's managed-database offering has changed
     more than once and this document may be behind by the time you run it.
+    `attach` sets `DATABASE_URL` in the `postgres://...` form; leave it as it
+    is — the app reads `postgres://` and `postgresql://` URLs with the
+    psycopg driver it installs (`database/connection.py`).
   - **A separate managed Postgres** — Neon or Supabase both have a workable
     free tier and are decoupled from whatever Fly's own offering does next.
     Either way, what this app needs is just a `DATABASE_URL`.
@@ -71,6 +74,12 @@ Deploy:
 ```bash
 fly deploy
 ```
+
+This uploads the build context to Fly's remote builder, and `.dockerignore`
+keeps that to the files `Dockerfile.api` copies — `.env`, `.venv`,
+`node_modules`, `autopivot.db`, `storage/` and `mobile/` stay on your machine.
+Adding a `COPY` to `Dockerfile.api` means adding its source to the list in
+`.dockerignore` as well; `tests/test_ignore_files.py` fails until it is there.
 
 `release_command` in `fly.toml` runs `alembic upgrade head` automatically as
 part of this, against the `DATABASE_URL` secret above — the schema is created

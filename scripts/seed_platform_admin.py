@@ -1,20 +1,34 @@
-"""Provision the initial AutoPivot platform administrator."""
+"""Provision the initial AutoPivot platform administrator.
+
+    python -m scripts.seed_platform_admin
+    python scripts/seed_platform_admin.py
+"""
 
 from __future__ import annotations
 
 import os
 import secrets
 import sys
+from pathlib import Path
 
-from dotenv import load_dotenv
-from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
+# Lets this run as `python scripts/seed_platform_admin.py` as well as with -m,
+# as scripts/seed_dealership.py does. Without it the file form fails on
+# "No module named 'api'".
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from api.security import hash_password
-from database.connection import get_engine
-from database.models import User
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-load_dotenv(override=False)
+# Loads .env from the project directory, and before api.security is imported:
+# that module reads JWT_SECRET once, at import time, and would otherwise warn
+# about a key that .env does set.
+from api.env import load_environment  # noqa: E402
+
+load_environment()
+
+from api.security import hash_password  # noqa: E402
+from database.connection import get_engine  # noqa: E402
+from database.models import User  # noqa: E402
 
 
 def main() -> int:

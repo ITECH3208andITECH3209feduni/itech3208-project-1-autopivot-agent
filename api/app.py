@@ -7,8 +7,10 @@ GPU is absent:
 
     uvicorn api.app:app --reload
 
-autopivot_backend.py calls create_app() and bolts the processing routes on top,
-so the full deployment still exposes one application with one set of routes.
+autopivot_backend.py calls create_app() and registers the vision pipeline as
+the processor behind POST /api/listings/{id}/process, adding only health and
+client routes of its own, so the full deployment still exposes one application
+with one set of routes.
 """
 
 from __future__ import annotations
@@ -38,7 +40,8 @@ def create_app(
     *,
     description: str = (
         "Authentication and dealership data for AutoPivot. "
-        "Vehicle processing routes are added by autopivot_backend.py."
+        "Photographs are processed only where autopivot_backend.py has "
+        "registered the vision pipeline."
     ),
 ) -> FastAPI:
     app = FastAPI(
