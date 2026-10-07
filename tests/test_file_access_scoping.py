@@ -124,9 +124,10 @@ def test_raw_traversal_string_is_refused_at_the_handler(environment):
     client, _ours, theirs = environment
     from api import routes_backdrops
 
-    user = type("U", (), {"dealership_id": DEALERSHIP_ID})()
+    user = type("U", (), {"dealership_id": DEALERSHIP_ID, "role": "dealership_admin"})()
     with pytest.raises(HTTPException) as raised:
-        routes_backdrops.serve_file(f"1/../{theirs.storage_path}", user)
+        # The session is only used to audit platform-admin requests.
+        routes_backdrops.serve_file(f"1/../{theirs.storage_path}", user, session=None)
     assert raised.value.status_code == 404
 
 
