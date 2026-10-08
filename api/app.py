@@ -1,15 +1,4 @@
-"""FastAPI application factory.
-
-Deliberately free of any machine-learning import. The vision stack is several
-gigabytes and needs a GPU to be useful, but authentication and the dashboard
-need neither — so this module can be served on a laptop, in CI, or anywhere a
-GPU is absent:
-
-    uvicorn api.app:app --reload
-
-autopivot_backend.py calls create_app() and bolts the processing routes on top,
-so the full deployment still exposes one application with one set of routes.
-"""
+"""FastAPI application factory."""
 
 from __future__ import annotations
 
@@ -47,10 +36,6 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # Fixed by Vadim Rudoi — wildcard "*" with allow_credentials=True is an
-    # invalid CORS combination that every modern browser rejects. Origins are
-    # explicit and credentials are off; the bearer token travels in the
-    # Authorization header, which is why that header is allowed here.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
@@ -86,5 +71,5 @@ def create_app(
     return app
 
 
-# Module-level instance so `uvicorn api.app:app` works without the ML stack.
 app = create_app()
+

@@ -1,16 +1,4 @@
-"""Check that this machine can actually run AutoPivot, and say what is missing.
-
-    python -m scripts.check_setup
-
-Every check is independent and none of them change anything, so this is safe to
-run at any point — before setup to see what is needed, after setup to confirm
-it worked, or later when something has stopped working and it is not obvious
-which half is at fault.
-
-Exits 0 if everything needed to run the full pipeline is present, 1 otherwise.
-A machine that passes everything except the GPU checks can still run the site;
-it just processes images on the CPU, slowly.
-"""
+"""Check that this machine can actually run AutoPivot, and say what is missing."""
 
 from __future__ import annotations
 
@@ -299,9 +287,6 @@ def check_database() -> None:
     else:
         ok(f"All {len(expected)} tables present")
 
-    # An empty users table means login is impossible, which is the single most
-    # confusing way for a fresh setup to fail: the site loads and simply
-    # rejects every password.
     try:
         from sqlalchemy import func, select
 
@@ -378,3 +363,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

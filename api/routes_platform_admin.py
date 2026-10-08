@@ -174,3 +174,4 @@ def onboard_dealership(
         administrator=serialise_user(session, first_administrator),
         initial_password=initial_password,
     )
+

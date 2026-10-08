@@ -1,14 +1,4 @@
-"""Cross-platform PyTorch device selection for AutoPivot.
-
-The application can use an NVIDIA CUDA device on Windows/Linux, Apple's MPS
-backend on a compatible macOS installation, or the CPU everywhere.  Keeping
-the decision here prevents the model registry, CLIP classifier and setup check
-from reporting different devices.
-
-``AUTOPIVOT_DEVICE`` may be set to ``auto`` (the default), ``cuda``, ``mps``
-or ``cpu``.  A requested accelerator that is unavailable always falls back to
-CPU instead of allowing startup to fail with an obscure device error.
-"""
+"""Cross-platform PyTorch device selection for AutoPivot."""
 
 from __future__ import annotations
 
@@ -94,12 +84,7 @@ def select_device(
     *,
     probe: bool = True,
 ) -> str:
-    """Return the usable device name: ``cuda``, ``mps`` or ``cpu``.
-
-    CUDA is preferred when both accelerators are visible.  MPS is considered
-    next, then CPU.  ``probe=False`` is useful for unit tests with a small fake
-    torch module; production callers keep the default probe enabled.
-    """
+    """Return the usable device name: ``cuda``, ``mps`` or ``cpu``."""
     torch = _torch_or_none(torch_module)
     if torch is None:
         return "unavailable"
@@ -128,7 +113,6 @@ def select_device(
             return _fallback_cpu("MPS was requested but is not available")
         return "mps" if not probe or probe_device(torch, "mps") else "cpu"
 
-    # Automatic selection: NVIDIA first, then Apple Metal, then CPU.
     if cuda_available(torch):
         if not probe or probe_device(torch, "cuda"):
             return "cuda"
@@ -178,3 +162,4 @@ def device_info(torch_module: Any | None = None, selected: str | None = None) ->
 def as_torch_device(torch_module: Any, selected: str):
     """Create a torch.device while keeping the selection logic testable."""
     return torch_module.device("cpu" if selected == "unavailable" else selected)
+

@@ -117,3 +117,4 @@ def test_only_dealership_admin_can_manage_and_no_public_registration(setup):
     assert client.post("/api/dealership/users", json={}).status_code == 401
     assert client.post("/auth/register", json={}).status_code == 404
     assert client.post("/auth/signup", json={}).status_code == 404
+

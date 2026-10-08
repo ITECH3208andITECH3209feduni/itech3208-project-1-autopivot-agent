@@ -1,15 +1,3 @@
-// The dealership's backdrop library, read from and written to the API.
-//
-// The Figma Make version showed five hardcoded Unsplash backdrops with invented
-// "suits" metadata. A new dealership genuinely starts with none.
-//
-// Two things changed in this pass. A backdrop is a full scene — a forecourt, a
-// studio sweep, a stretch of coast road — and nobody can judge one from a
-// 160px strip, so a card opens into a full-size preview. And removing one used
-// to happen on a single click of a quiet grey link, with no confirmation and
-// nothing to undo it; it now goes through the shared confirmation dialog, which
-// is also where the dealer is told that a backdrop already used to process
-// images cannot be removed at all.
 
 import { useEffect, useRef, useState } from 'react'
 
@@ -20,17 +8,78 @@ import { Card, ConfirmDialog, ModalHeading, SolidBtn } from '../components/primi
 import { C, CARD_SHADOW, MONO, RADIUS_CARD, SANS, serif } from '../design'
 import { useIsCompact } from '../useMediaQuery'
 
-// design.ts has one card shadow and no hover elevation, so this is that same
-// two-layer ink shadow a step deeper — the figure the vehicle gallery on the
-// dashboard lifts by, so the two libraries behave identically under the hand.
 const RAISED_SHADOW = '0 2px 6px rgba(26,26,23,0.08), 0 10px 24px rgba(26,26,23,0.07)'
+
+const SHOT_ANGLES: { key: string; label: string }[] = [
+  { key: 'front', label: 'Front' },
+  { key: 'front_quarter', label: 'Front ¾' },
+  { key: 'side', label: 'Side' },
+  { key: 'rear_quarter', label: 'Rear ¾' },
+  { key: 'rear', label: 'Rear' },
+]
+
+function AngleChips({ backdrop, onChange }: {
+  backdrop: Backdrop
+  onChange: (updated: Backdrop) => void
+}) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function toggle(key: string) {
+    const current = new Set(backdrop.suits_angles)
+    if (current.has(key)) current.delete(key)
+    else current.add(key)
+    setSaving(true)
+    setError(null)
+    try {
+      onChange(await api.setBackdropAngles(backdrop.id, [...current]))
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div onClick={event => event.stopPropagation()}>
+      <div role="group" aria-label={`Shot angles for ${backdrop.name}`}
+        style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {SHOT_ANGLES.map(({ key, label }) => {
+          const on = backdrop.suits_angles.includes(key)
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={on}
+              disabled={saving}
+              onClick={() => void toggle(key)}
+              style={{
+                fontFamily: SANS, fontSize: 12, borderRadius: 999, padding: '3px 10px',
+                cursor: saving ? 'default' : 'pointer',
+                border: `1px solid ${on ? C.forest : C.lineStrong}`,
+                background: on ? C.forestTint : 'transparent',
+                color: on ? C.forest : C.inkSoft,
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+      {error && (
+        <p role="alert" style={{ fontFamily: SANS, fontSize: 12, color: C.rust, margin: '6px 0 0' }}>
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
 
 function describeAngles(angles: string[]): string {
   if (angles.length === 0) return 'suits: all angles'
   return `suits: ${angles.join(', ').replace(/_/g, ' ')}`
 }
 
-/** Day-month-year: the product is for Australian and New Zealand dealerships. */
 function addedOn(iso: string): string {
   return new Date(iso).toLocaleDateString('en-AU', {
     day: 'numeric', month: 'short', year: 'numeric',
@@ -38,11 +87,12 @@ function addedOn(iso: string): string {
 }
 
 function BackdropCard({
-  backdrop, onPreview, onRemove,
+  backdrop, onPreview, onRemove, onChange,
 }: {
   backdrop: Backdrop
   onPreview: () => void
   onRemove: () => void
+  onChange: (updated: Backdrop) => void
 }) {
   const [raised, setRaised] = useState(false)
 
@@ -51,8 +101,6 @@ function BackdropCard({
       onClick={onPreview}
       onMouseEnter={() => setRaised(true)}
       onMouseLeave={() => setRaised(false)}
-      // Focus bubbles, so reaching the card by keyboard lights it up exactly as
-      // hovering it does.
       onFocus={() => setRaised(true)}
       onBlur={() => setRaised(false)}
       style={{
@@ -68,10 +116,6 @@ function BackdropCard({
           alt={backdrop.name}
           style={{ width: '100%', height: '100%', display: 'block' }}
         />
-        {/* Solid ink rather than a translucent veil: it sits over a scene of
-            unknown brightness, and only a solid ground guarantees the label
-            keeps its contrast. Decorative — the button below carries the name
-            of the action. */}
         <span
           aria-hidden
           style={{
@@ -88,9 +132,6 @@ function BackdropCard({
 
       <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-          {/* The card is a click target for a mouse; this button is what a
-              keyboard reaches, and it names both the backdrop and the action.
-              One tab stop for the preview, one for the removal, per card. */}
           <button
             onClick={event => { event.stopPropagation(); onPreview() }}
             aria-label={`Preview ${backdrop.name} full size`}
@@ -121,12 +162,12 @@ function BackdropCard({
         <p style={{ fontFamily: MONO, fontSize: 11, color: C.inkSoft, margin: 0 }}>
           {describeAngles(backdrop.suits_angles)}
         </p>
+        <AngleChips backdrop={backdrop} onChange={onChange} />
       </div>
     </li>
   )
 }
 
-/** The dashed tile that opens the file picker, in the grid and when empty. */
 function UploadTile({
   label, disabled, onClick, minHeight,
 }: {
@@ -158,7 +199,6 @@ function UploadTile({
   )
 }
 
-/** A backdrop at the size it is actually used: the whole frame. */
 function BackdropPreview({
   backdrop, onClose, onRemove,
 }: {
@@ -189,10 +229,6 @@ function BackdropPreview({
           }}>
             Loading backdrop
           </p>
-          {/* contain, not cover: the point of the full-size view is to see the
-              whole scene, including whatever headroom a vehicle gets composited
-              into. AuthedImage's grey placeholder is overridden away so it does
-              not flash against the ink ground. */}
           <AuthedImage
             src={backdrop.image_url}
             alt={`${backdrop.name}, full size`}
@@ -232,11 +268,6 @@ export default function BackdropsView() {
   const [deleting, setDeleting] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
-  // ConfirmDialog renders the Modal primitive itself and hands back no element,
-  // so it cannot be given a focus trap from out here — but Escape and returning
-  // focus to the Remove button that opened it are most of the gap, and both are
-  // free. The guard on `deleting` matches the dialog's own behaviour: a
-  // deletion in flight cannot be dismissed.
   useDialogKeys({
     active: pendingDelete !== null,
     onClose: () => { if (!deleting) setPendingDelete(null) },
@@ -253,8 +284,6 @@ export default function BackdropsView() {
   useEffect(() => { void load() }, [])
 
   async function handleFile(file: File) {
-    // Name defaults to the filename without its extension; the library is keyed
-    // on name per dealership, so a clash surfaces as a 409 from the server.
     const name = file.name.replace(/\.[^.]+$/, '').slice(0, 120) || 'Untitled'
     setUploading(true)
     setError(null)
@@ -278,9 +307,6 @@ export default function BackdropsView() {
       setPendingDelete(null)
       await load()
     } catch (err) {
-      // A backdrop that has processed images against it comes back as a 409
-      // with an explanation; the dialog closes so the message is not hidden
-      // behind it.
       setError((err as Error).message)
       setPendingDelete(null)
     } finally {
@@ -360,9 +386,6 @@ export default function BackdropsView() {
           </div>
         </Card>
       ) : (
-        // auto-fill, not a column count: the same markup gives five tracks on a
-        // 32-inch monitor and three on a laptop without either number being
-        // written down.
         <ul style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
           gap: 20, listStyle: 'none', margin: 0, padding: 0,
@@ -373,6 +396,8 @@ export default function BackdropsView() {
               backdrop={backdrop}
               onPreview={() => setPreviewing(backdrop)}
               onRemove={() => setPendingDelete(backdrop)}
+              onChange={updated => setBackdrops(current =>
+                current?.map(b => (b.id === updated.id ? updated : b)) ?? current)}
             />
           ))}
           <li style={{ display: 'flex' }}>
@@ -391,9 +416,6 @@ export default function BackdropsView() {
           backdrop={previewing}
           onClose={() => setPreviewing(null)}
           onRemove={() => {
-            // One dialog at a time: the confirmation replaces the preview
-            // rather than stacking on top of it, so Escape and the tab ring
-            // always belong to a single thing.
             setPendingDelete(previewing)
             setPreviewing(null)
           }}

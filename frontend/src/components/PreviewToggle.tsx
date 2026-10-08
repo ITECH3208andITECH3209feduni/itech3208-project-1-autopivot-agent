@@ -1,6 +1,3 @@
-// Switches between the public coming-soon page and the in-progress landing
-// page. Backed by routes rather than component state, so either view can be
-// linked to directly and survives a refresh.
 
 import { useNavigate } from 'react-router-dom'
 
@@ -22,8 +19,6 @@ export default function PreviewToggle({
 }) {
   const navigate = useNavigate()
 
-  // The coming-soon page is ink; the landing page is bone. The control has to
-  // read on both, so the palette flips rather than the layout.
   const idle = onDark ? 'rgba(245,242,236,0.45)' : C.inkSoft
   const activeText = onDark ? C.ink : C.white
   const activeBg = onDark ? C.bone : C.forest

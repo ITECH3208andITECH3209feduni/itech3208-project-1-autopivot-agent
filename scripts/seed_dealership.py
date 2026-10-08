@@ -1,29 +1,4 @@
-"""Provision a dealership and its first administrator.
-
-    python -m scripts.init_db
-    python -m scripts.seed_dealership
-
-Creates only what is needed to sign in: one dealership and one admin account.
-No listings, no images, no backdrops — a new dealership starts empty and fills
-up through the application.
-
-The platform administrator — the account with no dealership of its own, used
-to onboard other dealerships — is a separate concern with its own script,
-`scripts.seed_platform_admin`, since it isn't scoped to any one dealership
-this one provisions.
-
-Everything is configurable, so this doubles as the provisioning step for a real
-dealership rather than being demo-only:
-
-    SEED_DEALERSHIP_NAME='Northshore Motors'
-    SEED_DEALERSHIP_LOCATION='Takapuna'
-    SEED_ADMIN_EMAIL='ana.reid@northshore.co.nz'
-    SEED_ADMIN_FIRST_NAME='Ana'
-    SEED_ADMIN_LAST_NAME='Reid'
-    SEED_ADMIN_PASSWORD='...'      # generated and printed once if unset
-
-Safe to re-run: existing rows are matched on their natural keys and left alone.
-"""
+"""Provision a dealership and its first administrator."""
 
 from __future__ import annotations
 
@@ -32,20 +7,12 @@ import secrets
 import sys
 from pathlib import Path
 
-# Lets this run as `python scripts/seed_dealership.py` as well as
-# `python -m scripts.seed_dealership`. VS Code's Run button uses the first form
-# when you simply open the file and press play, and without this it fails on
-# "No module named 'api'" with nothing to suggest the module flag is the cure.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
-# Loads .env from the project directory rather than the working directory, so
-# seeding from VS Code and seeding from a terminal reach the same database.
-# It runs before api.security is imported because that module reads JWT_SECRET
-# once, at import time, and would otherwise warn about a key that .env does set.
 from api.env import load_environment
 
 load_environment()
@@ -99,8 +66,6 @@ def seed_admin(
         last_name=cfg["last_name"],
         role="dealership_admin",
         is_active=True,
-        # Provisioned accounts are forced through a password change on first
-        # login, which is what the schema default already assumes.
         must_change_password=True,
     )
     session.add(user)
@@ -156,3 +121,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

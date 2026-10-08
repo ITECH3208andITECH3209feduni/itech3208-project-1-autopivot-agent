@@ -1,11 +1,3 @@
-// One vehicle in the vehicles list, presented as stock rather than as a row.
-//
-// The list used to be a table of titles and image counts, which reads like an
-// inventory export. A dealership sells with photographs, so the photograph is
-// the card: the processed shot where one exists, the best original where it
-// does not. The whole card is a single button — a picture and a title that
-// navigate to different places, or a click target that only works on the text,
-// are both worse than one honest control.
 
 import { useState } from 'react'
 
@@ -14,16 +6,12 @@ import { C, CARD_SHADOW, MONO, SANS } from '../design'
 import AuthedImage from './AuthedImage'
 import { Card, StatusPill } from './primitives'
 
-// The resting shadow with both layers deepened. Kept in the same two-layer
-// shape as CARD_SHADOW so hovering reads as the card lifting, not as a
-// different card.
 const HOVER_SHADOW = '0 2px 6px rgba(26,26,23,0.09), 0 12px 28px rgba(26,26,23,0.07)'
 
 export default function ListingCard({
   listing, preview, onOpen,
 }: {
   listing: VehicleListing
-  /** Undefined while the photograph is still being fetched, null when there is none. */
   preview: ListingImage | null | undefined
   onOpen: () => void
 }) {

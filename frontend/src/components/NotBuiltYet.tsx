@@ -1,9 +1,3 @@
-// A deliberate placeholder for screens whose backend does not exist yet.
-//
-// The alternative — keeping the Figma mock data — means a screen that looks
-// finished and reports invented vehicles, angles and confidence scores. For a
-// tool whose job is judging output quality, that is the worst possible thing to
-// fake. These say plainly what is missing.
 
 import { C, MONO, SANS, serif } from '../design'
 

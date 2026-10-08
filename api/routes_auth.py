@@ -1,9 +1,4 @@
-"""Authentication routes.
-
-There is deliberately no registration endpoint. Per the product design, dealer
-accounts are provisioned by AutoPivot rather than self-served, which is also why
-users.must_change_password defaults to true.
-"""
+"""Authentication routes."""
 
 from __future__ import annotations
 
@@ -26,8 +21,6 @@ logger = logging.getLogger("autopivot.auth")
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Unknown email, wrong password and deactivated account all return this. The
-# distinction is recorded in the log, never in the response.
 _INVALID_CREDENTIALS = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Incorrect email or password.",
@@ -42,8 +35,6 @@ def login(payload: LoginRequest, session: DbSession) -> LoginResponse:
     user = session.scalar(select(User).where(User.email == email))
 
     if user is None:
-        # Verify against a decoy hash so a missing account takes the same time
-        # as a real one, keeping this endpoint from confirming which emails exist.
         waste_password_time()
         logger.info("Login rejected — unknown email")
         raise _INVALID_CREDENTIALS
@@ -103,3 +94,4 @@ def change_password(
 
     logger.info("Password changed — user_id=%s", user.id)
     return serialise_user(session, user)
+

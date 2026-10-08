@@ -1,29 +1,3 @@
-// A dealership's vehicles, and one vehicle's listing preview.
-//
-// Two routes, one file: /app/vehicles is the stock list, /app/vehicles/:id is
-// the vehicle. Both were previously drawn as file management — a table of
-// titles and counts, then two labelled grids of every file with its pixel
-// dimensions and byte size beneath it. That is an inventory export, not a
-// listing. A dealer opening a vehicle is asking one question: does this look
-// like a car worth driving across town for? So the detail view is a hero
-// photograph with a thumbnail strip, and the list shows each vehicle by its
-// best processed shot.
-//
-// Where this departs from the Figma design:
-//
-//   · The design shows a before/after slider with the detected angle and plate
-//     treatment written under each pair. The API returns no link from a
-//     processed image back to the original it came from, so nothing here can
-//     honestly claim "this is that photograph, fixed". Originals live behind a
-//     toggle instead: still one click away for the comparison a dealer needs,
-//     without inventing a pairing the data does not support.
-//   · The design has no notion of a photograph the pipeline refused. A URL
-//     import drags in advertisement banners, dealer badges, interior shots and
-//     part close-ups, and only exteriors can be composited — so those are shown
-//     below the listing, greyed, each one saying why it is there and offering
-//     to remove itself.
-//   · No description or marketing copy. This is a preview of the imagery, and
-//     the listing text is not a thing the product writes yet.
 
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -32,6 +6,7 @@ import {
   api,
   type Backdrop,
   type ListingImage,
+  type ProcessingJob,
   type VehicleListing,
   type VehicleListingDetail,
 } from '../api/client'
@@ -44,17 +19,8 @@ import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 import { useIsMobile } from '../useMediaQuery'
 import { WORKFLOW_STEPS, stepHref, type WorkflowStep } from '../workflow'
 
-/** How many vehicles one screen holds before the dealer is asked to search. */
 const PAGE_SIZE = 24
 
-/**
- * Preview requests in flight at once.
- *
- * The list endpoint returns no imagery at all, so the only way to show a
- * dealer their stock today is one detail request per vehicle. Four at a time
- * leaves room in the browser's per-host connection pool for the photographs
- * themselves, which are the point; firing twenty-four at once starves them.
- */
 const PREVIEW_CONCURRENCY = 4
 
 function Alert({ children }: { children: ReactNode }) {
@@ -81,7 +47,6 @@ const quietBody: CSSProperties = {
   fontFamily: SANS, fontSize: 14, color: C.inkSoft, margin: 0, lineHeight: 1.6,
 }
 
-/** A destructive control that reads as secondary until you are hovering it. */
 function RemoveBtn({ label, ariaLabel, onClick }: {
   label: string
   ariaLabel: string
@@ -105,8 +70,6 @@ function RemoveBtn({ label, ariaLabel, onClick }: {
   )
 }
 
-// ── The vehicles list ────────────────────────────────────────────────────────
-
 function VehiclesList() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -114,8 +77,6 @@ function VehiclesList() {
 
   const [listings, setListings] = useState<VehicleListing[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Keyed by listing id. Absent means the preview has not arrived yet, which is
-  // what ListingCard draws as "Loading" rather than as "No photographs".
   const [previews, setPreviews] = useState<Record<number, ListingImage | null>>({})
 
   useEffect(() => {
@@ -148,8 +109,6 @@ function VehiclesList() {
           if (cancelled) return
           setPreviews(current => ({ ...current, [next.id]: pickPreviewImage(detail.images) }))
         } catch {
-          // A vehicle whose detail will not load still belongs on the screen;
-          // it simply shows without a photograph.
           if (!cancelled) setPreviews(current => ({ ...current, [next.id]: null }))
         }
       }
@@ -194,8 +153,6 @@ function VehiclesList() {
       {listings === null ? (
         <p style={{ fontFamily: SANS, fontSize: 14, color: C.inkSoft }}>Loading…</p>
       ) : listings.length === 0 ? (
-        // Suppressed when the request itself failed: "No vehicles yet" is a
-        // lie when the truth is that the server could not be reached.
         error ? null : (
           <Card style={{ padding: '64px 24px', textAlign: 'center' }}>
             <p style={{ fontFamily: SANS, fontSize: 16, color: C.ink, margin: '0 0 8px' }}>
@@ -213,8 +170,6 @@ function VehiclesList() {
         <>
           <div style={{
             display: 'grid',
-            // auto-fill, so the same grid is two columns on a laptop and six on
-            // a 32-inch monitor without a breakpoint being consulted.
             gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
             gap: 20,
           }}>
@@ -239,25 +194,20 @@ function VehiclesList() {
   )
 }
 
-// ── One vehicle ──────────────────────────────────────────────────────────────
-
 type GalleryMode = 'processed' | 'original'
 
-/** A photograph the pipeline left out, shown greyed with the reason it was. */
-function ExcludedTile({ image, onRemove }: {
+function ExcludedTile({ image, onRemove, reason, badge }: {
   image: ListingImage
   onRemove: () => void
+  reason?: string
+  badge?: string
 }) {
   const kind = describeKind(image.image_kind)
-  const label = kind?.label ?? 'Not classified'
+  const label = badge ?? kind?.label ?? 'Not classified'
 
   return (
     <Card style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <div style={{ aspectRatio: '4 / 3', background: C.bone }}>
-        {/* Greyed and faded so it cannot be mistaken for part of the listing.
-            Only the photograph is dimmed — the label and reason below stay at
-            full strength, because dimming text is how contrast requirements
-            get quietly broken. */}
         <AuthedImage
           src={image.image_url}
           alt={`${label} — ${image.original_filename}`}
@@ -274,10 +224,10 @@ function ExcludedTile({ image, onRemove }: {
           alignSelf: 'flex-start',
         }}>
           {label}
-          {image.kind_confidence !== null && ` · ${Math.round(image.kind_confidence * 100)}%`}
+          {!badge && image.kind_confidence !== null && ` · ${Math.round(image.kind_confidence * 100)}%`}
         </span>
         <p style={{ ...quietBody, fontSize: 13 }}>
-          {kind?.reason ?? 'Nothing has classified this photograph yet.'}
+          {reason ?? kind?.reason ?? 'Nothing has classified this photograph yet.'}
         </p>
         <p style={{
           fontFamily: MONO, fontSize: 10, color: C.inkSoft, margin: 0,
@@ -347,16 +297,11 @@ function VehicleDetail({ listingId }: { listingId: number }) {
 
   const [listing, setListing] = useState<VehicleListingDetail | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  // Kept apart from loadError: a refused delete is not a reason to replace the
-  // vehicle on screen with an error page.
   const [actionError, setActionError] = useState<string | null>(null)
 
   const [backdrops, setBackdrops] = useState<Backdrop[]>([])
   const [backdropId, setBackdropId] = useState<number | null>(null)
   const [starting, setStarting] = useState(false)
-  // Reported inside the processing card rather than at the top of the page: a
-  // server that cannot process is an answer to the button just pressed, and it
-  // belongs next to that button.
   const [processError, setProcessError] = useState<string | null>(null)
 
   const [mode, setMode] = useState<GalleryMode>('processed')
@@ -366,9 +311,12 @@ function VehicleDetail({ listingId }: { listingId: number }) {
   const [confirmVehicleDelete, setConfirmVehicleDelete] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  const [jobs, setJobs] = useState<ProcessingJob[]>([])
+
   const load = useCallback(async () => {
     try {
       setListing(await api.listing(listingId))
+      api.listingJobs(listingId).then(summary => setJobs(summary.jobs)).catch(() => setJobs([]))
     } catch (err) {
       setLoadError((err as Error).message)
     }
@@ -404,12 +352,8 @@ function VehicleDetail({ listingId }: { listingId: number }) {
     try {
       await api.deleteImage(listingId, imageToDelete.id)
       setImageToDelete(null)
-      // Reload rather than splicing locally: removing an original can change
-      // the listing's processing status, and the count in the header with it.
       await load()
     } catch (err) {
-      // The API refuses to delete an original that has already been processed,
-      // and that 409 explains itself better than anything invented here.
       setActionError((err as Error).message)
       setImageToDelete(null)
     } finally {
@@ -463,7 +407,28 @@ function VehicleDetail({ listingId }: { listingId: number }) {
   const kept = originals.filter(i => !isExcluded(i))
   const excluded = originals.filter(isExcluded)
 
-  // Nothing has been processed yet, so there is no processed gallery to offer.
+  const hasOutput = new Set(
+    processed.map(i => i.source_image_id).filter((id): id is number => typeof id === "number"),
+  )
+  const latestJob = new Map<number, ProcessingJob>()
+  for (const job of jobs) {
+    const seen = latestJob.get(job.input_image_id)
+    if (!seen || job.id > seen.id) latestJob.set(job.input_image_id, job)
+  }
+  const unusable = kept
+    .filter(i => !hasOutput.has(i.id))
+    .map(i => ({ image: i, job: latestJob.get(i.id) }))
+    .filter((x): x is { image: ListingImage; job: ProcessingJob } =>
+      !!x.job && x.job.status !== 'pending' && x.job.status !== 'processing'
+      && !x.job.output_image_id && !!x.job.error_message)
+
+  const checkNotes = processed
+    .map((image, position) => ({
+      position,
+      note: jobs.find(j => j.output_image_id === image.id)?.error_message ?? null,
+    }))
+    .filter((x): x is { position: number; note: string } => !!x.note)
+
   const activeMode: GalleryMode = processed.length ? mode : 'original'
   const gallery = activeMode === 'processed' ? processed : kept
 
@@ -544,13 +509,61 @@ function VehicleDetail({ listingId }: { listingId: number }) {
               altPrefix={`${activeMode === 'processed' ? 'Processed' : 'Original'} photograph of the ${listing.title}`}
               label={activeMode === 'processed' ? 'Processed photographs' : 'Original photographs'}
               thumbMin={mobile ? 72 : 96}
-              // A processed image is an output of the pipeline, not something a
-              // dealer curates; reprocessing regenerates it. Removal belongs to
-              // the original it came from.
               onDelete={activeMode === 'original' ? setImageToDelete : undefined}
             />
           )}
+
+          {activeMode === 'processed' && checkNotes.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <p style={{ ...quietBody, fontWeight: 600, marginBottom: 6 }}>
+                Worth a quick look
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {checkNotes.map(({ position, note }) => (
+                  <li key={position} style={{ ...quietBody, marginBottom: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => setIndex(position)}
+                      style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                        font: 'inherit', color: 'inherit', textDecoration: 'underline',
+                      }}
+                    >
+                      Photo {position + 1}
+                    </button>
+                    {': '}{note}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Card>
+      )}
+
+      {unusable.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <p style={sectionHeading}>Couldn't be processed</p>
+          <p style={{ ...quietBody, marginBottom: 16, maxWidth: 640 }}>
+            {unusable.length === 1 ? 'This exterior shot was' : `These ${unusable.length} exterior shots were`}{' '}
+            processed but could not be placed on the backdrop. The reason is under
+            each one — reshoot it, or remove it from the listing.
+          </p>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: 16,
+          }}>
+            {unusable.map(({ image, job }) => (
+              <ExcludedTile
+                key={image.id}
+                image={image}
+                badge="Needs a person"
+                reason={job.error_message ?? undefined}
+                onRemove={() => setImageToDelete(image)}
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       {excluded.length > 0 && (
@@ -643,9 +656,6 @@ function VehicleDetail({ listingId }: { listingId: number }) {
               is deleted from storage as well as from this vehicle. It cannot be
               recovered, and re-uploading it is the only way back.
               {processed.length > 0 && (
-                // Said before the attempt rather than after it: the database
-                // holds a processing run against every photograph that has been
-                // through the pipeline, and refuses to orphan it.
                 <> A photograph that has already been processed will be refused
                   — its processing record still points at the file.</>
               )}
@@ -699,7 +709,5 @@ export default function ResultsView() {
     )
   }
 
-  // Keyed on the id so moving between two vehicles resets the gallery rather
-  // than showing photograph seven of a car that only has three.
   return <VehicleDetail key={id} listingId={id} />
 }

@@ -1,9 +1,4 @@
-"""Vehicle listings and their photographs.
-
-Every query is scoped to the caller's dealership through `_owned_listing`, so a
-listing id belonging to someone else is indistinguishable from one that does not
-exist.
-"""
+"""Vehicle listings and their photographs."""
 
 from __future__ import annotations
 
@@ -31,7 +26,9 @@ from api.schemas import (
     ProcessRequest,
     UrlImportRequest,
     UrlImportResult,
+    UrlPreviewResult,
     UrlVehicleGuess,
+    VehicleDetailsOut,
     VehicleListingCreate,
     VehicleListingDetail,
     VehicleListingOut,
@@ -75,11 +72,7 @@ def _title_for(make: str, model: str, year: int, variant: str | None) -> str:
 
 
 def _image_count_subquery() -> Select:
-    """Per-listing count of original uploads.
-
-    Only 'original' images are counted: processed outputs would otherwise double
-    the figure reported as "12 images".
-    """
+    """Per-listing count of original uploads."""
     return (
         select(
             Image.vehicle_listing_id.label("listing_id"),
@@ -149,9 +142,6 @@ def list_vehicles(
         select(VehicleListing, func.coalesce(counts.c.image_count, 0))
         .outerjoin(counts, counts.c.listing_id == VehicleListing.id)
         .where(VehicleListing.dealership_id == _dealership_id(user))
-        # id breaks ties on created_at. Without it the order of listings sharing
-        # a timestamp is arbitrary, and rows could repeat or disappear between
-        # pages as the offset moves.
         .order_by(VehicleListing.created_at.desc(), VehicleListing.id.desc())
         .limit(limit)
         .offset(offset)
@@ -160,10 +150,6 @@ def list_vehicles(
         query = query.where(VehicleListing.processing_status == processing_status)
 
     if q and q.strip():
-        # ilike rather than a full-text index: a dealership holds hundreds of
-        # listings, not millions, and "cx-5" has to match "CX-5" without a
-        # tokeniser deciding the hyphen is a word boundary. The wildcards are
-        # escaped so a literal % or _ in a stock number searches for itself.
         term = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{term}%"
         query = query.where(
@@ -203,8 +189,6 @@ def create_listing(
         session.commit()
     except IntegrityError:
         session.rollback()
-        # stock_number_per_dealership is the only unique constraint a caller
-        # can collide with here.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Stock number '{payload.stock_number}' is already in use.",
@@ -219,20 +203,76 @@ def create_listing(
     )
 
 
-@router.post("/parse-url", response_model=UrlVehicleGuess)
-def parse_listing_url(body: UrlImportRequest, user: ReadyUser) -> UrlVehicleGuess:
+def _details_out(details: "url_import.VehicleDetails | None") -> VehicleDetailsOut | None:
+    if details is None or details.is_empty():
+        return None
+    return VehicleDetailsOut(
+        make=details.make,
+        model=details.model,
+        year=details.year,
+        variant=details.variant,
+        stock_number=details.stock_number,
+    )
+
+
+def _fill_from_slug(details: "url_import.VehicleDetails | None", url: str):
+    """Fill whatever the page left blank from the URL's own slug."""
+    details = details or url_import.VehicleDetails()
+    guess = url_import.guess_vehicle_from_url(url)
+    if guess is not None:
+        page_model = (details.model or "").strip()
+        if (
+            guess.model
+            and page_model.lower().startswith(guess.model.lower() + " ")
+            and not details.variant
+        ):
+            details.variant = page_model[len(guess.model):].strip() or None
+            details.model = guess.model
+        details.make = details.make or guess.make
+        details.model = details.model or guess.model
+        details.year = details.year or guess.year
+        details.variant = details.variant or guess.variant
+    return details
+
+
+async def _vehicle_details_for_url(url: str):
+    """Page first, slug second. Never raises: a pre-fill that finds nothing leaves the
+    form empty rather than showing the dealer an error.
     """
-    Guess year/make/model/variant from a listing URL, before a listing exists
-    to attach it to — see url_import.guess_vehicle_from_url for which sites
-    this works against. Never fetches the page, so an empty guess back is
-    immediate, not a timeout.
+    try:
+        details = await url_import.fetch_vehicle_details(url)
+    except url_import.UrlImportError as exc:
+        logger.info("Listing preview could not read the page: %s", exc)
+        details = None
+    except Exception:
+        logger.exception("Listing preview failed unexpectedly")
+        details = None
+    return _fill_from_slug(details, url)
+
+
+@router.post("/preview-url", response_model=UrlPreviewResult)
+async def preview_listing_url(body: UrlImportRequest, user: ReadyUser) -> UrlPreviewResult:
+    """Best-effort make/model/year/variant/stock number from a pasted listing URL,
+    before any listing exists — lets the "Add a vehicle" form pre-fill itself as soon
+    as the dealer pastes a link.
+    """
+    return UrlPreviewResult(vehicle=_details_out(await _vehicle_details_for_url(body.url)))
+
+
+@router.post("/parse-url", response_model=UrlVehicleGuess)
+async def parse_listing_url(body: UrlImportRequest, user: ReadyUser) -> UrlVehicleGuess:
+    """Guess year/make/model/variant from a listing URL, before a listing exists to
+    attach it to. Used by the mobile app.
     """
     guess = url_import.guess_vehicle_from_url(body.url)
-    if guess is None:
+    if guess is not None:
+        return UrlVehicleGuess(
+            year=guess.year, make=guess.make, model=guess.model, variant=guess.variant
+        )
+    details = _details_out(await _vehicle_details_for_url(body.url))
+    if details is None:
         return UrlVehicleGuess()
-    return UrlVehicleGuess(
-        year=guess.year, make=guess.make, model=guess.model, variant=guess.variant
-    )
+    return UrlVehicleGuess(**details.model_dump())
 
 
 @router.get("/{listing_id}", response_model=VehicleListingDetail)
@@ -262,8 +302,6 @@ def update_listing(
     for key, value in fields.items():
         setattr(listing, key, value)
 
-    # The title is derived, so it has to be recomputed whenever any part of it
-    # changes rather than drifting out of step with the columns it summarises.
     if {"make", "model", "year", "variant"} & fields.keys():
         listing.title = _title_for(listing.make, listing.model, listing.year, listing.variant)
 
@@ -295,23 +333,12 @@ def delete_listing(listing_id: int, user: ReadyUser, session: DbSession) -> None
     paths = [i.storage_path for i in images]
 
     try:
-        # Every job for the listing goes first: they hold RESTRICT references
-        # to the photographs, and the listing cannot go while they exist.
         for job in session.scalars(
             select(ProcessingJob).where(ProcessingJob.vehicle_listing_id == listing.id)
         ).all():
             session.delete(job)
         session.flush()
 
-        # Then the lineage links between the photographs themselves, before any
-        # of them go. Every image here is about to be deleted, so the order the
-        # session happens to emit them in decides whether this works: a
-        # processed image holds a RESTRICT reference to the original it came
-        # from, and an original deleted first is refused — which would mean a
-        # dealer could no longer delete a listing once it had been processed.
-        # Clearing the pointers first makes the order irrelevant, and the
-        # composite foreign key is skipped once any column is NULL. Nothing is
-        # lost by it: the pair is only worth recording while both halves exist.
         for image in images:
             image.source_image_id = None
         session.flush()
@@ -328,8 +355,6 @@ def delete_listing(listing_id: int, user: ReadyUser, session: DbSession) -> None
             detail="This listing is still referenced and could not be deleted.",
         )
 
-    # Files are removed only after the rows are gone, so a failed commit never
-    # leaves the database pointing at a deleted file.
     for path in paths:
         storage.delete(path)
     logger.info("Listing deleted — id=%s images=%d", listing_id, len(paths))
@@ -396,8 +421,6 @@ async def upload_images(
         session.commit()
     except IntegrityError:
         session.rollback()
-        # storage_path is globally unique, and paths are content hashes, so this
-        # means the same photograph is already attached to a listing.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="One of those photographs has already been uploaded.",
@@ -420,24 +443,12 @@ async def import_images_from_url(
     user: ReadyUser,
     session: DbSession,
 ) -> UrlImportResult:
-    """
-    Attach photographs found on a listing page.
-
-    Fetching and parsing are Akhanda Bhandari's, in api/url_import.py. This
-    route adds authentication, dealership scoping and storage — the standalone
-    /extract-images-from-url endpoint has none of those and returns base64 to
-    the caller instead of saving anything.
-
-    Not every site works. url_import raises UrlImportError with a message that
-    names the reason, and that message is what the dealer sees.
-    """
+    """Attach photographs found on a listing page."""
     listing = _owned_listing(session, user, listing_id)
 
     try:
         result = await url_import.fetch_images(body.url)
     except url_import.UrlImportError as exc:
-        # 422: the request was well formed and the caller is entitled to make
-        # it; the page at the other end is what did not cooperate.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
@@ -457,101 +468,82 @@ async def import_images_from_url(
 
     created: list[Image] = []
     skipped = 0
-    for fetched in result.images[:room]:
+    duplicates = 0
+    for fetched in result.images:
+        if len(created) >= room:
+            break
         try:
             stored = storage.save_image(listing.dealership_id, "original", fetched.content)
         except storage.StorageError:
-            # A page will serve SVG logos and tracking gifs alongside the
-            # vehicle. One unreadable file should not fail the whole import.
             skipped += 1
             continue
 
-        session.add(
-            image := Image(
-                vehicle_listing_id=listing.id,
-                image_type="original",
-                original_filename=fetched.filename[:255],
-                storage_path=stored.storage_path,
-                mime_type=stored.mime_type,
-                file_size_bytes=stored.size_bytes,
-                width=stored.width,
-                height=stored.height,
-            )
+        image = Image(
+            vehicle_listing_id=listing.id,
+            image_type="original",
+            original_filename=fetched.filename[:255],
+            storage_path=stored.storage_path,
+            mime_type=stored.mime_type,
+            file_size_bytes=stored.size_bytes,
+            width=stored.width,
+            height=stored.height,
         )
+        try:
+            with session.begin_nested():
+                session.add(image)
+                session.flush()
+        except IntegrityError:
+            duplicates += 1
+            continue
         created.append(image)
 
     if not created:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Nothing on that page could be read as a photograph.",
+            detail=(
+                "Every photograph on that page is already stored — most often "
+                "a logo or banner reused across the site's listings, or this "
+                "listing was already imported. Try adding photographs directly "
+                "instead."
+                if duplicates
+                else "Nothing on that page could be read as a photograph."
+            ),
         )
 
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Those photographs are already attached to a listing.",
-        )
-
+    session.commit()
     for image in created:
         session.refresh(image)
 
     logger.info(
-        "URL import — listing=%s imported=%d skipped=%d",
-        listing.id, len(created), skipped,
+        "URL import — listing=%s imported=%d skipped=%d duplicates=%d",
+        listing.id, len(created), skipped, duplicates,
     )
+    note = result.note
+    if duplicates:
+        already_note = (
+            f"{duplicates} photograph{'s were' if duplicates != 1 else ' was'} "
+            "already stored (commonly a shared site logo or banner) and left out."
+        )
+        note = f"{note} {already_note}" if note else already_note
     return UrlImportResult(
         images=[_serialise_image(i) for i in created],
-        note=result.note,
+        note=note,
+        vehicle=_details_out(_fill_from_slug(result.vehicle, body.url)),
     )
 
 
 def _release_job_references(session: Session, image_ids: set[int]) -> list[str]:
-    """
-    Clear the processing jobs that stand between these images and deletion.
-
-    `processing_jobs` holds RESTRICT references to the photographs it consumed
-    and produced. That is deliberate — it stops a job from being orphaned by a
-    stray delete, and it is part of what keeps a job inside its own dealership.
-    But it also meant that once a listing had been processed, neither its
-    photographs nor the listing itself could be removed, which is precisely
-    when a dealer wants to tidy up: the advertisement banner that came in with
-    a URL import is only recognisable as junk after it has been processed.
-
-    Rather than weaken the constraints, the dependent rows are cleared here in
-    the order the database requires. Returns the storage paths of any processed
-    output that went with them, so the caller can remove the files afterwards.
-
-    Deleting an original takes its processed result with it: the output is
-    derived from the input and means nothing without it. Deleting a processed
-    image on its own leaves the job in place with no output, so the photograph
-    can simply be processed again.
-
-    A processed image now also holds a RESTRICT reference straight back to the
-    original it was made from, which is a second edge into the same graph and
-    the reason the order below matters more than it used to: the derived rows
-    have to be gone before the caller deletes the original, or the delete is
-    refused and the dealer is told a photograph they can plainly see cannot be
-    removed. The flush at the end is what guarantees that — it puts the child
-    DELETEs on the wire before the caller's own delete is flushed.
-    """
+    """Clear the processing jobs that stand between these images and deletion."""
     if not image_ids:
         return []
 
     orphaned_paths: list[str] = []
 
-    # Jobs that produced one of these images keep their history but lose the
-    # pointer. The composite foreign key is skipped once any column is NULL,
-    # which is what makes this legal.
     for job in session.scalars(
         select(ProcessingJob).where(ProcessingJob.output_image_id.in_(image_ids))
     ).all():
         job.output_image_id = None
 
-    # Jobs that consumed one of these images go entirely, and take whatever
-    # they produced with them.
     consuming = session.scalars(
         select(ProcessingJob).where(ProcessingJob.input_image_id.in_(image_ids))
     ).all()
@@ -561,13 +553,6 @@ def _release_job_references(session: Session, image_ids: set[int]) -> list[str]:
         session.delete(job)
     session.flush()
 
-    # Derived images are collected by their own source link as well as through
-    # the jobs. The job pointer is a second copy of the same fact — one this
-    # very function sets to NULL a few lines above — whereas source_image_id is
-    # the column the database actually enforces the RESTRICT on. Anything left
-    # holding that link refuses the caller's delete, so that link is what has to
-    # be searched; following only the job pointers would leave the deletion path
-    # correct exactly as long as the two never drift apart.
     derived_ids = produced_ids | {
         image_id
         for image_id in session.scalars(
@@ -607,11 +592,8 @@ def _serialise_job(job: ProcessingJob, output_path: str | None) -> ProcessingJob
 
 
 def _summarise(session: Session, listing: VehicleListing) -> ProcessingSummary:
-    # The latest attempt per photograph, so a listing reprocessed after a
-    # failure shows one row per photograph rather than one per attempt.
     jobs = processing.latest_jobs(session, listing.id)
 
-    # One lookup for every output path, rather than one query per job.
     output_ids = [j.output_image_id for j in jobs if j.output_image_id]
     paths: dict[int, str] = {}
     if output_ids:
@@ -648,8 +630,6 @@ def process_listing(
     listing = _owned_listing(session, user, listing_id)
 
     if processing.get_processor() is None:
-        # The light API can hold listings and photographs but has no models. Say
-        # so, rather than queueing work that will never run.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
@@ -664,7 +644,6 @@ def process_listing(
         backdrop = session.scalar(
             select(Backdrop).where(
                 Backdrop.id == payload.backdrop_id,
-                # Scoped, so another dealership's backdrop is simply not found.
                 Backdrop.dealership_id == listing.dealership_id,
             )
         )
@@ -681,8 +660,6 @@ def process_listing(
         )
     session.commit()
 
-    # Runs after the response, so the client gets its job list immediately and
-    # can start polling rather than holding a connection open for minutes.
     background.add_task(processing.run_listing_jobs, listing.id)
 
     session.refresh(listing)
@@ -703,24 +680,7 @@ def listing_jobs(
 def include_image(
     listing_id: int, image_id: int, user: ReadyUser, session: DbSession
 ) -> ImageOut:
-    """
-    Override the classifier's exclusion for one original photograph.
-
-    Until now, deleting was the only action available for a photograph the
-    classifier decided was not usable — an interior shot, a close-up,
-    something it could not identify. A dealer looking at their own vehicle
-    knows more about it than a model that guessed wrong, and should be able
-    to say "use it anyway" instead of only "get rid of it".
-
-    Sets image_kind to 'exterior' directly rather than adding a separate
-    override flag — the smallest change that makes ListingImage.isExcluded
-    false everywhere that field is already read, both here and on the web
-    client. The trade-off is real and worth naming: the classifier's original
-    guess for this photograph is overwritten, not merely superseded. That is
-    an acceptable cost for a manual override a dealer chose on purpose, but it
-    does mean this is a one-way door — there is no "undo" back to the
-    original classification once this has been called.
-    """
+    """Override the classifier's exclusion for one original photograph."""
     listing = _owned_listing(session, user, listing_id)
     image = session.scalar(
         select(Image).where(
@@ -771,8 +731,7 @@ def delete_image(
             detail="This image is still referenced and could not be deleted.",
         )
 
-    # Files go only after the rows are committed, so a failed commit never
-    # leaves the database pointing at a file that is no longer there.
     for path in paths:
         storage.delete(path)
     logger.info("Image deleted — listing=%s image=%s files=%d", listing_id, image_id, len(paths))
+

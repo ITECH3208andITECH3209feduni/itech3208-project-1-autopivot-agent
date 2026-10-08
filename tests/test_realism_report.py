@@ -1,22 +1,3 @@
-# Tests for the realism evidence harness.
-#
-# scripts/realism_report.py imports only the standard library, cv2, numpy, PIL
-# and the three pure modules, so these run wherever the rest of the suite does:
-#
-#     pytest tests/test_realism_report.py -v
-#
-# Nothing here runs the script as a subprocess. Its work is done by functions
-# that take images and dictionaries and give dictionaries back, so they are
-# called directly; a test that shelled out would report every failure as a
-# non-zero exit code with the reason on somebody else's stderr, and could not
-# reach the rolling-up and comparison arithmetic at all.
-#
-# Every vehicle below is drawn by the harness's own generator. That is the only
-# input this repository has — real cut-outs are dealer photographs — and it is
-# also the case worth pinning hardest, because a synthetic run that failed to
-# declare itself is the one failure that could put a dishonest number in the
-# technical report.
-
 import json
 from pathlib import Path
 
@@ -111,13 +92,9 @@ def report(rows, *, label="run", synthetic=False, backdrop_digest="a" * 64):
 # ── Saying that the input was drawn ────────────────────────────────────────────
 
 def test_a_synthetic_run_says_so_in_both_files(synthetic_run):
-    """
-    The defect this exists to prevent is a reporting one rather than a coding
-    one: figures measured against vehicles this repository drew itself, quoted
-    in the technical report as evidence that a composite looks better. They
-    prove the harness runs and nothing else, so the flag has to reach both the
-    machine-readable file, where a later comparison reads it, and the top of the
-    summary, where a person reads it.
+    """The defect this exists to prevent is a reporting one rather than a coding one:
+    figures measured against vehicles this repository drew itself, quoted in the
+    technical report as evidence that a composite looks better.
     """
     saved = json.loads((synthetic_run / "metrics.json").read_text())
     summary = (synthetic_run / "summary.txt").read_text()
@@ -130,13 +107,10 @@ def test_a_synthetic_run_says_so_in_both_files(synthetic_run):
 
 
 def test_a_drawn_cutout_copied_without_its_sidecar_is_still_declared(tmp_path):
-    """
-    The way the declaration would realistically be lost: someone copies a
-    promising-looking render's cut-out out of the smoke-run directory into their
-    own folder of samples, leaving the sidecar behind, and every later run over
-    that folder reports drawn vehicles as photographs. The marker is written
-    into the PNG as well for exactly this, so the file carries its own provenance
-    wherever it goes.
+    """The way the declaration would realistically be lost: someone copies a
+    promising-looking render's cut-out out of the smoke-run directory into their own
+    folder of samples, leaving the sidecar behind, and every later run over that
+    folder reports drawn vehicles as photographs.
     """
     realism_report.write_synthetic_set(tmp_path)
     for sidecar in tmp_path.glob("*.json"):
@@ -149,11 +123,10 @@ def test_a_drawn_cutout_copied_without_its_sidecar_is_still_declared(tmp_path):
 
 
 def test_a_hand_made_cutout_is_not_declared_synthetic(tmp_path):
-    """
-    The other half of the same contract, and it is not redundant: a check that
-    declared everything synthetic would pass the test above while making the
-    flag meaningless, and the harness would then refuse to let any real
-    measurement be quoted.
+    """The other half of the same contract, and it is not redundant: a check that
+    declared everything synthetic would pass the test above while making the flag
+    meaningless, and the harness would then refuse to let any real measurement be
+    quoted.
     """
     Image.new("RGBA", (64, 64), (180, 40, 40, 255)).save(tmp_path / "photograph.png")
 
@@ -163,12 +136,7 @@ def test_a_hand_made_cutout_is_not_declared_synthetic(tmp_path):
 
 
 def test_a_malformed_sidecar_is_ignored_rather_than_losing_the_batch(tmp_path):
-    """
-    A stray comma in one sidecar must not cost the other twenty-nine
-    photographs. The cut-out it belonged to still measures perfectly well
-    without its angle — it falls to a lower rung of the elevation cascade, which
-    is what that cascade is for.
-    """
+    """A stray comma in one sidecar must not cost the other twenty-nine photographs."""
     Image.new("RGBA", (64, 64), (180, 40, 40, 255)).save(tmp_path / "photograph.png")
     (tmp_path / "photograph.json").write_text("{not json,}")
 
@@ -181,12 +149,8 @@ def test_a_malformed_sidecar_is_ignored_rather_than_losing_the_batch(tmp_path):
 # ── The metrics file ───────────────────────────────────────────────────────────
 
 def test_the_metrics_file_round_trips(drawn_report, tmp_path):
-    """
-    A metrics file is only useful if it comes back as what went in, because
-    every later phase reads one as its baseline. Two failures are in scope here
-    and both are silent: a numpy scalar reaching the file, which json refuses
-    outright, and an unrounded float, which survives the write and then fails to
-    compare equal to the value it was written from.
+    """A metrics file is only useful if it comes back as what went in, because every
+    later phase reads one as its baseline.
     """
     path = tmp_path / "metrics.json"
     path.write_text(json.dumps(drawn_report, indent=2) + "\n")
@@ -195,11 +159,9 @@ def test_the_metrics_file_round_trips(drawn_report, tmp_path):
 
 
 def test_the_summary_is_derived_from_the_metrics_file_alone(drawn_report):
-    """
-    The summary is regenerated from a report rather than from the run that
-    produced it, so that the two cannot disagree and so that a saved metrics
-    file is a complete record. Rendering one that has been through JSON is the
-    check that nothing was being read off an object that only exists in memory.
+    """The summary is regenerated from a report rather than from the run that produced
+    it, so that the two cannot disagree and so that a saved metrics file is a
+    complete record.
     """
     reloaded = json.loads(json.dumps(drawn_report))
 
@@ -209,11 +171,7 @@ def test_the_summary_is_derived_from_the_metrics_file_alone(drawn_report):
 
 
 def test_the_summary_names_the_files_a_person_should_open(synthetic_run):
-    """
-    A directory of renders nobody is told about is not evidence. The summary has
-    to name the contact sheet, the renders and the metrics file, and say which
-    of them is the baseline for next time.
-    """
+    """A directory of renders nobody is told about is not evidence."""
     summary = (synthetic_run / "summary.txt").read_text()
 
     assert "contact-sheet.png" in summary
@@ -226,16 +184,9 @@ def test_the_summary_names_the_files_a_person_should_open(synthetic_run):
 
 
 def test_edge_quality_is_pooled_over_the_set_rather_than_averaged():
-    """
-    The defect: averaging the per-photograph ratios weights a wing mirror the
-    same as a whole car, so one tightly cropped detail shot can carry a whole
-    phase's headline figure. metrics.EdgeQuality returns both counts alongside
-    the ratio precisely so that they can be added across a set and divided once
-    at the end, and this is the arithmetic that has to use them that way.
-
-    The two rows below are the case that separates the two: averaging the ratios
-    gives 0.505 and pooling the counts gives 0.0198, so an implementation that
-    got this wrong could not accidentally pass.
+    """The defect: averaging the per-photograph ratios weights a wing mirror the same as
+    a whole car, so one tightly cropped detail shot can carry a whole phase's
+    headline figure.
     """
     totals = realism_report.summarise([
         row("whole-car.png", fractional=100, silhouette=10000),
@@ -248,14 +199,7 @@ def test_edge_quality_is_pooled_over_the_set_rather_than_averaged():
 
 
 def test_an_unmeasured_horizon_is_blank_rather_than_zero(drawn_report):
-    """
-    Zero is the one wrong answer here. A horizon offset of zero means the two
-    horizons agree exactly, which is precisely what Phase 1 is being built to
-    achieve, so defaulting an unmeasured offset to zero would let the phase read
-    as finished before it had started. Neither end of the measurement exists
-    yet — no preset carries a horizon and nothing estimates a photograph's —
-    so the harness reports nothing at all and the summary says why.
-    """
+    """Zero is the one wrong answer here."""
     assert drawn_report["totals"]["mean_horizon_offset_px"] is None
     assert all(
         photograph["horizon_offset_px"] is None
@@ -265,12 +209,8 @@ def test_an_unmeasured_horizon_is_blank_rather_than_zero(drawn_report):
 
 
 def test_a_render_that_produced_nothing_does_not_cost_the_other_measures():
-    """
-    metrics.size_spread raises on a rendered height of zero, on the grounds that
-    it is a failed job rather than an incoherent gallery. A batch of thirty
-    photographs must not lose its edge quality, its elevations and its renders
-    to one of them, so the harness catches that and reports the coherence figure
-    as blank.
+    """metrics.size_spread raises on a rendered height of zero, on the grounds that it
+    is a failed job rather than an incoherent gallery.
     """
     totals = realism_report.summarise([
         row("good.png", height=500),
@@ -283,12 +223,7 @@ def test_a_render_that_produced_nothing_does_not_cost_the_other_measures():
 
 
 def test_the_elevation_rungs_are_counted_separately_from_one_another(drawn_report):
-    """
-    'wheel_ellipse' measured a tyre and 'assumed' guessed standing eye level.
-    Pooling them into one mean without recording which produced what is how a
-    population prior gets quoted as an observation, so the method histogram and
-    the count of genuine measurements both have to survive into the file.
-    """
+    """'wheel_ellipse' measured a tyre and 'assumed' guessed standing eye level."""
     methods = drawn_report["elevation_methods"]
 
     assert sum(methods.values()) == drawn_report["totals"]["photographs"]
@@ -302,12 +237,7 @@ def test_the_elevation_rungs_are_counted_separately_from_one_another(drawn_repor
 # ── Comparing a run against a saved baseline ───────────────────────────────────
 
 def test_comparison_reports_the_delta_between_two_runs():
-    """
-    The whole reason the harness saves a file. Nobody reading the technical
-    report knows whether an edge-quality ratio of 0.30 is good; everybody can
-    see that it used to be 0.10. The direction has to be after minus before, or
-    an improvement would be reported as a regression.
-    """
+    """The whole reason the harness saves a file."""
     baseline = report([row("a.png", fractional=1000, silhouette=10000, degrees=8.0)])
     current = report([row("a.png", fractional=3000, silhouette=10000, degrees=14.0)])
 
@@ -323,12 +253,9 @@ def test_comparison_reports_the_delta_between_two_runs():
 
 
 def test_comparison_skips_a_figure_only_one_of_the_runs_has():
-    """
-    The horizon offset is the live case: it is blank today and will not be once
-    Phase 1 measures both ends of it, so the first run that reports one will be
-    compared against a baseline that does not. Subtracting from a missing value
-    has to be left out rather than treated as a subtraction from zero, which
-    would announce the whole of the new figure as an improvement.
+    """The horizon offset is the live case: it is blank today and will not be once Phase
+    1 measures both ends of it, so the first run that reports one will be compared
+    against a baseline that does not.
     """
     baseline = report([row("a.png")])
     current = report([row("a.png", horizon_offset=12.0)])
@@ -340,12 +267,7 @@ def test_comparison_skips_a_figure_only_one_of_the_runs_has():
 
 
 def test_comparison_warns_when_only_one_run_used_drawn_vehicles():
-    """
-    Two metrics files always subtract. This one is the subtraction that most
-    looks like evidence and least is: a smoke run taken as the "before" and real
-    photographs as the "after" would show enormous movement in every figure,
-    none of it caused by any change to the code.
-    """
+    """Two metrics files always subtract."""
     baseline = report([row("a.png")], synthetic=True)
     current = report([row("a.png")], synthetic=False)
 
@@ -355,12 +277,7 @@ def test_comparison_warns_when_only_one_run_used_drawn_vehicles():
 
 
 def test_comparison_warns_when_the_two_runs_measured_different_photographs():
-    """
-    Pooled totals are only comparable over the same set. Adding four photographs
-    to the folder between the before and the after moves every figure, and weeks
-    apart that is invisible in a table of numbers — which is why the harness
-    says it rather than leaving it to be noticed.
-    """
+    """Pooled totals are only comparable over the same set."""
     baseline = report([row("a.png"), row("b.png")])
     current = report([row("a.png"), row("c.png")])
 
@@ -369,17 +286,12 @@ def test_comparison_warns_when_the_two_runs_measured_different_photographs():
     assert deltas["only_in_baseline"] == ["b.png"]
     assert deltas["only_in_current"] == ["c.png"]
     assert any("only one of the two runs" in warning for warning in deltas["warnings"])
-    # The photographs both runs share are still compared: the warning is about
-    # how the pooled totals should be read, not a reason to report nothing.
     assert [photograph["name"] for photograph in deltas["photographs"]] == ["a.png"]
 
 
 def test_comparison_warns_when_the_backdrop_changed():
-    """
-    Every geometric figure here is measured against the scene the vehicle was
-    placed in. Swapping the backdrop between two runs moves the rendered heights
-    and the contact line for a reason that has nothing to do with the phase
-    being judged, so the digests are compared rather than assumed equal.
+    """Every geometric figure here is measured against the scene the vehicle was placed
+    in.
     """
     baseline = report([row("a.png")], backdrop_digest="a" * 64)
     current = report([row("a.png")], backdrop_digest="b" * 64)
@@ -390,12 +302,7 @@ def test_comparison_warns_when_the_backdrop_changed():
 
 
 def test_the_comparison_is_written_into_the_summary(synthetic_run, tmp_path):
-    """
-    A delta computed and then printed nowhere is not evidence either. Running
-    with --baseline has to put the before, the after and the difference in front
-    of the reader, and the run below compares a set against itself so that every
-    delta is a known zero rather than something that has to be re-derived here.
-    """
+    """A delta computed and then printed nowhere is not evidence either."""
     exit_code = realism_report.main([
         "--cutouts", str(synthetic_run / "synthetic"),
         "--out", str(tmp_path / "after"),
@@ -415,10 +322,8 @@ def test_the_comparison_is_written_into_the_summary(synthetic_run, tmp_path):
 # ── The command line ───────────────────────────────────────────────────────────
 
 def test_an_empty_input_directory_exits_non_zero_with_a_reason(tmp_path, capsys):
-    """
-    Pointed at the wrong folder, the harness must not write an empty metrics
-    file and exit zero. An empty report is the shape of a successful run, and
-    the next phase would compare against it.
+    """Pointed at the wrong folder, the harness must not write an empty metrics file and
+    exit zero.
     """
     exit_code = realism_report.main(["--cutouts", str(tmp_path), "--out", str(tmp_path)])
 
@@ -434,3 +339,4 @@ def test_a_missing_input_directory_exits_non_zero(tmp_path, capsys):
 
     assert exit_code == 1
     assert "no such directory" in capsys.readouterr().err.lower()
+

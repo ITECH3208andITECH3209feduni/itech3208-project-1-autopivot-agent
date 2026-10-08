@@ -1,9 +1,3 @@
-// Signed-in layout: fixed sidebar plus the routed view.
-//
-// Object-first navigation. Upload and Processing are gone as nav items — you do
-// not "go to" an upload, you add a vehicle, and Processing is a state of a
-// vehicle rather than a place. That leaves the nav listing the three things the
-// dealership actually owns, with a count against each.
 
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -35,9 +29,6 @@ function SearchField() {
   function submit(event: React.FormEvent) {
     event.preventDefault()
     const trimmed = term.trim()
-    // Searching is a navigation, not a filter on whatever page you happen to be
-    // on, so it always lands on Vehicles with the query in the URL — which
-    // makes a result set linkable and survivable across a refresh.
     navigate(trimmed ? `/app/vehicles?q=${encodeURIComponent(trimmed)}` : '/app/vehicles')
   }
 
@@ -59,9 +50,6 @@ function SearchField() {
           transition: 'border-color 0.15s',
         }}
       />
-      {/* A form with no submit button does not reliably submit on Enter, so
-          pressing it in the search field did nothing at all. Hidden rather than
-          removed: screen readers still announce a way to run the search. */}
       <button type="submit" style={{
         position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
         overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
@@ -78,8 +66,6 @@ function NavRow({ item, counts }: { item: NavItem; counts: NavCounts | null }) {
   return (
     <NavLink
       to={item.to}
-      // `end` on the index route only, so a child route does not also light up
-      // Overview.
       end={item.to === '/app'}
       style={({ isActive }) => ({
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -95,8 +81,6 @@ function NavRow({ item, counts }: { item: NavItem; counts: NavCounts | null }) {
         <>
           <span>{item.label}</span>
           {value !== null && value > 0 && (
-            // Mono for the numeral, per the guidelines' rule that data and
-            // labels are mono and prose is not.
             <span style={{
               fontFamily: MONO, fontSize: 11,
               color: isActive ? C.forest : C.inkSoft,
@@ -122,10 +106,6 @@ export default function AppShell() {
   const isPlatformAdministrator = user?.role === 'platform_admin'
   const primaryNav = isPlatformAdministrator ? PLATFORM_NAV : PRIMARY_NAV
 
-  // Refreshed on every navigation so a newly created vehicle is reflected
-  // without a reload. Cheap: three COUNT(*) queries against indexed columns.
-  // Router state, not window.location — the latter does not change on a
-  // client-side navigation, so the counts would never update.
   const { pathname } = useLocation()
   useEffect(() => {
     if (isPlatformAdministrator) {
@@ -139,8 +119,6 @@ export default function AppShell() {
     return () => { cancelled = true }
   }, [pathname, isPlatformAdministrator])
 
-  // Any navigation closes the slide-over; leaving it open over the page the
-  // user just asked for is the classic mobile-nav annoyance.
   useEffect(() => setMenuOpen(false), [pathname])
 
   const dealership = user?.dealership
@@ -189,8 +167,6 @@ export default function AppShell() {
         position: 'fixed', top: 0, left: 0, bottom: 0, width: SIDEBAR_WIDTH,
         background: C.white, borderRight: `1px solid ${C.line}`,
         display: 'flex', flexDirection: 'column', zIndex: 46,
-        // Translated rather than unmounted, so the panel slides instead of
-        // appearing, and its scroll position survives being closed.
         transform: sidebarVisible ? 'translateX(0)' : `translateX(-${SIDEBAR_WIDTH}px)`,
         transition: compact ? 'transform 0.2s ease' : 'none',
         boxShadow: compact && menuOpen ? '0 0 32px rgba(26,26,23,0.18)' : 'none',
@@ -201,9 +177,6 @@ export default function AppShell() {
           </span>
         </div>
 
-        {/* The single primary action, per the guidelines' one-solid-button rule.
-            It used to appear twice — once on Overview and once on Results —
-            competing with itself for the same task. */}
         {!isPlatformAdministrator && <div style={{ padding: '0 10px 12px' }}>
           <button
             onClick={() => navigate('/app/upload')}
@@ -269,10 +242,6 @@ export default function AppShell() {
         paddingBottom: 32,
         minWidth: 0,
       }}>
-        {/* margin auto, not just a max-width: without it the content block
-            sits hard against the sidebar and a wide monitor gets a metre of
-            dead space on the right, while a laptop — narrower than the cap —
-            looks correctly centred and hides the bug. */}
         <div style={{ maxWidth: contentMaxWidth, margin: '0 auto' }}>
           <Outlet />
         </div>

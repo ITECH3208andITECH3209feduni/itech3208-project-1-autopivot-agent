@@ -1,16 +1,4 @@
-"""Platform-administrator management of any one dealership's own staff.
-
-`/api/dealership/users` (routes_dealership_users.py) is scoped to the
-caller's own `dealership_id` — a `dealership_admin` managing their own team.
-A platform administrator belongs to no dealership at all, so that router is
-simply unreachable for them; this is the same four operations (list, add,
-reset a password, deactivate), scoped instead by an explicit dealership id in
-the path and gated to `platform_admin`.
-
-Deliberately a separate router rather than teaching the existing one to
-accept two different actors with two different scoping rules — each stays a
-single role, a single scope, easy to audit on its own.
-"""
+"""Platform-administrator management of any one dealership's own staff."""
 
 from __future__ import annotations
 
@@ -59,10 +47,6 @@ def _dealership(session: DbSession, dealership_id: int) -> Dealership:
 
 def _target(session: DbSession, dealership_id: int, user_id: int) -> User:
     user = session.scalar(select(User).where(User.id == user_id).with_for_update())
-    # A wrong dealership_id reads as "not found", identically to a wrong
-    # user_id — the same reasoning as _owned_listing elsewhere in this
-    # codebase: a user belonging to a different dealership is indistinguishable
-    # from one that does not exist.
     if user is None or user.dealership_id != dealership_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     return user
@@ -198,3 +182,4 @@ def deactivate_dealership_user(
     )
     session.refresh(user)
     return _out(user)
+

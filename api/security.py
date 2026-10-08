@@ -1,9 +1,4 @@
-"""Password hashing and access-token issuing.
-
-bcrypt is used directly rather than through passlib: passlib 1.7.4 is
-unmaintained and trips a spurious version-detection error against bcrypt 4.x,
-and the two functions we need are a three-line wrapper either way.
-"""
+"""Password hashing and access-token issuing."""
 
 from __future__ import annotations
 
@@ -20,14 +15,9 @@ logger = logging.getLogger("autopivot.security")
 
 JWT_ALGORITHM = "HS256"
 
-# bcrypt silently ignores anything past the 72th byte, so a longer password
-# would be accepted at signup and then match on a truncated prefix at login.
-# Callers reject over-long passwords rather than letting that happen quietly.
 BCRYPT_MAX_PASSWORD_BYTES = 72
 
 
-# RFC 7518 §3.2 requires an HMAC key at least as long as the hash output, which
-# is 32 bytes for SHA-256. PyJWT warns below this; we fail loudly instead.
 MIN_JWT_SECRET_BYTES = 32
 
 
@@ -76,9 +66,6 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-# A real hash of a throwaway value. Login verifies against this when the email
-# is unknown, so a missing account costs the same time as a wrong password and
-# the endpoint does not become an account-enumeration oracle.
 _DUMMY_HASH: str = hash_password(secrets.token_urlsafe(16))
 
 
@@ -114,3 +101,4 @@ def create_access_token(
 def decode_access_token(token: str) -> dict[str, Any]:
     """Decode and validate a token. Raises jwt.PyJWTError on any problem."""
     return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+

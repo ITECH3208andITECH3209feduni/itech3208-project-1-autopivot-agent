@@ -1,5 +1,3 @@
-// Authentication state, held above the router so a page reload restores the
-// session instead of dropping the user back on the landing page.
 
 import {
   createContext,
@@ -15,7 +13,6 @@ import { ApiError, api, tokenStore, type User } from '../api/client'
 
 type AuthState = {
   user: User | null
-  /** True until the stored token has been checked, so guards do not redirect early. */
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
@@ -37,8 +34,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setUser(await api.me())
     } catch (err) {
-      // A rejected token is worth discarding; a network blip is not, since
-      // clearing here would silently sign the user out when the API restarts.
       if (err instanceof ApiError && err.status === 401) {
         tokenStore.clear()
         setUser(null)
@@ -46,9 +41,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Validate any stored token once on mount. The token is checked against the
-  // server rather than trusted, so an account deactivated since it was issued
-  // does not keep working.
   useEffect(() => {
     refresh().finally(() => setLoading(false))
   }, [refresh])

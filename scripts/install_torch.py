@@ -1,25 +1,4 @@
-"""Install the build of torch that can actually use this machine's GPU.
-
-    python scripts/install_torch.py            # detect and install
-    python scripts/install_torch.py cu118      # force a specific CUDA build
-    python scripts/install_torch.py cpu        # force the CPU build
-
-On macOS, the default command installs the normal PyPI wheels. Those wheels
-include the MPS support used by Apple Silicon; the special CUDA indexes are
-only used for NVIDIA machines.
-
-This exists because `pip install torch` does the wrong thing on Windows. PyPI
-serves the CPU-only build there, and it gives no sign of being the wrong one:
-it installs cleanly, imports cleanly, and simply reports that no GPU exists.
-People lose an afternoon to it. The CUDA builds are on PyTorch's own package
-index and have to be requested explicitly.
-
-Which build depends on the NVIDIA driver, not on the card. Thanks to CUDA minor
-version compatibility, any 12.x runtime runs on a 527.41+ Windows driver, so
-the choice is really just "recent driver or not".
-
-Uses only the standard library: it runs before anything is installed.
-"""
+"""Install the build of torch that can actually use this machine's GPU."""
 
 from __future__ import annotations
 
@@ -28,17 +7,11 @@ import re
 import subprocess
 import sys
 
-# Driver floors, from NVIDIA's CUDA compatibility table. Windows numbers; the
-# Linux ones are a little lower, and using the stricter of the two is harmless.
 WINDOWS_DRIVER_FOR_CUDA_12 = 527.41
 WINDOWS_DRIVER_FOR_CUDA_11_8 = 452.39
 
 INDEX = "https://download.pytorch.org/whl/{}"
 
-# Kept slightly behind the newest release on purpose. A CUDA build only a few
-# weeks old is the one most likely to want a driver the machine has not been
-# updated to, and the failure it produces — everything installs, nothing runs
-# on the GPU — is the exact failure this script exists to prevent.
 DEFAULT_CUDA = "cu126"
 OLD_DRIVER_CUDA = "cu118"
 
@@ -87,8 +60,6 @@ def detect_gpu_name() -> str | None:
 def choose_build() -> str | None:
     """Return a CUDA/CPU index tag, or None for the normal macOS wheels."""
     if platform.system() == "Darwin":
-        # Apple Silicon uses the MPS backend, which ships in the normal PyPI
-        # wheel. Installing from the CPU-only index can remove that support.
         print("macOS detected — installing the standard PyTorch wheel with MPS support.")
         return None
 
@@ -152,8 +123,6 @@ def main() -> int:
         )
         return result.returncode
 
-    # Verifying here rather than at first use: a CPU build that slipped through
-    # is worth catching now, while the fix is still one command away.
     print("\nChecking the installed build ...")
     check = subprocess.run(
         [
@@ -194,3 +163,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

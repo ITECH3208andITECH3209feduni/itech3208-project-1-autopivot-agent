@@ -1,10 +1,3 @@
-# Tests for storing a backdrop's measured geometry and correcting it by hand.
-#
-# The schema is built on in-memory SQLite with foreign keys enforced, the same
-# way tests/test_image_lineage.py does it, so none of this needs PostgreSQL:
-#
-#     pytest tests/test_backdrop_geometry_api.py -v
-
 import io
 
 import pytest
@@ -21,9 +14,6 @@ from database.base import Base
 from database.models import Backdrop, Dealership, User
 
 
-# SQLite only auto-assigns a primary key for a column declared exactly INTEGER
-# PRIMARY KEY, and every key in this schema is BigInteger, which is right for
-# PostgreSQL. This narrows the SQLite DDL only.
 @compiles(BigInteger, "sqlite")
 def _bigint_is_integer_on_sqlite(type_, compiler, **kw):
     return "INTEGER"
@@ -93,10 +83,8 @@ def room_bytes(vanishing_y=400, size=(1200, 900)):
 # ── Measuring on upload ────────────────────────────────────────────────────────
 
 def test_an_uploaded_backdrop_is_measured(session):
-    """
-    The measurement happens once, when the backdrop is added, because it is a
-    property of the backdrop rather than of any job. Measuring per job would
-    repeat identical work for every photograph in every listing that uses it.
+    """The measurement happens once, when the backdrop is added, because it is a
+    property of the backdrop rather than of any job.
     """
     geometry = routes_backdrops._measure(room_bytes(vanishing_y=400))
     assert geometry is not None
@@ -112,19 +100,13 @@ def test_an_uploaded_backdrop_is_measured(session):
 
 
 def test_an_unreadable_upload_does_not_fail_the_upload(session):
-    """
-    The defect this exists to catch. A dealer adding a showroom photograph is
-    adding a backdrop, not requesting a measurement, so an image the analyser
-    cannot read has to leave the columns null and let the upload succeed.
-    """
+    """The defect this exists to catch."""
     assert routes_backdrops._measure(b"this is not an image") is None
 
 
 def test_a_backdrop_that_was_never_measured_is_distinguishable(session):
-    """
-    Null means never looked at; method 'assumed' with a zero confidence means
-    looked at and found unreadable. The compositor treats those differently, so
-    they must not collapse into one another.
+    """Null means never looked at; method 'assumed' with a zero confidence means looked
+    at and found unreadable.
     """
     never_measured = backdrop_row(session, name="Old")
     assert never_measured.horizon_y_ratio is None
@@ -147,10 +129,9 @@ def _png(image):
 # ── Correcting it by hand ──────────────────────────────────────────────────────
 
 def test_a_dealer_can_correct_the_measurement(session):
-    """
-    A seamless backdrop gives the analyser nothing to work from, and saying so
-    honestly is only useful if the person who took the photograph can then put
-    it right.
+    """A seamless backdrop gives the analyser nothing to work from, and saying so
+    honestly is only useful if the person who took the photograph can then put it
+    right.
     """
     row = backdrop_row(session)
     routes_backdrops._apply_geometry(
@@ -189,9 +170,8 @@ def test_a_correction_cannot_reach_another_dealerships_backdrop(session):
 
 
 def test_the_measurement_is_reported_to_the_client(session):
-    """
-    A dealer cannot correct a number they are never shown, and the confidence is
-    what tells them whether it is worth looking at.
+    """A dealer cannot correct a number they are never shown, and the confidence is what
+    tells them whether it is worth looking at.
     """
     row = backdrop_row(session)
     routes_backdrops._apply_geometry(row, routes_backdrops._measure(room_bytes()))
@@ -203,3 +183,4 @@ def test_the_measurement_is_reported_to_the_client(session):
     assert reported.horizon_method in backdrop_analysis.HORIZON_METHODS
     assert reported.floor_top_y_ratio is not None
     assert reported.geometry_overridden is False
+

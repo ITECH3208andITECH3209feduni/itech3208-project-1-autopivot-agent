@@ -1,15 +1,3 @@
-# Tests for the camera elevation estimate on its way from the pipeline to the
-# job record.
-#
-#     pytest tests/test_camera_elevation.py -v
-#
-# Neither end of that journey can be imported here. autopivot_backend.py pulls
-# in torch, and api/processing.py talks to PostgreSQL, so both are read as
-# source and asserted against with ast — the same approach, and for the same
-# reason, as tests/test_migrations.py and tests/test_internal_imports.py.
-# database/models.py and elevation.py are imported for real, because neither
-# needs a GPU or a database.
-
 import ast
 from pathlib import Path
 
@@ -25,9 +13,6 @@ ORCHESTRATOR = ROOT / "api" / "processing.py"
 
 ELEVATION_COLUMNS = ("camera_elevation_deg", "elevation_confidence", "elevation_method")
 
-# What database/base.py's naming convention prepends to a check constraint on
-# this table, and therefore what the migration spells out in full while the
-# model gives only the tail.
 CK_PREFIX = "ck_processing_jobs_"
 
 
@@ -99,8 +84,6 @@ def migration_check_conditions() -> dict[str, str]:
             continue
         if getattr(node.func, "attr", None) != "create_check_constraint":
             continue
-        # Always op.f(NAME) here — tests/test_migrations.py is what enforces
-        # that, so this only has to unwrap it.
         held = node.args[0].args[0]
         name = (
             constants[held.id] if isinstance(held, ast.Name) else ast.literal_eval(held)
@@ -112,8 +95,6 @@ def migration_check_conditions() -> dict[str, str]:
 
 
 def model_check_conditions() -> dict[str, str]:
-    # SQLAlchemy has already run these through database/base.py's convention, so
-    # the prefix comes off here to meet the migration's names on equal terms.
     return {
         constraint.name.removeprefix(CK_PREFIX): normalised(str(constraint.sqltext))
         for constraint in ProcessingJob.__table__.constraints
@@ -150,13 +131,7 @@ def keyword_names(call: ast.Call) -> set[str]:
 
 @pytest.mark.parametrize("name", ELEVATION_COLUMNS)
 def test_the_migration_adds_the_column_the_model_declares(name):
-    """
-    The defect this catches is a column that exists in one file and not the
-    other. SQLAlchemy emits an UPDATE naming every mapped column, so a model
-    column the migration forgot does not fail at startup or in review — it
-    fails on the first real job, after the GPU work is already done, with an
-    UndefinedColumn from PostgreSQL and the whole batch marked failed.
-    """
+    """The defect this catches is a column that exists in one file and not the other."""
     added = migration_columns()
     assert name in added, f"{name} is mapped on ProcessingJob but no migration adds it"
 
@@ -171,10 +146,9 @@ def test_the_migration_adds_the_column_the_model_declares(name):
     ("camera_elevation_range", "elevation_confidence_range", "elevation_method_allowed"),
 )
 def test_the_migration_creates_the_check_constraint_the_model_declares(name):
-    """
-    The same drift, in the constraints rather than the columns, and quieter:
-    the schema comes up without the rule and every value the model claims is
-    impossible is accepted for as long as nobody looks.
+    """The same drift, in the constraints rather than the columns, and quieter: the
+    schema comes up without the rule and every value the model claims is impossible
+    is accepted for as long as nobody looks.
     """
     from_migration = migration_check_conditions()
     assert name in from_migration, f"the model declares {name} but no migration creates it"
@@ -182,13 +156,9 @@ def test_the_migration_creates_the_check_constraint_the_model_declares(name):
 
 
 def test_the_elevation_range_matches_the_estimators_own_bounds():
-    """
-    These bounds are written out in models.py and again in the migration rather
-    than imported, because elevation.py needs OpenCV and the light API must
-    install without it. Duplicated constants drift: widening
-    MAX_ELEVATION_DEG alone would leave the estimator returning values the
-    database rejects, and the failure would land on a job that had already run
-    the whole pipeline successfully.
+    """These bounds are written out in models.py and again in the migration rather than
+    imported, because elevation.py needs OpenCV and the light API must install
+    without it.
     """
     condition = model_check_conditions()["camera_elevation_range"]
     expected = (
@@ -199,12 +169,7 @@ def test_the_elevation_range_matches_the_estimators_own_bounds():
 
 
 def test_the_method_constraint_lists_exactly_the_cascades_rungs():
-    """
-    Same duplication, same drift, opposite direction. A fifth rung added to
-    elevation.ELEVATION_METHODS without touching the schema makes every
-    photograph it answers for fail its insert; a rung removed leaves a value
-    the database still accepts and nothing produces.
-    """
+    """Same duplication, same drift, opposite direction."""
     condition = model_check_conditions()["elevation_method_allowed"]
     listed = ", ".join(f"'{method}'" for method in elevation.ELEVATION_METHODS)
     assert condition == f"elevation_method IS NULL OR elevation_method IN ({listed})"
@@ -212,11 +177,10 @@ def test_the_method_constraint_lists_exactly_the_cascades_rungs():
 
 @pytest.mark.parametrize("name", ELEVATION_COLUMNS)
 def test_the_elevation_columns_are_nullable(name):
-    """
-    NOT NULL would be unrunnable against a table that already has jobs in it,
-    and wrong besides: a photograph that never produced a cutout has nothing to
-    estimate from and must record nothing, which is a different outcome from
-    the cascade falling through to its assumption.
+    """NOT NULL would be unrunnable against a table that already has jobs in it, and
+    wrong besides: a photograph that never produced a cutout has nothing to estimate
+    from and must record nothing, which is a different outcome from the cascade
+    falling through to its assumption.
     """
     assert ProcessingJob.__table__.c[name].nullable
 
@@ -224,14 +188,9 @@ def test_the_elevation_columns_are_nullable(name):
 # ── The pipeline measures the photograph, not the studio ──────────────────────
 
 def test_the_pipeline_estimates_the_elevation_before_it_composites():
-    """
-    The defect this exists to catch is the estimator being moved below
-    _place_on_backdrop, which is where a reader tidying the function would
-    naturally put it — beside the other reporting. The compositor rescales the
-    cutout to stand on the scene's platform, so a tyre measured afterwards has
-    the studio's geometry and not the photograph's, and the job would record
-    the backdrop's camera height for every vehicle while looking perfectly
-    healthy.
+    """The defect this exists to catch is the estimator being moved below
+    _place_on_backdrop, which is where a reader tidying the function would naturally
+    put it — beside the other reporting.
     """
     process = function_node(parsed(BACKEND), "process")
 
@@ -246,12 +205,7 @@ def test_the_pipeline_estimates_the_elevation_before_it_composites():
 
 
 def test_the_pipeline_estimates_after_the_plates_are_treated():
-    """
-    The other half of the same ordering. _apply_plate_treatment returns a new
-    cutout rather than editing in place, so an estimate taken before it would
-    be measuring an image the rest of the pipeline then discards — the number
-    would still look plausible, because a plate blur does not move a tyre edge.
-    """
+    """The other half of the same ordering."""
     process = function_node(parsed(BACKEND), "process")
 
     treated = calls_to(process, "_apply_plate_treatment")
@@ -262,14 +216,8 @@ def test_the_pipeline_estimates_after_the_plates_are_treated():
 
 
 def test_a_run_that_produced_no_cutout_reports_no_elevation():
-    """
-    The cascade always answers, so it is tempting to fill these in everywhere
-    for consistency. That would be a lie on the early returns: an advertisement
-    banner and a photograph with no car in it never produce a cutout, so there
-    is nothing to have measured, and recording standing eye level for them
-    would make "we assumed" indistinguishable from "there was nothing to look
-    at" — which is precisely the distinction Phase 1 needs before it shifts a
-    backdrop's horizon.
+    """The cascade always answers, so it is tempting to fill these in everywhere for
+    consistency.
     """
     process = function_node(parsed(BACKEND), "process")
     elevation_fields = set(ELEVATION_COLUMNS)
@@ -294,12 +242,7 @@ def test_a_run_that_produced_no_cutout_reports_no_elevation():
 
 
 def test_a_completed_run_reports_all_three_elevation_fields():
-    """
-    The degrees alone are unusable. Without the confidence a caller cannot
-    refuse a weak estimate, and without the method it cannot tell a measured
-    tyre from an assumption — so reporting one of the three and not the others
-    is the same as reporting none of them.
-    """
+    """The degrees alone are unusable."""
     process = function_node(parsed(BACKEND), "process")
 
     produced = [
@@ -320,14 +263,7 @@ def test_a_completed_run_reports_all_three_elevation_fields():
 
 @pytest.mark.parametrize("name", ELEVATION_COLUMNS)
 def test_run_job_copies_the_estimate_onto_the_job(name):
-    """
-    The failure here is silent in a way the others are not. A field added to
-    ProcessOutcome and never copied across in run_job costs nothing at runtime:
-    the pipeline measures the elevation, the outcome carries it, the job is
-    written without it and the columns stay null. Nothing raises, nothing is
-    logged, and the evidence Phase 1 is meant to be judged on simply is not
-    there when someone goes looking for it.
-    """
+    """The failure here is silent in a way the others are not."""
     run_job = function_node(parsed(ORCHESTRATOR), "run_job")
 
     copied = {
@@ -343,3 +279,4 @@ def test_run_job_copies_the_estimate_onto_the_job(name):
     }
 
     assert copied.get(name) == name
+

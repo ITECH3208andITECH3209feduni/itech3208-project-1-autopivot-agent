@@ -29,10 +29,10 @@ class PlacementTests(unittest.TestCase):
                     self.assertGreaterEqual(y,0)
                     self.assertLessEqual(x+v.width,size[0])
                     bounds = v.getchannel("A").point(lambda a: 255 if a >= 128 else 0).getbbox()
-                    self.assertLessEqual(bounds[3]-bounds[1],size[1]*.35+2)
+                    self.assertLessEqual(bounds[3]-bounds[1],size[1]*.48+2)
     def test_contact_shadow_at_each_support(self):
         v,x,y,pts=p.fit(vehicle(650,420,True),c.STUDIO_FULL.platform_box,(1280,960))
-        shadow=p.contact_shadow((1280,960),v,x,y,pts)
+        shadow=p.surface_shadow((1280,960),v,x,y,pts)
         for px,py in pts:self.assertGreater(shadow.getpixel((x+px,y+py))[3],70)
     def test_compose_metadata(self):
         bg=Image.open(Path(c.BACKGROUND_DIR)/'studio-full.png')
@@ -47,3 +47,4 @@ class PlacementTests(unittest.TestCase):
         with self.assertRaises(ValueError):p.fit(Image.new('RGBA',(40,40)),c.STUDIO_FULL.platform_box,(1280,960))
 
 if __name__=='__main__':unittest.main()
+

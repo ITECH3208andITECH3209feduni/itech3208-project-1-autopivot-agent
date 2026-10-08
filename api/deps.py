@@ -15,8 +15,6 @@ from api.security import decode_access_token
 from database.connection import get_db_session
 from database.models import AuditLog, User
 
-# auto_error=False so a missing header produces our own 401 with a WWW-Authenticate
-# challenge rather than Starlette's bare 403.
 _bearer = HTTPBearer(auto_error=False)
 
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -40,8 +38,6 @@ def get_current_user(
     try:
         payload = decode_access_token(credentials.credentials)
     except jwt.PyJWTError:
-        # Expired, wrong signature, malformed — all indistinguishable to the
-        # caller on purpose.
         raise _UNAUTHENTICATED
 
     subject = payload.get("sub")
@@ -55,8 +51,6 @@ def get_current_user(
 
     user = session.get(User, user_id)
     if user is None or not user.is_active:
-        # The account may have been deactivated after the token was issued, so
-        # this is re-checked on every request rather than trusted from the token.
         raise _UNAUTHENTICATED
 
     if payload.get("token_version") != user.token_version:
@@ -110,11 +104,7 @@ def require_roles(*roles: str) -> Callable[[User], User]:
 
 
 def serialise_user(session: Session, user: User) -> UserOut:
-    """Build the client-facing user payload, including dealership context.
-
-    The sidebar shows the dealership name and its active user count, so that
-    count is resolved here rather than with a second round trip.
-    """
+    """Build the client-facing user payload, including dealership context."""
     dealership = None
     if user.dealership is not None:
         user_count = session.scalar(
@@ -144,3 +134,4 @@ def serialise_user(session: Session, user: User) -> UserOut:
         must_change_password=user.must_change_password,
         dealership=dealership,
     )
+

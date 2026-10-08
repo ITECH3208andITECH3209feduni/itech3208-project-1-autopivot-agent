@@ -1,14 +1,4 @@
-"""Content-addressed file storage.
-
-Local disk for now, behind a narrow interface so object storage can replace it
-without touching callers. Every path is scoped to a dealership, and every read
-goes through `resolve`, which refuses to escape the storage root.
-
-Files are named by the SHA-256 of their contents. Two dealerships uploading the
-same photograph still get separate copies, because the dealership id is part of
-the path — tenant separation matters more here than saving a few megabytes — but
-one dealership re-uploading the same file costs nothing.
-"""
+"""Content-addressed file storage."""
 
 from __future__ import annotations
 
@@ -23,11 +13,6 @@ from PIL import Image, UnidentifiedImageError
 
 StorageKind = Literal["original", "processed", "backdrop", "plate_overlay"]
 
-# Anchored to the project directory, not the working directory. A relative
-# "storage" would follow whatever folder the server happened to be started
-# from: VS Code's Run panel uses the workspace root, a terminal opened in
-# scripts/ does not, and the uploaded images would quietly split across two
-# folders with half of them 404ing. An absolute STORAGE_ROOT still wins.
 _STORAGE_ROOT_SETTING = os.getenv("STORAGE_ROOT", "").strip() or "storage"
 STORAGE_ROOT = (
     Path(_STORAGE_ROOT_SETTING)
@@ -35,16 +20,12 @@ STORAGE_ROOT = (
     else Path(__file__).resolve().parent.parent / _STORAGE_ROOT_SETTING
 ).resolve()
 
-# Mirrors the CHECK constraint on images.mime_type and backdrops.mime_type.
 EXTENSION_FOR_MIME: dict[str, str] = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
 }
 
-# What PIL reports, mapped back to the mime types the schema accepts. Trusting
-# the browser's Content-Type would let a caller store anything it liked under an
-# image mime, so the format is taken from the decoded bytes instead.
 MIME_FOR_PIL_FORMAT: dict[str, str] = {
     "JPEG": "image/jpeg",
     "PNG": "image/png",
@@ -91,11 +72,7 @@ class StoredImage:
 
 
 def inspect_image(content: bytes) -> tuple[str, int, int]:
-    """Return (mime_type, width, height) from the bytes themselves.
-
-    PIL's verify() consumes the stream, so the buffer is opened twice: once to
-    confirm the file is intact, once to read its dimensions.
-    """
+    """Return (mime_type, width, height) from the bytes themselves."""
     try:
         probe = Image.open(io.BytesIO(content))
         probe.verify()
@@ -120,15 +97,7 @@ def save_image(
     content: bytes,
     prefix: str | None = None,
 ) -> StoredImage:
-    """Validate, measure and write an image.
-
-    Uploads are addressed purely by content, so the same file arriving twice
-    costs nothing. Pipeline *outputs* pass a `prefix` — the job id — because a
-    deterministic pipeline given the same photograph and backdrop produces
-    byte-identical results, and images.storage_path is globally unique. Without
-    it, reprocessing an image, or two listings sharing a photograph, would
-    collide on a path that is supposed to identify one row.
-    """
+    """Validate, measure and write an image."""
     if not content:
         raise StorageError("The uploaded file is empty.")
 
@@ -140,13 +109,9 @@ def save_image(
     destination = STORAGE_ROOT / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    # Content-addressed, so an identical re-upload is already on disk and
-    # rewriting it would only risk truncating a file another request is reading.
     if not destination.exists():
         temporary = destination.with_suffix(destination.suffix + ".part")
         temporary.write_bytes(content)
-        # Rename is atomic within a filesystem: a reader either sees no file or
-        # the whole file, never a half-written one.
         temporary.replace(destination)
 
     return StoredImage(relative, mime, len(content), width, height)
@@ -156,7 +121,6 @@ def resolve(storage_path: str) -> Path:
     """Map a stored relative path to a real file, refusing to leave the root."""
     candidate = (STORAGE_ROOT / storage_path).resolve()
     if not candidate.is_relative_to(STORAGE_ROOT):
-        # Reached only via a crafted path such as "../../etc/passwd".
         raise StorageError("Invalid storage path.")
     if not candidate.is_file():
         raise StorageError("That file is no longer available.")
@@ -164,11 +128,7 @@ def resolve(storage_path: str) -> Path:
 
 
 def dealership_of(storage_path: str) -> int | None:
-    """The dealership a path belongs to, or None if it is not well formed.
-
-    Callers use this to confirm a file belongs to the requesting user's
-    dealership before serving it.
-    """
+    """The dealership a path belongs to, or None if it is not well formed."""
     head = storage_path.split("/", 1)[0]
     return int(head) if head.isdigit() else None
 
@@ -179,3 +139,4 @@ def delete(storage_path: str) -> None:
         resolve(storage_path).unlink()
     except StorageError:
         pass
+

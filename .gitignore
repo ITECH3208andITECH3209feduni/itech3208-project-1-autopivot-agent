@@ -1,24 +1,76 @@
+# Local credentials and configuration; keep the empty example template.
 .env
-__pycache__/
-*.py[cod]
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+
+# Python environments and generated caches.
 .venv/
 venv/
+env/
+__pycache*/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
+# Downloaded models and local model-cache backups.
+.cache/
+model-cache-backup*/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.ckpt
 
-# Uploaded files (local storage backend)
+# Local databases, uploaded photos and generated output.
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
 storage/
+validation/
+shadow_update_preview/
+
+# Frontend dependencies and build output.
+node_modules/
+frontend/dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# Editor/OS files and temporary packages.
+.vscode/
+.idea/
 .DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
+*.bak
+*.zip
+
+# Keep source code, migrations, tests, package-lock.json and assets/backgrounds.
+
+# Local safety copies made while merging branches.
+_backup_before_merge/
 
 # Realism evidence (scripts/realism_report.py, --out defaults here).
-# The renders are large binaries and there is a fresh set of them every run;
-# the metrics file and its summary are a few kilobytes and are the record a
-# later phase compares itself against, so those two are kept. The re-include of
-# directories is what lets git descend far enough to see them: an ignored
-# parent directory cannot have its contents re-included.
+# Renders are large and regenerated every run; the metrics JSON and summary
+# are kept as the record a later phase compares against.
 /evidence/**
 !/evidence/**/
 !/evidence/**/*.json
 !/evidence/**/summary.txt
-# Except the drawn cut-outs of a smoke run, which are an input rather than a
-# result and come back whenever --synthetic is passed again.
 /evidence/**/synthetic/
+
+# Personal scratch notes, diffs and backup copies (not part of the app).
+apa*_*.txt
+*_backup.py
+*_backup.*

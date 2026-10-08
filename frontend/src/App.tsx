@@ -1,6 +1,3 @@
-// Routing. The Figma Make export switched views with useState, so there were no
-// deep links, a refresh dropped you back on the landing page, and the browser's
-// back button did nothing.
 
 import { Navigate, Route, BrowserRouter as Router, Routes, useLocation, useParams } from 'react-router-dom'
 import { useEffect, type ReactNode } from 'react'
@@ -26,8 +23,6 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const location = useLocation()
 
-  // Waiting on the stored token to be validated. Redirecting here would bounce
-  // a signed-in user to the landing page on every refresh.
   if (loading) {
     return (
       <div style={{
@@ -55,7 +50,6 @@ function RequirePlatformAdmin({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   useEffect(() => {
     if (user && user.role !== 'platform_admin') {
-      // The protected API records the denied attempt in the persistent audit log.
       void api.platformDealerships().catch(() => undefined)
     }
   }, [user])
@@ -81,7 +75,6 @@ function RequireDealershipAdmin({ children }: { children: ReactNode }) {
   </div>
 }
 
-/** Carries the listing id across the Results → Vehicles rename. */
 function RedirectToVehicle() {
   const { listingId } = useParams()
   return <Navigate to={`/app/vehicles/${listingId}`} replace />
@@ -105,11 +98,8 @@ export default function App() {
     <AuthProvider>
       <Router>
         <Routes>
-          {/* The coming-soon page is the public face; the landing page is
-              reachable at /preview until the pipeline can back up its claims. */}
           <Route path="/" element={<ComingSoonPage />} />
           <Route path="/preview" element={<LandingPage />} />
-          {/* The living style guide the brand guidelines reference. */}
           <Route path="/guidelines" element={<Guidelines />} />
 
           <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
@@ -119,23 +109,17 @@ export default function App() {
             <Route path="users" element={<RequireDealershipAdmin><DealershipUsersPage /></RequireDealershipAdmin>} />
             <Route path="vehicles" element={<ResultsView />} />
             <Route path="vehicles/:listingId" element={<ResultsView />} />
-            {/* Upload and Processing are reachable but not in the nav: one is
-                an action, the other a state of a vehicle. */}
             <Route path="upload" element={<UploadView />} />
             <Route path="processing" element={<ProcessingView />} />
             <Route path="processing/:listingId" element={<ProcessingView />} />
             <Route path="backdrops" element={<BackdropsView />} />
             <Route path="settings" element={<Placeholder title="Settings" />} />
 
-            {/* The nav used to call these Results and Admin. Redirected rather
-                than dropped so older links keep working. */}
             <Route path="results" element={<Navigate to="/app/vehicles" replace />} />
             <Route path="results/:listingId" element={<RedirectToVehicle />} />
             <Route path="admin" element={<Navigate to="/app/settings" replace />} />
           </Route>
 
-          {/* A designed 404 rather than a silent redirect, which would drop a
-              signed-in user onto the public page as if they had been logged out. */}
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Router>

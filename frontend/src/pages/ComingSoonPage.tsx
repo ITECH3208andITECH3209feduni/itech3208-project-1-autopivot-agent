@@ -1,14 +1,3 @@
-// The public face until the product has something real to show.
-//
-// The full landing page makes claims the pipeline cannot yet demonstrate — its
-// configurator shows the same photograph for every backdrop, and the hero
-// promises angle-matched backdrops that nothing computes. Rather than publish
-// that, this page says less and means it. The landing page stays reachable at
-// /preview through the toggle.
-//
-// Dark ground, per the guidelines: light carries chrome, dark carries
-// photographs. There are no photographs yet, and an empty light page would read
-// as broken where an empty dark one reads as deliberate.
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'

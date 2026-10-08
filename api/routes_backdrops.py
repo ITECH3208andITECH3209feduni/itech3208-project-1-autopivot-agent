@@ -1,10 +1,4 @@
-"""The dealership's backdrop library, and the route that serves stored files.
-
-A new dealership starts with no backdrops. There is no shipped default set:
-backdrops are owned per dealership by design, so anything global would have to
-be copied in at provisioning time, and copying in stock photography nobody chose
-is how a library fills with clutter.
-"""
+"""The dealership's backdrop library, and the route that serves stored files."""
 
 from __future__ import annotations
 
@@ -20,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 import backdrop_analysis
 from api import storage
 from api.deps import DbSession, ReadyUser
-from api.schemas import BackdropGeometryIn, BackdropOut
+from api.schemas import SHOT_ANGLES, BackdropAnglesIn, BackdropGeometryIn, BackdropOut
 from database.models import Backdrop
 
 logger = logging.getLogger("autopivot.backdrops")
@@ -46,8 +40,6 @@ def _serialise(backdrop: Backdrop) -> BackdropOut:
         name=backdrop.name,
         suits_angles=list(backdrop.suits_angles or []),
         is_default=backdrop.is_default,
-        # The path is never exposed; clients address files through this route so
-        # ownership is checked on every read.
         image_url=f"/api/files/{backdrop.storage_path}",
         created_at=backdrop.created_at,
         horizon_y_ratio=_as_float(backdrop.horizon_y_ratio),
@@ -66,15 +58,7 @@ def _as_float(value) -> float | None:
 
 
 def _measure(content: bytes) -> backdrop_analysis.BackdropGeometry | None:
-    """
-    Measure an uploaded backdrop, or None if it could not be read at all.
-
-    Deliberately swallows everything. A dealer uploading a showroom photograph
-    is adding a backdrop, not requesting a measurement, and a failure to find
-    the floor in an unusual image must not turn into a failed upload — the
-    columns stay null, which the compositor reads as "never measured" and
-    handles by behaving exactly as it did before any of this existed.
-    """
+    """Measure an uploaded backdrop, or None if it could not be read at all."""
     try:
         with PilImage.open(io.BytesIO(content)) as image:
             return backdrop_analysis.analyse(image)
@@ -115,12 +99,7 @@ async def create_backdrop(
     file: UploadFile = File(...),
     suits_angles: str = Form(""),
 ) -> BackdropOut:
-    """Add a backdrop.
-
-    `suits_angles` is a comma-separated list; empty means the backdrop suits all
-    angles. The vocabulary is not constrained yet — how a shot angle gets
-    determined is still an open decision.
-    """
+    """Add a backdrop."""
     dealership_id = _dealership_id(user)
 
     content = await file.read()
@@ -146,9 +125,6 @@ async def create_backdrop(
         is_default=False,
     )
 
-    # Measured now rather than when a job runs, because it is a property of the
-    # backdrop and does not change: measuring it per job would repeat the same
-    # work for every photograph in every listing that uses it.
     geometry = _measure(content)
     if geometry is not None:
         _apply_geometry(backdrop, geometry)
@@ -164,8 +140,6 @@ async def create_backdrop(
         session.commit()
     except IntegrityError:
         session.rollback()
-        # backdrop_name_per_dealership. The file is left on disk: it is content
-        # addressed, so it is either shared with an existing row or harmless.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A backdrop named '{name.strip()}' already exists.",
@@ -185,14 +159,7 @@ def set_backdrop_geometry(
     session: DbSession,
     geometry: BackdropGeometryIn = Body(...),
 ) -> BackdropOut:
-    """Correct where the floor and the horizon are.
-
-    The analyser is a measurement, not an oracle: a seamless backdrop offers it
-    no lines to work from and it says so with a low confidence, but saying so is
-    only useful if the dealer can then put it right. A correction is marked, and
-    nothing re-measures a backdrop that carries the mark — having a fix quietly
-    reverted by a later job is worse than never having offered it.
-    """
+    """Correct where the floor and the horizon are."""
     dealership_id = _dealership_id(user)
     backdrop = session.scalar(
         select(Backdrop).where(
@@ -206,9 +173,6 @@ def set_backdrop_geometry(
 
     backdrop.horizon_y_ratio = round(geometry.horizon_y_ratio, 3)
     backdrop.floor_top_y_ratio = round(geometry.floor_top_y_ratio, 3)
-    # A person looking at their own showroom is the strongest evidence
-    # available, so the confidence goes to certain rather than staying at
-    # whatever the analyser managed.
     backdrop.horizon_confidence = 1
     backdrop.floor_confidence = 1
     backdrop.geometry_overridden = True
@@ -219,6 +183,37 @@ def set_backdrop_geometry(
     return _serialise(backdrop)
 
 
+@router.patch("/backdrops/{backdrop_id}/angles", response_model=BackdropOut)
+def set_backdrop_angles(
+    backdrop_id: int,
+    user: ReadyUser,
+    session: DbSession,
+    body: BackdropAnglesIn = Body(...),
+) -> BackdropOut:
+    """Say which shot angles this backdrop is for."""
+    unknown = sorted(set(body.suits_angles) - set(SHOT_ANGLES))
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown angle(s): {', '.join(unknown)}. Use: {', '.join(SHOT_ANGLES)}.",
+        )
+    dealership_id = _dealership_id(user)
+    backdrop = session.scalar(
+        select(Backdrop).where(
+            Backdrop.id == backdrop_id, Backdrop.dealership_id == dealership_id
+        )
+    )
+    if backdrop is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Backdrop not found."
+        )
+    backdrop.suits_angles = [a for a in SHOT_ANGLES if a in set(body.suits_angles)]
+    session.commit()
+    session.refresh(backdrop)
+    logger.info("Backdrop angles set — id=%s angles=%s", backdrop_id, backdrop.suits_angles)
+    return _serialise(backdrop)
+
+
 @router.delete("/backdrops/{backdrop_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> None:
     dealership_id = _dealership_id(user)
@@ -226,8 +221,6 @@ def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> No
     backdrop = session.scalar(
         select(Backdrop).where(
             Backdrop.id == backdrop_id,
-            # Scoped rather than fetched-then-checked, so another dealership's
-            # id produces the same 404 as one that does not exist.
             Backdrop.dealership_id == dealership_id,
         )
     )
@@ -240,8 +233,6 @@ def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> No
         session.commit()
     except IntegrityError:
         session.rollback()
-        # ondelete=RESTRICT on processing_jobs.backdrop_id: a backdrop that has
-        # been used is part of the record of how those images were produced.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This backdrop has been used to process images and cannot be deleted.",
@@ -253,16 +244,9 @@ def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> No
 
 @router.get("/files/{storage_path:path}", include_in_schema=False)
 def serve_file(storage_path: str, user: ReadyUser) -> FileResponse:
-    """Serve a stored file to a member of the dealership that owns it.
-
-    Authorisation is by path prefix rather than a database lookup, because every
-    stored path begins with the owning dealership's id and that is cheaper and
-    harder to get wrong than joining back to whichever table referenced it.
-    """
+    """Serve a stored file to a member of the dealership that owns it."""
     owner = storage.dealership_of(storage_path)
     if owner is None or owner != user.dealership_id:
-        # Same response for "not yours" and "does not exist", so the route
-        # cannot be used to probe which files another dealership holds.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
 
     try:
@@ -271,3 +255,4 @@ def serve_file(storage_path: str, user: ReadyUser) -> FileResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
 
     return FileResponse(path)
+

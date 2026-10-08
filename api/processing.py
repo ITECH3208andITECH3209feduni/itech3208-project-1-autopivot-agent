@@ -1,26 +1,15 @@
-"""Job orchestration for the vehicle pipeline.
-
-The vision stack is several gigabytes and needs a GPU, so it cannot live in the
-light API. This module owns everything *around* processing — creating jobs,
-reading and writing files, recording outcomes, keeping the listing's status in
-step — and calls out through `VehicleProcessor` for the part that needs models.
-
-`autopivot_backend.py` registers the real implementation at startup. Running the
-light API alone leaves none registered, and the process endpoint says so plainly
-rather than appearing to accept work it cannot do.
-
-Splitting it this way also makes the orchestration testable without a GPU: the
-suite registers a processor that returns a solid colour.
-"""
+"""Job orchestration for the vehicle pipeline."""
 
 from __future__ import annotations
 
 import logging
+import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from api import storage
@@ -28,6 +17,9 @@ from database.connection import get_engine
 from database.models import Backdrop, Image, ProcessingJob, VehicleListing
 
 logger = logging.getLogger("autopivot.processing")
+
+PROCESSING_WORKERS = max(1, int(os.getenv("PROCESSING_WORKERS", "1")))
+_workers = threading.BoundedSemaphore(PROCESSING_WORKERS)
 
 
 @dataclass
@@ -41,38 +33,19 @@ class ProcessOutcome:
     model_used: Optional[str] = None
     detected_angle: Optional[str] = None
     angle_confidence: Optional[float] = None
-    # Where the camera was, estimated from the cutout: the elevation in degrees,
-    # how far the estimator trusts it, and which rung of the cascade produced
-    # it. All three stay None on a run that never produced a cutout, because
-    # there was nothing to measure — which is a different thing from the cascade
-    # having fallen through to its assumption, and the method is what tells the
-    # two apart.
     camera_elevation_deg: Optional[float] = None
     elevation_confidence: Optional[float] = None
     elevation_method: Optional[str] = None
-    # What the photograph is of, as distinct from whether a vehicle appears in
-    # it. A finance advertisement contains a real car and passes vehicle
-    # detection, but compositing it onto a backdrop puts a stranger's car in
-    # the dealer's listing. Written back to the image, not just the job, so the
-    # listing can show and offer to remove what it excluded.
     image_kind: Optional[str] = None
     kind_confidence: Optional[float] = None
     message: Optional[str] = None
+    backdrop_id_used: Optional[int] = None
+    review_note: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class BackdropPlacement:
-    """
-    What was measured from a backdrop when the dealer uploaded it.
-
-    Carried into the pipeline rather than measured there, because it is a
-    property of the backdrop and does not change: measuring per job would repeat
-    identical work for every photograph in every listing that uses it.
-
-    Both stay None for a backdrop nobody has measured — one added before any of
-    this existed — and the compositor then behaves exactly as it did before,
-    standing the vehicle on the assumed ground line.
-    """
+    """What was measured from a backdrop when the dealer uploaded it."""
 
     horizon_y_ratio: Optional[float] = None
     floor_top_y_ratio: Optional[float] = None
@@ -80,6 +53,59 @@ class BackdropPlacement:
     @property
     def measured(self) -> bool:
         return self.horizon_y_ratio is not None or self.floor_top_y_ratio is not None
+
+
+@dataclass(frozen=True)
+class BackdropChoice:
+    """A backdrop the processor may switch to once it knows the shot angle."""
+
+    backdrop_id: int
+    image: bytes
+    placement: BackdropPlacement
+
+
+def _placement_for(backdrop: Backdrop) -> BackdropPlacement:
+    return BackdropPlacement(
+        horizon_y_ratio=(
+            None if backdrop.horizon_y_ratio is None else float(backdrop.horizon_y_ratio)
+        ),
+        floor_top_y_ratio=(
+            None if backdrop.floor_top_y_ratio is None else float(backdrop.floor_top_y_ratio)
+        ),
+    )
+
+
+def _angle_backdrops(session: Session, chosen: Backdrop):
+    """A function from shot angle to the backdrop tagged for it, or None."""
+    tagged = [
+        b for b in session.scalars(
+            select(Backdrop).where(Backdrop.dealership_id == chosen.dealership_id)
+            .order_by(Backdrop.id)
+        ).all()
+        if b.suits_angles
+    ]
+    if not tagged:
+        return None
+
+    cache: dict[int, BackdropChoice] = {}
+
+    def for_angle(angle: Optional[str]) -> Optional[BackdropChoice]:
+        if not angle:
+            return None
+        if chosen.suits_angles and angle in chosen.suits_angles:
+            return None
+        match = next((b for b in tagged if angle in b.suits_angles), None)
+        if match is None or match.id == chosen.id:
+            return None
+        if match.id not in cache:
+            cache[match.id] = BackdropChoice(
+                backdrop_id=match.id,
+                image=storage.resolve(match.storage_path).read_bytes(),
+                placement=_placement_for(match),
+            )
+        return cache[match.id]
+
+    return for_angle
 
 
 class VehicleProcessor(Protocol):
@@ -110,15 +136,7 @@ def create_jobs(
     backdrop: Optional[Backdrop],
     processing_type: str = "full_pipeline",
 ) -> list[ProcessingJob]:
-    """Queue one job per original photograph.
-
-    Originals that already completed successfully are skipped, so pressing
-    Reprocess does not duplicate work that succeeded. A `needs_review`
-    outcome is a `status == "completed"` job too — the run finished cleanly,
-    it just found nothing to cut out — so `review_state` has to be checked
-    alongside `status` here, or a photograph flagged for review could never
-    be picked up again by Reprocess.
-    """
+    """Queue one job per original photograph."""
     originals = session.scalars(
         select(Image).where(
             Image.vehicle_listing_id == listing.id,
@@ -133,6 +151,15 @@ def create_jobs(
                 ProcessingJob.vehicle_listing_id == listing.id,
                 ProcessingJob.status == "completed",
                 ProcessingJob.review_state == "ok",
+            )
+        ).all()
+    }
+    already_done |= {
+        job.input_image_id
+        for job in session.scalars(
+            select(ProcessingJob).where(
+                ProcessingJob.vehicle_listing_id == listing.id,
+                ProcessingJob.status.in_(("pending", "processing")),
             )
         ).all()
     }
@@ -159,13 +186,7 @@ def create_jobs(
 
 
 def latest_jobs(session: Session, listing_id: int) -> list[ProcessingJob]:
-    """The most recent attempt for each photograph, oldest photograph first.
-
-    A failed job is kept rather than deleted, and reprocessing adds a new job
-    beside it. Anything reporting the state of a listing has to look at the
-    latest attempt only — otherwise one historical failure makes the listing
-    look permanently broken, and a successful reprocess appears to do nothing.
-    """
+    """The most recent attempt for each photograph, oldest photograph first."""
     history = session.scalars(
         select(ProcessingJob)
         .where(ProcessingJob.vehicle_listing_id == listing_id)
@@ -179,11 +200,7 @@ def latest_jobs(session: Session, listing_id: int) -> list[ProcessingJob]:
 
 
 def _refresh_listing_status(session: Session, listing_id: int) -> None:
-    """Roll each job's outcome up into the listing's processing status.
-
-    The dashboard sorts and filters on this column, so it is maintained here
-    rather than aggregated over every job on each read.
-    """
+    """Roll each job's outcome up into the listing's processing status."""
     jobs = latest_jobs(session, listing_id)
     listing = session.get(VehicleListing, listing_id)
     if listing is None:
@@ -194,8 +211,6 @@ def _refresh_listing_status(session: Session, listing_id: int) -> None:
     elif any(j.status in ("pending", "processing") for j in jobs):
         listing.processing_status = "processing"
     elif any(j.status == "failed" or j.review_state == "needs_review" for j in jobs):
-        # A failure and "no vehicle found" both need a person to look, which is
-        # a different thing from the job having crashed.
         listing.processing_status = "needs_review"
     else:
         listing.processing_status = "complete"
@@ -213,19 +228,6 @@ def run_job(session: Session, job: ProcessingJob) -> None:
     started = datetime.now(timezone.utc)
     job.status = "processing"
     job.started_at = started
-    # Committed, not just flushed, before the slow part starts. Two reasons.
-    #
-    # The Processing screen polls for this: a flush is invisible outside this
-    # transaction, so the job used to jump from "pending" straight to its final
-    # state and the screen never showed anything in progress.
-    #
-    # And on SQLite a flush takes a write lock that would then be held for the
-    # entire time the models are working — tens of seconds on a first run —
-    # during which any other write, such as the dealer uploading one more
-    # photograph, waits and can time out. Reads are unaffected either way
-    # (the connection runs in WAL mode), so it is only ever writers that queue.
-    #
-    # expire_on_commit=False on the session factory, so `job` stays usable.
     session.commit()
 
     try:
@@ -237,25 +239,23 @@ def run_job(session: Session, job: ProcessingJob) -> None:
 
         background_bytes: Optional[bytes] = None
         placement = BackdropPlacement()
+        for_angle = None
         if job.backdrop_id is not None:
             backdrop = session.get(Backdrop, job.backdrop_id)
             if backdrop is not None:
                 background_bytes = storage.resolve(backdrop.storage_path).read_bytes()
-                # Measured once at upload and carried in here. Numeric columns
-                # arrive as Decimal, which the compositor's arithmetic cannot
-                # mix with floats.
-                placement = BackdropPlacement(
-                    horizon_y_ratio=(
-                        None if backdrop.horizon_y_ratio is None
-                        else float(backdrop.horizon_y_ratio)
-                    ),
-                    floor_top_y_ratio=(
-                        None if backdrop.floor_top_y_ratio is None
-                        else float(backdrop.floor_top_y_ratio)
-                    ),
-                )
+                placement = _placement_for(backdrop)
+                for_angle = _angle_backdrops(session, backdrop)
 
-        outcome = processor.process(image_bytes, background_bytes, placement)
+        if for_angle is not None:
+            outcome = processor.process(
+                image_bytes, background_bytes, placement, backdrop_for_angle=for_angle
+            )
+        else:
+            outcome = processor.process(image_bytes, background_bytes, placement)
+
+        if outcome.backdrop_id_used is not None:
+            job.backdrop_id = outcome.backdrop_id_used
 
         job.model_used = outcome.model_used
         job.plates_detected = outcome.plates_detected
@@ -266,34 +266,21 @@ def run_job(session: Session, job: ProcessingJob) -> None:
         job.elevation_confidence = outcome.elevation_confidence
         job.elevation_method = outcome.elevation_method
 
-        # The classifier's verdict belongs to the photograph, which outlives
-        # any one job: reprocessing should not have to look at it again, and
-        # the listing needs it to explain why an image was left out.
         if outcome.image_kind is not None:
             source.image_kind = outcome.image_kind
             source.kind_confidence = outcome.kind_confidence
 
         if not outcome.vehicle_detected or outcome.image_png is None:
-            # The job ran correctly and produced nothing usable. That is not a
-            # failure, it is a result a person needs to look at.
             job.status = "completed"
             job.review_state = "needs_review"
             job.error_message = outcome.message or "No vehicle detected."
         else:
-            # Keyed by job id: the pipeline is deterministic, so two jobs over
-            # the same photograph and backdrop produce byte-identical output,
-            # and images.storage_path is globally unique.
             stored = storage.save_image(
                 job.dealership_id, "processed", outcome.image_png, prefix=str(job_id)
             )
             output = Image(
                 vehicle_listing_id=job.vehicle_listing_id,
                 image_type="processed",
-                # Recorded on the image, not left to be inferred from this job.
-                # A job is deleted along with the photograph it consumed, so
-                # anything that reached back through the job lost the pairing at
-                # the first tidy-up — and a before-and-after pair is the whole
-                # basis on which the composited result gets judged.
                 source_image_id=source.id,
                 original_filename=source.original_filename,
                 storage_path=stored.storage_path,
@@ -307,12 +294,10 @@ def run_job(session: Session, job: ProcessingJob) -> None:
             job.output_image_id = output.id
             job.status = "completed"
             job.review_state = "ok"
+            job.error_message = outcome.review_note
 
     except Exception as exc:
         logger.exception("Job %s failed", job_id)
-        # A failed flush leaves the session unusable until it is rolled back, so
-        # without this the job could not even record its own failure — and every
-        # remaining job in the batch would die with it.
         session.rollback()
         reloaded = session.get(ProcessingJob, job_id)
         if reloaded is not None:
@@ -328,11 +313,7 @@ def run_job(session: Session, job: ProcessingJob) -> None:
 
 
 def run_listing_jobs(listing_id: int) -> None:
-    """Process every outstanding job for a listing, in its own session.
-
-    Called from a background task after the response has been sent, so it cannot
-    borrow the request's session — that one is already closed.
-    """
+    """Process every outstanding job for a listing, in its own session."""
     factory = sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
     with factory() as session:
         jobs = session.scalars(
@@ -345,10 +326,70 @@ def run_listing_jobs(listing_id: int) -> None:
         ).all()
 
         for job in jobs:
-            run_job(session, job)
-            # Committed per job so progress is visible to a polling client, and
-            # so one failure late in a set does not discard the successes.
+            duplicate = session.scalar(
+                select(ProcessingJob.id).where(
+                    ProcessingJob.input_image_id == job.input_image_id,
+                    ProcessingJob.id != job.id,
+                    or_(
+                        and_(ProcessingJob.status == "completed",
+                             ProcessingJob.review_state == "ok"),
+                        ProcessingJob.status == "processing",
+                        and_(ProcessingJob.status == "pending", ProcessingJob.id < job.id),
+                    ),
+                ).limit(1)
+            )
+            if duplicate is not None:
+                session.delete(job)
+                session.commit()
+                continue
+            with _workers:
+                claimed = session.execute(
+                    update(ProcessingJob)
+                    .where(ProcessingJob.id == job.id, ProcessingJob.status == "pending")
+                    .values(status="processing")
+                ).rowcount
+                session.commit()
+                if claimed != 1:
+                    continue
+                run_job(session, job)
             _refresh_listing_status(session, listing_id)
             session.commit()
 
         logger.info("Listing %s — %d jobs processed", listing_id, len(jobs))
+
+
+def resume_unfinished_jobs() -> int:
+    """Pick the queue back up after a restart."""
+    factory = sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
+    with factory() as session:
+        reset = session.execute(
+            update(ProcessingJob)
+            .where(ProcessingJob.status == "processing")
+            .values(status="pending", started_at=None)
+        ).rowcount
+        session.commit()
+        listing_ids = sorted({
+            job.vehicle_listing_id
+            for job in session.scalars(
+                select(ProcessingJob).where(ProcessingJob.status == "pending")
+            ).all()
+        }, reverse=True)
+        queued = session.scalar(
+            select(func.count()).select_from(ProcessingJob)
+            .where(ProcessingJob.status == "pending")
+        ) or 0
+    if not listing_ids:
+        return 0
+
+    def _run_all() -> None:
+        for listing_id in listing_ids:
+            try:
+                run_listing_jobs(listing_id)
+            except Exception:  # one bad listing must not stop the rest
+                logger.exception("Resuming listing %s failed", listing_id)
+
+    threading.Thread(target=_run_all, name="resume-queue", daemon=True).start()
+    logger.info("Resuming %d queued photographs across %d listings (%d were mid-run)",
+                queued, len(listing_ids), reset)
+    return int(queued)
+

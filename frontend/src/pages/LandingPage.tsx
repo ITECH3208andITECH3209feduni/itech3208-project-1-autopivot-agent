@@ -1,7 +1,3 @@
-// Public landing page: nav, hero, configurator, how-it-works, footer.
-//
-// Ported from the Figma Make export with its inline copy of the design tokens
-// removed — everything visual now comes from design.ts.
 
 import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'

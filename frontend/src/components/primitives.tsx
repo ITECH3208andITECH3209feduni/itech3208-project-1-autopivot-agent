@@ -1,6 +1,3 @@
-// Shared UI primitives, extracted from the Figma Make export's App.tsx so every
-// screen draws from one implementation and from design.ts rather than a local
-// copy of the tokens.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
@@ -60,7 +57,7 @@ const labelBase: CSSProperties = {
 }
 
 export function Field({
-  label, type = 'text', value, onChange, placeholder, error, autoComplete, disabled,
+  label, type = 'text', value, onChange, placeholder, error, autoComplete, disabled, onBlur,
 }: {
   label: string
   type?: string
@@ -70,6 +67,7 @@ export function Field({
   error?: boolean
   autoComplete?: string
   disabled?: boolean
+  onBlur?: () => void
 }) {
   const [focused, setFocused] = useState(false)
   return (
@@ -83,13 +81,11 @@ export function Field({
         disabled={disabled}
         onChange={e => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onBlur={() => { setFocused(false); onBlur?.() }}
         style={{
           width: '100%', fontFamily: SANS, fontSize: 14, color: C.ink,
           background: C.paper, borderRadius: RADIUS_CONTROL, padding: '10px 14px',
           outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
-          // lineStrong rather than line: an input's boundary is an interactive
-          // component boundary, which WCAG 1.4.11 requires to reach 3:1.
           border: `1px solid ${error ? C.rust : focused ? C.forest : C.lineStrong}`,
         }}
       />
@@ -109,11 +105,6 @@ export function Modal({
 }) {
   const dialog = useRef<HTMLDivElement>(null)
 
-  // A dialog that does not manage focus is only nominally accessible: it opens
-  // with focus still behind it, Tab walks out into the page underneath, Escape
-  // does nothing, and closing it drops focus to <body> so the next Tab starts
-  // from the top of the document. All four are fixed here rather than in each
-  // caller, because every one of them would otherwise have to remember.
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null
 
@@ -144,7 +135,6 @@ export function Modal({
     }
 
     document.addEventListener('keydown', onKeyDown, true)
-    // The page behind must not scroll while a dialog is over it.
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
@@ -227,7 +217,6 @@ export function ModalHeading({ title, subtitle, onClose }: {
   )
 }
 
-// The API's processing_status values, mapped to the design's labels.
 export const STATUS_LABEL = {
   pending: 'Pending',
   processing: 'Processing',
@@ -237,9 +226,6 @@ export const STATUS_LABEL = {
 
 const STATUS_STYLE: Record<keyof typeof STATUS_LABEL, CSSProperties> = {
   pending: { color: C.inkSoft, background: 'rgba(26,26,23,0.05)' },
-  // amberText, not amber: amber on amberTint measures 3.12:1 and fails body
-  // text. The progress track elsewhere still uses plain amber, where 3:1 is
-  // sufficient.
   processing: { color: C.amberText, background: C.amberTint },
   complete: { color: C.ink, background: 'rgba(26,26,23,0.07)' },
   needs_review: { color: C.rust, background: C.rustTint },
@@ -256,9 +242,6 @@ export function StatusPill({ status }: { status: keyof typeof STATUS_LABEL }) {
   )
 }
 
-// ── Shared pieces added for the workflow rework ───────────────────────────────
-
-/** A destructive action needs a deliberate second step, not a browser confirm(). */
 export function ConfirmDialog({
   title, body, confirmLabel = 'Delete', busy = false, onConfirm, onCancel,
 }: {
@@ -310,12 +293,6 @@ export function ConfirmDialog({
 
 export type Step = { key: string; label: string; href?: string }
 
-/**
- * Where you are in Upload → Process → Review.
- *
- * Rendered as an ordered list because that is what it is; a screen reader
- * announcing "step 2 of 3" is the whole point of the component.
- */
 export function Stepper({
   steps, current, onNavigate,
 }: {
@@ -334,8 +311,6 @@ export function Stepper({
         {steps.map((step, i) => {
           const done = i < currentIndex
           const active = i === currentIndex
-          // Only steps already reached are navigable: jumping ahead to Review
-          // before anything has processed lands on an empty screen.
           const reachable = i <= currentIndex && !!onNavigate
 
           return (

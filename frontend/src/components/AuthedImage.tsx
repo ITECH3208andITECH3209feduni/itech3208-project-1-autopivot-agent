@@ -1,7 +1,3 @@
-// Stored files sit behind bearer auth, so a plain <img src="/api/files/…"> gets
-// a 401 — the browser does not attach the Authorization header to image
-// requests. This fetches the bytes, wraps them in an object URL, and revokes it
-// on unmount so the blobs do not accumulate.
 
 import { useEffect, useState } from 'react'
 

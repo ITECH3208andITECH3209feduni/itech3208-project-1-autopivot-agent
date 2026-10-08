@@ -1,9 +1,3 @@
-# Tests for create_jobs's "already done" check — specifically that a
-# needs_review outcome (status "completed", review_state "needs_review") does
-# not count as done, so pressing Reprocess can pick it up again.
-#
-#     pytest tests/test_needs_review_retry.py -v
-
 import itertools
 
 from sqlalchemy import BigInteger, create_engine, event
@@ -96,13 +90,9 @@ def add_job(session, image, status, review_state):
 
 
 def test_a_needs_review_photograph_is_queued_again_by_reprocess(session):
-    """
-    The defect this exists to catch: `run_job` records a "no vehicle
-    detected" outcome as status "completed" (the run itself did not fail),
-    with review_state "needs_review" marking it for a person. Before this
-    fix, create_jobs treated any status == "completed" job as already done
-    and silently skipped it forever — a dealer could delete the photograph
-    and retake it, but pressing Reprocess could never try the same one again.
+    """The defect this exists to catch: `run_job` records a "no vehicle detected"
+    outcome as status "completed" (the run itself did not fail), with review_state
+    "needs_review" marking it for a person.
     """
     image = add_original(session)
     add_job(session, image, status="completed", review_state="needs_review")
@@ -115,8 +105,9 @@ def test_a_needs_review_photograph_is_queued_again_by_reprocess(session):
 
 
 def test_a_successfully_processed_photograph_is_not_queued_again(session):
-    """Unchanged behaviour: real success is still skipped, so Reprocess does
-    not duplicate work that already produced a usable result."""
+    """Unchanged behaviour: real success is still skipped, so Reprocess does not
+    duplicate work that already produced a usable result.
+    """
     image = add_original(session)
     add_job(session, image, status="completed", review_state="ok")
 
@@ -127,8 +118,9 @@ def test_a_successfully_processed_photograph_is_not_queued_again(session):
 
 
 def test_a_failed_photograph_is_still_queued_again(session):
-    """Unchanged behaviour, checked directly: a crashed job was never
-    status == "completed", so it was never in scope for this fix."""
+    """Unchanged behaviour, checked directly: a crashed job was never status ==
+    "completed", so it was never in scope for this fix.
+    """
     image = add_original(session)
     add_job(session, image, status="failed", review_state=None)
 
@@ -136,3 +128,56 @@ def test_a_failed_photograph_is_still_queued_again(session):
     queued = processing.create_jobs(session, listing, backdrop=None)
 
     assert [j.input_image_id for j in queued] == [image.id]
+
+
+# ── Queue: no duplicates, one at a time, survives a restart ──────────────────
+
+def test_a_photograph_already_in_the_queue_is_not_queued_twice(session):
+    """Pressing Reprocess while photographs were still waiting queued every one of them
+    a second time.
+    """
+    waiting = add_original(session)
+    running = add_original(session)
+    add_job(session, waiting, status="pending", review_state=None)
+    add_job(session, running, status="processing", review_state=None)
+
+    listing = session.get(VehicleListing, LISTING_ID)
+    assert processing.create_jobs(session, listing, backdrop=None) == []
+
+
+def _bind_runner_to(session, monkeypatch):
+    """Point run_listing_jobs / resume at the test database and record runs."""
+    engine = session.get_bind()
+    monkeypatch.setattr(processing, "get_engine", lambda: engine)
+    ran = []
+    monkeypatch.setattr(processing, "run_job", lambda s, job: (
+        ran.append(job.input_image_id),
+        setattr(job, "status", "completed"), setattr(job, "review_state", "ok"),
+        s.commit()))
+    return ran
+
+
+def test_duplicate_queued_copies_run_once(session, monkeypatch):
+    image = add_original(session)
+    add_job(session, image, status="pending", review_state=None)
+    add_job(session, image, status="pending", review_state=None)
+    ran = _bind_runner_to(session, monkeypatch)
+
+    processing.run_listing_jobs(LISTING_ID)
+
+    assert ran == [image.id]
+    session.expire_all()
+    assert session.query(ProcessingJob).filter_by(input_image_id=image.id).count() == 1
+
+
+def test_jobs_stranded_by_a_restart_are_picked_up_again(session, monkeypatch):
+    image = add_original(session)
+    add_job(session, image, status="processing", review_state=None)  # server died mid-run
+    ran = _bind_runner_to(session, monkeypatch)
+    started = []
+    monkeypatch.setattr(processing.threading, "Thread",
+                        lambda target, **kw: type("T", (), {"start": lambda self: (started.append(1), target())})())
+
+    assert processing.resume_unfinished_jobs() == 1
+    assert started == [1] and ran == [image.id]
+

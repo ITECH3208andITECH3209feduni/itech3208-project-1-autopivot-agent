@@ -179,3 +179,4 @@ def test_no_public_registration_route_exists(environment):
     client, _, _, _ = environment
     assert client.post("/auth/register", json={}).status_code == 404
     assert client.post("/auth/signup", json={}).status_code == 404
+

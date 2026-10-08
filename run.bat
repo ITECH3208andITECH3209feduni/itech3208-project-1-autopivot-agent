@@ -25,8 +25,36 @@ if not exist "frontend\node_modules" (
     exit /b 1
 )
 
+REM An old API window left open keeps serving the OLD code on port 8000, and a
+REM new one cannot start - the website then shows results from the old code.
+powershell -NoProfile -Command "if (Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue) { exit 1 }; exit 0"
+if errorlevel 1 (
+    echo ERROR: port 8000 is already in use - an old AutoPivot API is still running.
+    echo Close the old "AutoPivot API" window ^(or end python.exe in Task Manager^),
+    echo then run this file again.
+    echo.
+    pause
+    exit /b 1
+)
+powershell -NoProfile -Command "if (Get-NetTCPConnection -State Listen -LocalPort 5173 -ErrorAction SilentlyContinue) { exit 1 }; exit 0"
+if errorlevel 1 (
+    echo ERROR: port 5173 is already in use - an old AutoPivot Website is still running.
+    echo Close the old "AutoPivot Website" window, then run this file again.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM Login tokens need a fixed signing key, or every restart logs you out.
+.venv\Scripts\python.exe -m scripts.ensure_env
+
+set "AP_REVISION=unknown"
+for /f "usebackq delims=" %%R in (`.venv\Scripts\python.exe -c "import compositing; print(compositing.COMPOSITOR_REVISION)" 2^>nul`) do set "AP_REVISION=%%R"
+
 echo.
 echo Starting AutoPivot ...
+echo   Compositor version: %AP_REVISION%
+echo   ^(each processed photo records this version - check it after an update^)
 echo.
 echo   API      http://127.0.0.1:8000
 echo   Website  http://localhost:5173      ^<- open this one
@@ -36,7 +64,10 @@ echo.
 
 REM The API loads several gigabytes of vision models on its first request, so
 REM it is started first and given a moment before the browser can reach it.
-start "AutoPivot API" cmd /k "cd /d "%~dp0" && call .venv\Scripts\activate.bat && python autopivot_backend.py"
+REM The venv's python.exe is called directly rather than through activate.bat:
+REM activate.bat hard-codes the folder the venv was created in, so after the
+REM project is moved it silently runs a different Python with no packages.
+start "AutoPivot API" cmd /k "cd /d "%~dp0" && .venv\Scripts\python.exe autopivot_backend.py"
 
 timeout /t 3 /nobreak >nul
 

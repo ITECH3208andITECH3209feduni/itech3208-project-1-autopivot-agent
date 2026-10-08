@@ -1,11 +1,3 @@
-# Every name imported from our own modules must actually exist there.
-#
-# Parses the source rather than importing it, so this runs with nothing
-# installed — which is the point: an import error inside a deployment script
-# otherwise surfaces on a pod, minutes into a cold bring-up.
-#
-#     pytest tests/test_internal_imports.py -v
-
 import ast
 from pathlib import Path
 
@@ -55,7 +47,6 @@ def top_level_names(path: Path) -> set[str]:
             for alias in node.names:
                 names.add(alias.asname or alias.name.split(".")[0])
         elif isinstance(node, ast.If):
-            # Conditionally defined names, e.g. behind `if TYPE_CHECKING`.
             for inner in ast.walk(node):
                 if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     names.add(inner.name)
@@ -67,12 +58,7 @@ def top_level_names(path: Path) -> set[str]:
 
 
 def imported_top_level_modules(path: Path) -> set[str]:
-    """Every top-level package the file imports, wherever the import sits.
-
-    Walked rather than read off the module body, because an import moved inside
-    a function is still a hard dependency of the file — it only defers the point
-    at which the machine without it finds out.
-    """
+    """Every top-level package the file imports, wherever the import sits."""
     modules: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Import):
@@ -89,17 +75,9 @@ def test_there_are_files_to_check():
 
 @pytest.mark.parametrize("name", PURE_MODULES)
 def test_the_pure_modules_reach_for_no_model_and_no_database(name):
-    """
-    One import of torch inside compositing.py, metrics.py or elevation.py takes
-    the whole geometry suite with it: those tests then need the ML environment,
-    which means they stop running on a laptop and in practice stop being run at
-    all. Nothing about the failure points at the line that caused it — the suite
-    simply becomes uninstallable — so it is caught here instead, by reading the
-    source rather than importing it, which is also what lets this test run on a
-    machine that has none of the forbidden packages installed.
-
-    Stated in a comment at the top of each of the three files since they were
-    written, and asserted by nothing until Stage 0 added two more of them.
+    """One import of torch inside compositing.py, metrics.py or elevation.py takes the
+    whole geometry suite with it: those tests then need the ML environment, which
+    means they stop running on a laptop and in practice stop being run at all.
     """
     imported = imported_top_level_modules(ROOT / name)
     forbidden = sorted(imported & set(FORBIDDEN_IN_PURE_MODULES))
@@ -111,11 +89,8 @@ def test_the_pure_modules_reach_for_no_model_and_no_database(name):
 
 @pytest.mark.parametrize("path", python_files(), ids=lambda p: str(p.relative_to(ROOT)))
 def test_imports_from_our_own_modules_resolve(path):
-    """
-    `from database.connection import engine` passes every syntax check and
-    every linter that does not resolve imports, then fails at runtime. When it
-    sits inside a deployment script it fails on the pod, after the migrations
-    have already run.
+    """`from database.connection import engine` passes every syntax check and every
+    linter that does not resolve imports, then fails at runtime.
     """
     tree = ast.parse(path.read_text())
     problems = []
@@ -134,7 +109,6 @@ def test_imports_from_our_own_modules_resolve(path):
         for alias in node.names:
             if alias.name == "*":
                 continue
-            # A submodule is a valid import target too: `from api import storage`.
             if module_path(f"{node.module}.{alias.name}") is not None:
                 continue
             if alias.name not in available:
@@ -146,3 +120,4 @@ def test_imports_from_our_own_modules_resolve(path):
         f"{path.relative_to(ROOT)} imports names that do not exist:\n  "
         + "\n  ".join(problems)
     )
+

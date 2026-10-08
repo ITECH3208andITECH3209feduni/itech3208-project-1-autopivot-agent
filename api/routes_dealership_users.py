@@ -127,3 +127,4 @@ def deactivate_user(user_id: int, request: Request,
     _audit(session, administrator, request, "dealership_user_deactivate", "success", user.id)
     session.refresh(user)
     return _out(user)
+
