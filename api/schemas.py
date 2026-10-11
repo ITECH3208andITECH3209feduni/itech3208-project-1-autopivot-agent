@@ -11,6 +11,34 @@ from pydantic import BaseModel, EmailStr, Field
 from api.security import BCRYPT_MAX_PASSWORD_BYTES
 
 
+class DealershipActivityOut(BaseModel):
+    dealership_id: int
+    active_users: int
+    vehicle_count: int
+    original_image_count: int
+    job_count: int
+    jobs_by_status: dict[str, int]
+    latest_job_at: Optional[datetime]
+
+
+class PlatformJobMetadata(BaseModel):
+    id: int
+    vehicle_listing_id: int
+    processing_type: str
+    status: str
+    review_state: Optional[str]
+    created_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+
+
+class PlatformJobsOut(BaseModel):
+    items: list[PlatformJobMetadata]
+    total: int
+    limit: int
+    offset: int
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=BCRYPT_MAX_PASSWORD_BYTES)

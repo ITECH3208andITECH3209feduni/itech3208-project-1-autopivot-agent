@@ -38,12 +38,14 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../api/api_exception.dart';
 import '../../api/models/dealership_user.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../routes.dart';
 import '../../settings/app_preferences.dart';
 import '../../widgets/primitives.dart';
 import '../../widgets/skeleton.dart';
@@ -417,6 +419,8 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
                       busy: _busyIds.contains(target.id),
                       onResetPassword: () => _resetPassword(target),
                       onDeactivate: () => _deactivate(target),
+                      onChangeOwnPassword: () =>
+                          context.push(AppRoutes.settingsChangePassword),
                     );
                   },
                 ),
@@ -477,7 +481,7 @@ class _TeamScreenState extends ConsumerState<TeamScreen> {
 
 // ── Team member row ──────────────────────────────────────────────────────────
 
-enum _TeamAction { reset, deactivate }
+enum _TeamAction { reset, deactivate, changeOwnPassword }
 
 class _TeamMemberRow extends StatelessWidget {
   const _TeamMemberRow({
@@ -486,6 +490,7 @@ class _TeamMemberRow extends StatelessWidget {
     required this.busy,
     required this.onResetPassword,
     required this.onDeactivate,
+    required this.onChangeOwnPassword,
   });
 
   final DealershipUser user;
@@ -493,6 +498,7 @@ class _TeamMemberRow extends StatelessWidget {
   final bool busy;
   final VoidCallback onResetPassword;
   final VoidCallback onDeactivate;
+  final VoidCallback onChangeOwnPassword;
 
   @override
   Widget build(BuildContext context) {
@@ -545,21 +551,32 @@ class _TeamMemberRow extends StatelessWidget {
               onSelected: (action) => switch (action) {
                 _TeamAction.reset => onResetPassword(),
                 _TeamAction.deactivate => onDeactivate(),
+                _TeamAction.changeOwnPassword => onChangeOwnPassword(),
               },
               itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: _TeamAction.reset,
-                  child: Text('Reset password'),
-                ),
-                // A person cannot deactivate their own account — the server
-                // enforces this too (see routes_dealership_users.py), but
-                // offering the action here just to have it refused is worse
-                // than not offering it.
-                if (!isSelf)
+                // Your own row offers neither a reset nor deactivation. A
+                // reset revokes its target's sessions and swaps in a password
+                // shown once: done to yourself, it signed you out on the spot
+                // with that one-time password the only way back in. The
+                // server refuses both for your own account (409, see
+                // routes_dealership_users.py), and offering them only to have
+                // them refused is worse than not offering them — Change
+                // password is how to choose a new one of your own.
+                if (isSelf)
+                  const PopupMenuItem(
+                    value: _TeamAction.changeOwnPassword,
+                    child: Text('Change password'),
+                  )
+                else ...[
+                  const PopupMenuItem(
+                    value: _TeamAction.reset,
+                    child: Text('Reset password'),
+                  ),
                   const PopupMenuItem(
                     value: _TeamAction.deactivate,
                     child: Text('Deactivate', style: TextStyle(color: C.rust)),
                   ),
+                ],
               ],
             ),
         ],

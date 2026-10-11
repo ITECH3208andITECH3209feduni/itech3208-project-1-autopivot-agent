@@ -19,6 +19,11 @@ Bring the platform up on a GPU pod and walk a client through it.
 
 Skip the volume and you rebuild everything each session.
 
+An RTX 50-series (Blackwell) pod needs a PyTorch template built for CUDA 12.8 or
+newer. An older build still sees the card, then fails on its first operation,
+and the app quietly runs on the CPU — the `device=cuda` check in step 3 is what
+catches it.
+
 ---
 
 ## 2. Clone
@@ -42,8 +47,9 @@ bash scripts/runpod_up.sh
 One command: PostgreSQL, dependencies, schema, dealership, client build, API and
 a public tunnel. It skips anything already done, so re-running costs seconds.
 
-It finishes with a box containing the **public URL, email and password**. Expect
-5–15 minutes on a cold pod, most of it downloading model weights.
+It finishes with a box containing the **public URL, and each account's email and
+password**. Expect 5–15 minutes on a cold pod, most of it downloading model
+weights.
 
 Background removal is BiRefNet (MIT-licensed, no auth needed) — RMBG-2.0 was
 removed, since its free weights are CC BY-NC 4.0 and this product is
@@ -86,9 +92,25 @@ inference will look like the application is broken when it is only slow.
 ## 4. Sign in
 
 ```
-Email     ana.reid@northshore.co.nz
-Password  autopivot-demo-2026
+Email     ana.reid@northshore.co.nz       (dealership admin)
+          admin@autopivot.example.com     (platform admin)
+Password  the one in the box runpod_up.sh printed
 ```
+
+The passwords are **generated on the pod's first run**, not written down here:
+the pod is on a public URL from the moment the tunnel is up, and a password
+printed in this repository is one anyone who finds that URL can sign in with
+first. They are kept, with the signing key, in `/workspace/autopivot.env`
+(readable by root only), so re-running `runpod_up.sh` shows the same ones.
+
+The first sign-in asks for a new password. After that the box says *changed
+since setup — not shown* rather than printing one that no longer works. Lost
+the box before signing in? `grep PASSWORD /workspace/autopivot.env` on the pod.
+
+**A pod set up before this change** has accounts created with the old demo
+passwords, which are in this repository's history, and `runpod_up.sh` warns in
+the box while either still works. Sign in to both accounts and change them
+before the URL goes to anyone.
 
 **Type the password. Do not paste it.** A password manager will happily fill a
 saved credential over what you type, and the server then rejects a password you
@@ -186,8 +208,11 @@ bash scripts/runpod_up.sh --backup
 ```
 
 Then stop the pod from the RunPod console. Files and configuration on
-`/workspace` persist; the signing key and admin password are reused, so the
-next `runpod_up.sh` returns you to exactly this state.
+`/workspace` persist; the signing key and admin passwords are reused, so the
+next `runpod_up.sh` returns you to exactly this state. The backup is loaded
+back only into an empty database — a cluster that had to be rebuilt — and
+never over one that still has its tables. If loading it fails, nothing is
+loaded and the reason is in `/workspace/autopivot-backups/restore.log`.
 
 ---
 
@@ -196,10 +221,13 @@ next `runpod_up.sh` returns you to exactly this state.
 Worth having ready if someone asks a sharp question.
 
 - The pipeline had never run against real models before this deployment.
-- `/process-vehicle`, `/remove-background`, `/detect-and-hide` and
-  `/extract-images-from-url` have no authentication. Anyone with the URL can use
-  the GPU. Acceptable for a short session on an unlisted URL, not for anything
-  left running.
+- Nothing that runs the pipeline can be reached without signing in. The
+  demo-era endpoints (`/process-vehicle`, `/remove-background`,
+  `/detect-and-hide` and `/extract-images-from-url`) had no authentication and
+  have been removed rather than protected, so processing only ever happens
+  through a listing. Still public: the client itself, sign-in, `/health`,
+  `/health/api` and `/api/status` (these report which models are loaded and on
+  what device, and run none of them), and the API docs at `/docs`.
 - Everyone shares one account; there is no user management yet.
 - Listing-URL import is limited to sites that serve their images in the initial
   HTML. Others return an error naming the reason rather than silently importing

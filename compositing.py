@@ -53,6 +53,7 @@ class BackdropPreset:
     horizon_y_ratio: float | None = None
     zoom: float = 1.0
     platform_mask_filename: str = ""
+    floor_top_y_ratio: float | None = None
 
 
 import os as _os
@@ -130,6 +131,7 @@ def dealer_preset(
         DEALER_BACKDROP,
         ground_y_ratio=ground,
         horizon_y_ratio=horizon_y_ratio,
+        floor_top_y_ratio=floor_top_y_ratio,
     )
 
 
@@ -802,12 +804,15 @@ def _fit_backdrop(
     size: tuple[int, int],
     horizon_y_ratio: float | None = None,
     target_horizon_y: float | None = None,
+    floor_top_y_ratio: float | None = None,
+    lowest_floor_top_y: float | None = None,
 ) -> tuple[Image.Image, float | None]:
     """Cover the canvas without distorting: scale to fill, then crop."""
     target_w, target_h = size
     source = backdrop.convert("RGBA")
     cover = max(target_w / source.width, target_h / source.height)
     aligning = horizon_y_ratio is not None and target_horizon_y is not None
+    floored = aligning and floor_top_y_ratio is not None and lowest_floor_top_y is not None
 
     scale = cover
     if aligning:
@@ -820,6 +825,11 @@ def _fit_backdrop(
             cover * MAX_ALIGNMENT_OVERSCALE,
             max(cover, needed_for_top, needed_for_bottom),
         )
+        if floored and needed_for_top > cover:
+            scale = min(
+                scale,
+                max(cover, lowest_floor_top_y / max(1e-6, floor_top_y_ratio * source.height)),
+            )
 
     resized = source.resize(
         (max(1, round(source.width * scale)), max(1, round(source.height * scale))),
@@ -828,6 +838,8 @@ def _fit_backdrop(
     left = max(0, (resized.width - target_w) // 2)
     if aligning:
         top = round(horizon_y_ratio * resized.height - target_horizon_y)
+        if floored:
+            top = max(top, math.ceil(floor_top_y_ratio * resized.height - lowest_floor_top_y))
     else:
         top = (resized.height - target_h) // 2
     top = max(0, min(resized.height - target_h, top))
@@ -870,6 +882,25 @@ def _fit_vehicle(
 ) -> tuple[Image.Image, bool]:
     """Scale the cutout to the scene. Returns the vehicle and whether height
     normalisation was used rather than the older fill-the-box rule.
+    """
+    scale, normalised = _vehicle_scale(cutout, preset, size, ground_y)
+    return (
+        cutout.resize(
+            (max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale))),
+            Image.Resampling.LANCZOS,
+        ),
+        normalised,
+    )
+
+
+def _vehicle_scale(
+    cutout: Image.Image,
+    preset: BackdropPreset,
+    size: tuple[int, int],
+    ground_y: int | None = None,
+) -> tuple[float, bool]:
+    """How much to scale the cutout for this scene, and whether that is height
+    normalisation rather than the older fill-the-box rule.
     """
     canvas_w, canvas_h = size
     if preset.platform_box:
@@ -914,13 +945,7 @@ def _fit_vehicle(
         if clamped >= candidate * NORMALISE_CLAMP_FLOOR:
             scale, normalised = clamped, True
 
-    return (
-        cutout.resize(
-            (max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale))),
-            Image.Resampling.LANCZOS,
-        ),
-        normalised,
-    )
+    return scale, normalised
 
 
 def _mass_skew(vehicle: Image.Image) -> float:
@@ -1725,11 +1750,19 @@ def studio_relight(
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _is_dealer_preset(preset: BackdropPreset) -> bool:
+    """Whether this is the dealer preset, measured or not."""
+    return replace(
+        preset,
+        ground_y_ratio=DEALER_BACKDROP.ground_y_ratio,
+        horizon_y_ratio=DEALER_BACKDROP.horizon_y_ratio,
+        floor_top_y_ratio=DEALER_BACKDROP.floor_top_y_ratio,
+    ) == DEALER_BACKDROP
+
+
 def _recognise_studio(backdrop: Image.Image, preset: BackdropPreset) -> BackdropPreset:
-    """A dealer backdrop that is really a copy of one of the built-in studio scenes gets
-    that scene's measured geometry (platform, contact line, canvas).
-    """
-    if preset.key != DEALER_BACKDROP.key:
+    """Recover measured stage geometry for studio images uploaded via listings."""
+    if not _is_dealer_preset(preset):
         return preset
     studio = match_studio_backdrop(backdrop)
     return studio if studio is not None else preset
@@ -1780,6 +1813,7 @@ def compose(
     meta.update({
         "output_size": {"width": out_w, "height": out_h},
         "zoom": zoom,
+        "crop_offset": {"x": left, "y": top},
         "contact_y_px": int(contact - top),
         "vehicle_placement": {**placement, "x": placement["x"] - left, "y": placement["y"] - top},
         "tyre_contacts": [{"x": c["x"] - left, "y": c["y"] - top} for c in meta["tyre_contacts"]],
@@ -1931,8 +1965,19 @@ def _compose_once(
     if elevation_deg is not None and preset.horizon_y_ratio is not None:
         vehicle_horizon_y = _vehicle_horizon_y(elevation_deg, ground_y, vehicle_height_px)
 
+    lowest_floor_top_y: float | None = None
+    if preset.placement == "ground" and preset.floor_top_y_ratio is not None:
+        lowest_floor_top_y = (ground_y - FLOOR_CONTACT_MARGIN * size[1]) / (
+            1.0 - FLOOR_CONTACT_MARGIN
+        )
+
     canvas, backdrop_horizon_y = _fit_backdrop(
-        backdrop, size, preset.horizon_y_ratio, vehicle_horizon_y
+        backdrop,
+        size,
+        preset.horizon_y_ratio,
+        vehicle_horizon_y,
+        preset.floor_top_y_ratio,
+        lowest_floor_top_y,
     )
     canvas = _apply_backdrop_exposure(canvas, preset.backdrop_exposure)
     graded = STUDIO_GRADE and preset.output_size is not None and preset.key != DEALER_BACKDROP.key

@@ -15,14 +15,32 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 die() { printf '\033[31merror: %s\033[0m\n' "$1" >&2; exit 1; }
 
 say "Python"
-command -v python3 >/dev/null 2>&1 || die "python3 is not installed."
-python3 --version
+# PYTHON=python3.12 bash setup.sh picks the interpreter when python3 is not
+# the one to use.
+PYTHON="${PYTHON:-python3}"
+command -v "$PYTHON" >/dev/null 2>&1 || die "$PYTHON is not installed."
+"$PYTHON" --version
+
+# 3.10 or newer, checked before anything is installed. The code uses
+# `str | None` annotations at run time, which 3.9 — still /usr/bin/python3 on a
+# stock Mac — accepts all the way through the install and then crashes on when
+# the backend starts.
+new_enough() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; }
+version_of() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "unknown"; }
+
+new_enough "$PYTHON" || die "AutoPivot needs Python 3.10 or newer; $PYTHON is $(version_of "$PYTHON").
+Install Python 3.12 (https://www.python.org/downloads/, or: brew install python@3.12)
+and run this again with it:  PYTHON=python3.12 bash setup.sh"
 
 if [ -x ".venv/bin/python" ]; then
+  # A .venv left by an earlier run with an older Python would otherwise be
+  # reused as it is, and fail the same way.
+  new_enough .venv/bin/python || die "The existing .venv was made with Python $(version_of .venv/bin/python), and AutoPivot needs 3.10 or newer.
+Delete it (rm -rf .venv) and run this again."
   echo "Virtual environment already exists."
 else
   echo "Creating virtual environment in .venv ..."
-  python3 -m venv .venv
+  "$PYTHON" -m venv .venv
 fi
 
 # shellcheck disable=SC1091
@@ -37,14 +55,17 @@ else
   python - <<'PY'
 import pathlib, secrets
 p = pathlib.Path(".env")
-p.write_text(
-    p.read_text(encoding="utf-8").replace(
-        "JWT_SECRET=", "JWT_SECRET=" + secrets.token_urlsafe(48), 1
-    ),
-    encoding="utf-8",
-)
+text = p.read_text(encoding="utf-8")
+if "JWT_SECRET=" in text:
+    p.write_text(
+        text.replace("JWT_SECRET=", "JWT_SECRET=" + secrets.token_urlsafe(48), 1),
+        encoding="utf-8",
+    )
+    print("Created .env with a generated signing key.")
+else:
+    print("warning: created .env, but .env.example has no JWT_SECRET= line, so no")
+    print("signing key was written - every backend restart will sign everyone out.")
 PY
-  echo "Created .env with a generated signing key."
   echo "Add your Hugging Face token to it as HF_TOKEN when you have one."
 fi
 

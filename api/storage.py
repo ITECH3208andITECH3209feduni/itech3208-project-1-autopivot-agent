@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from PIL import Image, UnidentifiedImageError
+from PIL import ExifTags, Image, UnidentifiedImageError
 
 StorageKind = Literal["original", "processed", "backdrop", "plate_overlay"]
 
@@ -31,6 +31,8 @@ MIME_FOR_PIL_FORMAT: dict[str, str] = {
     "PNG": "image/png",
     "WEBP": "image/webp",
 }
+
+_QUARTER_TURN_ORIENTATIONS = frozenset({5, 6, 7, 8})
 
 
 class StorageError(Exception):
@@ -88,7 +90,18 @@ def inspect_image(content: bytes) -> tuple[str, int, int]:
             f"{image.format or 'That'} images are not supported. "
             "Use JPEG, PNG or WEBP."
         )
-    return mime, image.width, image.height
+    width, height = image.size
+    if _orientation(image) in _QUARTER_TURN_ORIENTATIONS:
+        width, height = height, width
+    return mime, width, height
+
+
+def _orientation(image: Image.Image) -> int:
+    """The EXIF orientation, or 1 — as stored — when there is none to read."""
+    try:
+        return int(image.getexif().get(ExifTags.Base.Orientation, 1))
+    except Exception:
+        return 1
 
 
 def save_image(
@@ -117,8 +130,21 @@ def save_image(
     return StoredImage(relative, mime, len(content), width, height)
 
 
+def _safe_segments(storage_path: str) -> list[str] | None:
+    """Split a stored path into segments, or None if it is not safe to use."""
+    if not storage_path:
+        return None
+    segments = storage_path.split("/")
+    for segment in segments:
+        if segment in ("", ".", "..") or "\\" in segment or "\x00" in segment:
+            return None
+    return segments
+
+
 def resolve(storage_path: str) -> Path:
     """Map a stored relative path to a real file, refusing to leave the root."""
+    if _safe_segments(storage_path) is None:
+        raise StorageError("Invalid storage path.")
     candidate = (STORAGE_ROOT / storage_path).resolve()
     if not candidate.is_relative_to(STORAGE_ROOT):
         raise StorageError("Invalid storage path.")
@@ -129,7 +155,10 @@ def resolve(storage_path: str) -> Path:
 
 def dealership_of(storage_path: str) -> int | None:
     """The dealership a path belongs to, or None if it is not well formed."""
-    head = storage_path.split("/", 1)[0]
+    segments = _safe_segments(storage_path)
+    if segments is None:
+        return None
+    head = segments[0]
     return int(head) if head.isdigit() else None
 
 

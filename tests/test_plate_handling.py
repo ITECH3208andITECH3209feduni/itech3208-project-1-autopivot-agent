@@ -189,7 +189,7 @@ def test_a_red_cars_bumper_is_not_a_sticker():
 def test_the_closer_pass_maps_boxes_back_into_the_crop(monkeypatch):
     seen = {}
 
-    def fake_detector(image):
+    def fake_detector(image, threshold=None):
         seen["size"] = image.size
         return [{"score": 0.4, "box": {"xmin": 100, "ymin": 50, "xmax": 300, "ymax": 110}}]
 

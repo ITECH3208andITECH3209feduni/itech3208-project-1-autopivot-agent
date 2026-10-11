@@ -139,9 +139,10 @@ final _routerProvider = Provider<GoRouter>((ref) {
       // shares one persistent shell — the dealership name and the camera
       // action stay mounted and keep their own state while only the content
       // beneath changes. Sign-in and the forced password change are
-      // deliberately outside this: neither should show a way to sign out of
-      // a screen the user cannot leave, or a camera button that goes
-      // anywhere before they are actually in.
+      // deliberately outside this: neither should show the account header,
+      // or a camera button that goes anywhere, before the user is actually
+      // in. The forced change has a sign-out of its own instead, the one way
+      // off a screen the user otherwise cannot leave.
       ShellRoute(
         builder: (context, state, child) => AppShell(child: child),
         routes: [
@@ -210,6 +211,8 @@ final _routerProvider = Provider<GoRouter>((ref) {
           return null;
 
         case AuthSignedOut():
+          // Also how a session the server stopped accepting ends, from
+          // whichever screen was showing: see AuthController.sessionExpired.
           return target == AppRoutes.signIn ? null : AppRoutes.signIn;
 
         case AuthSignedIn(:final mustChangePassword, :final user):

@@ -174,12 +174,24 @@ say "Creating the role and database"
 
 DB_PASSWORD="${DB_PASSWORD:-}"
 generated=false
+if [ -z "$DB_PASSWORD" ] && [ -f "$ENV_FILE" ]; then
+  # The password an earlier run chose, read back from the connection string it
+  # wrote. A fallback cluster does not survive the pod, so its role is created
+  # again below; with a new password, the DATABASE_URL runpod_up.sh keeps in
+  # its own settings would no longer sign in.
+  DB_PASSWORD="$(sed -n 's|^export DATABASE_URL=[^:]*://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" \
+    2>/dev/null | tail -n 1 || true)"
+fi
 if [ -z "$DB_PASSWORD" ]; then
   DB_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
   generated=true
 fi
 
 psql_super() { su postgres -c "$PGBIN/psql -p $PGPORT -tAc \"$1\""; }
+# The same, inside $DB_NAME. psql_super lands in the postgres maintenance
+# database, which has no tables of its own, so it cannot say whether $DB_NAME
+# has any.
+psql_db()    { su postgres -c "$PGBIN/psql -p $PGPORT -d '$DB_NAME' -tAc \"$1\""; }
 
 if [ "$(psql_super "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'")" = "1" ]; then
   echo "  role $DB_USER exists — password left unchanged"
@@ -207,8 +219,8 @@ fi
 encoding="$(psql_super "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='$DB_NAME'")"
 if [ "$encoding" != "UTF8" ]; then
   warn "Database $DB_NAME has encoding $encoding, not UTF8."
-  tables="$(su postgres -c "$PGBIN/psql -p $PGPORT -d '$DB_NAME' -tAc \
-      \"SELECT count(*) FROM information_schema.tables WHERE table_schema='public'\"" 2>/dev/null || echo 1)"
+  tables="$(psql_db "SELECT count(*) FROM information_schema.tables \
+      WHERE table_schema='public'" 2>/dev/null || echo 1)"
   if [ "${tables:-1}" = "0" ]; then
     psql_super "DROP DATABASE $DB_NAME" >/dev/null
     psql_super "CREATE DATABASE $DB_NAME OWNER $DB_USER ENCODING 'UTF8' TEMPLATE template0" >/dev/null
@@ -222,16 +234,33 @@ if [ "$encoding" != "UTF8" ]; then
 fi
 
 # ── Restore, if this is a rebuilt fallback cluster ───────────────────────────
-# Only runs when the database is genuinely empty, so it can never overwrite
-# data that is already there.
+# Only into a database that is genuinely empty, so it can never overwrite data
+# that is already there. Counted inside $DB_NAME: counted in the maintenance
+# database, as it once was, the answer was always none, and the backup was
+# replayed over the live database on every start. A count that fails is not
+# taken to mean empty.
 if [ -f "$BACKUP_DIR/latest.sql" ]; then
-  tables="$(psql_super "SELECT count(*) FROM information_schema.tables \
-      WHERE table_schema='public'" 2>/dev/null || echo 0)"
-  if [ "${tables:-0}" = "0" ]; then
+  tables="$(psql_db "SELECT count(*) FROM information_schema.tables \
+      WHERE table_schema='public'" 2>/dev/null)" || tables=""
+  if [ "$tables" = "0" ]; then
     say "Restoring from the most recent backup"
-    su postgres -c "$PGBIN/psql -p $PGPORT -q -d '$DB_NAME'" < "$BACKUP_DIR/latest.sql" >/dev/null 2>&1 \
-      && echo "  restored $BACKUP_DIR/latest.sql" \
-      || warn "restore reported errors — check $BACKUP_DIR/latest.sql"
+    RESTORE_LOG="$BACKUP_DIR/restore.log"
+    # As $DB_USER, not postgres: the dump is --no-owner, so whoever loads it
+    # owns every table it creates, and the application connects as $DB_USER.
+    # One transaction that stops at the first error, so it lands whole or not
+    # at all, with psql's output kept rather than thrown away.
+    if su postgres -c "$PGBIN/psql -X -q -p $PGPORT -U '$DB_USER' -d '$DB_NAME' \
+        -v ON_ERROR_STOP=1 --single-transaction" \
+        < "$BACKUP_DIR/latest.sql" > "$RESTORE_LOG" 2>&1; then
+      echo "  restored $BACKUP_DIR/latest.sql"
+    else
+      # On stderr as well, because runpod_up.sh discards this script's stdout.
+      warn "restoring $BACKUP_DIR/latest.sql failed, so nothing was loaded — see $RESTORE_LOG" >&2
+    fi
+  elif [ -n "$tables" ]; then
+    echo "  $DB_NAME already holds $tables tables — the backup was not restored over them"
+  else
+    warn "could not count the tables in $DB_NAME, so $BACKUP_DIR/latest.sql was not restored" >&2
   fi
 fi
 

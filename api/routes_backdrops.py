@@ -8,14 +8,14 @@ import logging
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image as PilImage
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 import backdrop_analysis
 from api import storage
 from api.deps import DbSession, ReadyUser
 from api.schemas import SHOT_ANGLES, BackdropAnglesIn, BackdropGeometryIn, BackdropOut
-from database.models import Backdrop
+from database.models import AuditLog, Backdrop
 
 logger = logging.getLogger("autopivot.backdrops")
 
@@ -238,13 +238,25 @@ def delete_backdrop(backdrop_id: int, user: ReadyUser, session: DbSession) -> No
             detail="This backdrop has been used to process images and cannot be deleted.",
         )
 
-    storage.delete(path)
+    still_referenced = session.scalar(
+        select(func.count(Backdrop.id)).where(Backdrop.storage_path == path)
+    )
+    if not still_referenced:
+        storage.delete(path)
     logger.info("Backdrop deleted — dealership=%s id=%s", dealership_id, backdrop_id)
 
 
 @router.get("/files/{storage_path:path}", include_in_schema=False)
-def serve_file(storage_path: str, user: ReadyUser) -> FileResponse:
+def serve_file(storage_path: str, user: ReadyUser, session: DbSession) -> FileResponse:
     """Serve a stored file to a member of the dealership that owns it."""
+    if user.role == "platform_admin":
+        session.add(AuditLog(
+            actor_user_id=user.id, action="platform_photo_access", outcome="denied",
+            request_path="/api/files/[redacted]",
+            details="Platform photograph access is disabled; metadata access only.",
+        ))
+        session.commit()
+        raise HTTPException(status_code=404, detail="File not found.")
     owner = storage.dealership_of(storage_path)
     if owner is None or owner != user.dealership_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")

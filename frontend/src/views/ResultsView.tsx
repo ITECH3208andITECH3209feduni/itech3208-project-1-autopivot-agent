@@ -14,10 +14,10 @@ import AuthedImage from '../components/AuthedImage'
 import ListingCard from '../components/ListingCard'
 import ListingGallery from '../components/ListingGallery'
 import { describeKind, isExcluded, pickPreviewImage } from '../components/ListingImageKind'
-import { Card, ConfirmDialog, SolidBtn, StatusPill, Stepper } from '../components/primitives'
+import { Card, ConfirmDialog, SolidBtn, StatusPill, Stepper, TextBtn } from '../components/primitives'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 import { useIsMobile } from '../useMediaQuery'
-import { WORKFLOW_STEPS, stepHref, type WorkflowStep } from '../workflow'
+import { WORKFLOW_STEPS, addPhotographsHref, stepHref, type WorkflowStep } from '../workflow'
 
 const PAGE_SIZE = 24
 
@@ -468,7 +468,7 @@ function VehicleDetail({ listingId }: { listingId: number }) {
           <p style={{ fontFamily: SANS, fontSize: 15, color: C.inkSoft, margin: '0 0 24px' }}>
             This vehicle has no photographs yet.
           </p>
-          <SolidBtn onClick={() => navigate('/app/upload')}>Add photographs</SolidBtn>
+          <SolidBtn onClick={() => navigate(addPhotographsHref(listingId))}>Add photographs</SolidBtn>
         </Card>
       ) : (
         <Card style={{ padding: mobile ? 16 : 24 }}>
@@ -486,14 +486,17 @@ function VehicleDetail({ listingId }: { listingId: number }) {
                   : 'Straight from the camera or the import, before any compositing.'}
               </p>
             </div>
-            {processed.length > 0 && (
-              <ModeToggle
-                mode={activeMode}
-                onChange={next => { setMode(next); setIndex(0) }}
-                processedCount={processed.length}
-                originalCount={kept.length}
-              />
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              {processed.length > 0 && (
+                <ModeToggle
+                  mode={activeMode}
+                  onChange={next => { setMode(next); setIndex(0) }}
+                  processedCount={processed.length}
+                  originalCount={kept.length}
+                />
+              )}
+              <TextBtn onClick={() => navigate(addPhotographsHref(listingId))}>Add photographs</TextBtn>
+            </div>
           </div>
 
           {gallery.length === 0 ? (

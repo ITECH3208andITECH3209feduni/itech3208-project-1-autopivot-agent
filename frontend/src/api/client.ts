@@ -1,6 +1,34 @@
 
 const TOKEN_KEY = 'autopivot.token'
 
+export type DealershipActivity = {
+  dealership_id: number
+  active_users: number
+  vehicle_count: number
+  original_image_count: number
+  job_count: number
+  jobs_by_status: Record<string, number>
+  latest_job_at: string | null
+}
+
+export type PlatformJobMetadata = {
+  id: number
+  vehicle_listing_id: number
+  processing_type: string
+  status: string
+  review_state: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type PlatformJobs = {
+  items: PlatformJobMetadata[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export type Dealership = {
   id: number
   name: string
@@ -123,7 +151,7 @@ export type VehicleDetails = {
 export type UrlImportResult = {
   images: ListingImage[]
   note: string | null
-  vehicle: VehicleDetails | null
+  vehicle?: VehicleDetails | null
 }
 
 export type UrlPreviewResult = {
@@ -192,8 +220,35 @@ export const tokenStore = {
   clear: () => localStorage.removeItem(TOKEN_KEY),
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = tokenStore.get()
+const sessionEndedListeners = new Set<() => void>()
+
+export function onSessionEnded(listener: () => void): () => void {
+  sessionEndedListeners.add(listener)
+  return () => { sessionEndedListeners.delete(listener) }
+}
+
+function refused(token: string) {
+  if (tokenStore.get() !== token) return
+  tokenStore.clear()
+  for (const listener of [...sessionEndedListeners]) listener()
+}
+
+export function onTokenChangedElsewhere(listener: (token: string | null) => void): () => void {
+  function handle(event: StorageEvent) {
+    if (event.key === TOKEN_KEY || event.key === null) listener(tokenStore.get())
+  }
+  window.addEventListener('storage', handle)
+  return () => window.removeEventListener('storage', handle)
+}
+
+type RequestOptions = {
+  anonymous?: boolean
+}
+
+async function request<T>(
+  path: string, init: RequestInit = {}, { anonymous = false }: RequestOptions = {},
+): Promise<T> {
+  const token = anonymous ? null : tokenStore.get()
   const headers = new Headers(init.headers)
   if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -210,6 +265,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await response.json().catch(() => null)
 
   if (!response.ok) {
+    if (response.status === 401 && token) refused(token)
+
     const detail = body?.detail
     const message =
       typeof detail === 'string'
@@ -228,18 +285,27 @@ export const api = {
     request<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
-    }),
+    }, { anonymous: true }),
 
   me: () => request<User>('/auth/me'),
 
   changePassword: (current_password: string, new_password: string) =>
-    request<User>('/auth/change-password', {
+    request<LoginResponse>('/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ current_password, new_password }),
     }),
 
   platformDealerships: () =>
     request<Dealership[]>('/api/platform/dealerships'),
+
+  platformActivity: (id: number) =>
+    request<DealershipActivity>(`/api/platform/dealerships/${id}/activity`),
+
+  platformJobs: (id: number, offset = 0, status = '') => {
+    const query = new URLSearchParams({ limit: '20', offset: String(offset) })
+    if (status) query.set('status', status)
+    return request<PlatformJobs>(`/api/platform/dealerships/${id}/jobs?${query}`)
+  },
 
   onboardDealership: (payload: DealershipOnboardRequest) =>
     request<DealershipProvisioned>('/api/platform/dealerships', {
@@ -346,9 +412,11 @@ export const api = {
     request<void>(`/api/backdrops/${id}`, { method: 'DELETE' }),
 
   fetchFile: async (url: string): Promise<string> => {
+    const token = tokenStore.get()
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${tokenStore.get() ?? ''}` },
+      headers: { Authorization: `Bearer ${token ?? ''}` },
     })
+    if (response.status === 401 && token) refused(token)
     if (!response.ok) throw new ApiError(response.status, 'Image unavailable.')
     return URL.createObjectURL(await response.blob())
   },

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 logger = logging.getLogger("autopivot.backdrop_analysis")
 
@@ -230,9 +230,22 @@ def _camera_elevation_deg(
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _upright(image: Image.Image) -> Image.Image:
+    """The backdrop as the dealer sees it, with its EXIF orientation applied."""
+    image.load()
+    try:
+        return ImageOps.exif_transpose(image)
+    except Exception as exc:
+        logger.warning(
+            "EXIF orientation could not be applied, so this backdrop is measured "
+            "as stored: %s", exc,
+        )
+        return image
+
+
 def analyse(image: Image.Image) -> BackdropGeometry:
     """Measure a backdrop. Never raises, never returns None."""
-    rgb = image.convert("RGB")
+    rgb = _upright(image).convert("RGB")
     width, height = rgb.size
     gray = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2GRAY)
 

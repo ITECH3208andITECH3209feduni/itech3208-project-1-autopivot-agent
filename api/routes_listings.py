@@ -653,7 +653,11 @@ def process_listing(
             )
 
     jobs = processing.create_jobs(session, listing, backdrop)
-    if not jobs:
+    in_flight = any(
+        job.status in ("pending", "processing")
+        for job in processing.latest_jobs(session, listing.id)
+    )
+    if not jobs and not in_flight:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="There is nothing to process — every photograph is already done.",
@@ -722,6 +726,8 @@ def delete_image(
     try:
         paths.extend(_release_job_references(session, {image.id}))
         session.delete(image)
+        session.flush()
+        processing._refresh_listing_status(session, listing.id)
         session.commit()
     except IntegrityError:
         session.rollback()

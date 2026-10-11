@@ -5,16 +5,20 @@ from __future__ import annotations
 import os
 import secrets
 import sys
+from pathlib import Path
 
-from dotenv import load_dotenv
-from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from api.security import hash_password
-from database.connection import get_engine
-from database.models import User
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-load_dotenv(override=False)
+from api.env import load_environment  # noqa: E402
+
+load_environment()
+
+from api.security import hash_password  # noqa: E402
+from database.connection import get_engine  # noqa: E402
+from database.models import User  # noqa: E402
 
 
 def main() -> int:

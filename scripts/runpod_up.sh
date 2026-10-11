@@ -31,7 +31,15 @@ info() { printf '  %s\n' "$1"; }
 warn() { printf '  \033[33m! %s\033[0m\n' "$1"; }
 die()  { printf '\n\033[31merror: %s\033[0m\n' "$1" >&2; exit 1; }
 
-app_pid()    { pgrep -f "python .*autopivot_backend.py" | head -1; }
+# The app as it appears in the process table: `python3 autopivot_backend.py`
+# as step 6 starts it, or `python autopivot_backend.py` as runpod_setup.sh says
+# to start it by hand — any interpreter name or path, flags allowed. The old
+# pattern wanted a space straight after "python", so it never matched the
+# python3 started below: --status said stopped, --stop left it running, and a
+# re-run started a second copy that loaded the models onto the GPU and then
+# could not bind the port. Anchored to the start of the command line, so a
+# process that only mentions the file (grep, an editor, a test run) is not it.
+app_pid()    { pgrep -f '^([^ ]*/)?python[0-9.]* ([^ ]* )*([^ ]*/)?autopivot_backend\.py( |$)' | head -1; }
 tunnel_pid() { pgrep -f "cloudflared tunnel" | head -1; }
 tunnel_url() {
   grep -ohE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | tail -1
@@ -102,10 +110,26 @@ else
   : > "$ENV_FILE"
   ok "created $ENV_FILE"
 fi
+# It holds the signing key and both admin passwords — including a file made by
+# hand, or by a version of this script that did not set its mode.
+chmod 600 "$ENV_FILE" 2>/dev/null \
+  || warn "could not restrict $ENV_FILE to its owner (chmod 600) — it holds the signing key and admin passwords"
 
 remember() {
   # Persist a value only if it is not already recorded, so re-runs are stable.
   grep -q "^export $1=" "$ENV_FILE" 2>/dev/null || printf 'export %s=%q\n' "$1" "$2" >> "$ENV_FILE"
+}
+
+# An admin password, generated. These accounts are reachable from the public
+# URL the moment the tunnel is up, and a password written in this repository
+# — as the demo ones used to be — is one anyone who finds the URL can sign in
+# with first; being made to change it at first sign-in then only asks them to
+# pick their own. Grouped, and without look-alike characters (no 0/o, 1/l/i),
+# because it still gets typed by several people under time pressure.
+new_password() {
+  python3 -c 'import secrets
+alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+print("-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(4)))'
 }
 
 if [ -z "${JWT_SECRET:-}" ]; then
@@ -113,19 +137,20 @@ if [ -z "${JWT_SECRET:-}" ]; then
   remember JWT_SECRET "$JWT_SECRET"
   ok "generated a signing key"
 fi
+# One each, rather than one shared: the accounts sit at different roles (one
+# dealership's admin, and the whole platform's), and one password leaking
+# should not open both.
 if [ -z "${SEED_ADMIN_PASSWORD:-}" ]; then
-  # Chosen rather than generated: a demo password gets typed by several people
-  # under time pressure, and a random one gets pasted wrongly.
-  SEED_ADMIN_PASSWORD="autopivot-demo-2026"
+  SEED_ADMIN_PASSWORD="$(new_password)"
+  [ -n "$SEED_ADMIN_PASSWORD" ] || die "could not generate an admin password — is python3 working?"
   remember SEED_ADMIN_PASSWORD "$SEED_ADMIN_PASSWORD"
+  ok "generated the dealership admin's password"
 fi
 if [ -z "${SEED_PLATFORM_ADMIN_PASSWORD:-}" ]; then
-  # Same reasoning as SEED_ADMIN_PASSWORD above, and deliberately a different
-  # word from it — the two accounts sit at different roles (one dealership's
-  # admin vs. the whole platform's), and a shared password makes it easy to
-  # sign into the wrong one without noticing.
-  SEED_PLATFORM_ADMIN_PASSWORD="autopivot-platform-2026"
+  SEED_PLATFORM_ADMIN_PASSWORD="$(new_password)"
+  [ -n "$SEED_PLATFORM_ADMIN_PASSWORD" ] || die "could not generate an admin password — is python3 working?"
   remember SEED_PLATFORM_ADMIN_PASSWORD "$SEED_PLATFORM_ADMIN_PASSWORD"
+  ok "generated the platform admin's password"
 fi
 if [ -z "${STORAGE_ROOT:-}" ]; then
   STORAGE_ROOT="$VOLUME/autopivot-storage"
@@ -291,6 +316,56 @@ URL="$(tunnel_url)"
 [ -n "$URL" ] || warn "the tunnel did not produce a URL (see $TUNNEL_LOG) — continuing without it, see the proxy URLs below"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
+
+# Whether each password still signs in to an account, checked against its
+# stored hash, so the box below never shows one that has since been changed —
+# every account is made to change it at first sign-in. Prints a line per
+# password: current, changed, or unknown when there is no such account or the
+# database cannot be read. The passwords go through the environment rather
+# than the command line, which anyone on the machine can read.
+password_state() {  # email password...
+  local email="$1"
+  shift
+  CHECK_EMAIL="$email" CHECK_PASSWORDS="$(printf '%s\n' "$@")" python3 -c '
+import os
+from api.env import load_environment
+load_environment()
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from api.security import verify_password
+from database.connection import get_engine
+from database.models import User
+email = os.environ["CHECK_EMAIL"].strip().lower()
+with Session(get_engine()) as session:
+    stored = session.scalar(select(User.password_hash).where(User.email == email))
+for password in os.environ["CHECK_PASSWORDS"].split("\n"):
+    if stored is None:
+        print("unknown")
+    else:
+        print("current" if verify_password(password, stored) else "changed")
+' 2>/dev/null || printf 'unknown\n%.0s' "$@"
+}
+
+# One account's lines in the box: heading, email, the password it was seeded with.
+show_account() {
+  # What this script seeded with before it generated passwords, and the
+  # runbook printed. A pod set up back then can still have them, whatever its
+  # settings file now says.
+  local published=(autopivot-demo-2026 autopivot-platform-2026) states
+  states="$(password_state "$2" "$3" "${published[@]}")"
+  printf '  %s\n' "$1"
+  printf '    Email     %s\n' "$2"
+  case "$(printf '%s\n' "$states" | sed -n 1p)" in
+    current) printf '    Password  %s\n' "$3" ;;
+    changed) printf '    Password  (changed since setup — not shown)\n' ;;
+    *)       printf '    Password  (could not be checked — the generated one is in %s)\n' "$ENV_FILE" ;;
+  esac
+  if printf '%s\n' "$states" | sed -n '2,$p' | grep -qx current; then
+    warn "A password published in this repository still signs in to this account:"
+    warn "anyone who finds the URL can use it. Sign in and change it now."
+  fi
+}
+
 PROXY_URL="$(runpod_proxy_url)"
 VAST_URL="$(vast_proxy_url)"
 
@@ -332,12 +407,12 @@ fi
 if [ -z "$URL" ] && [ "$PROXY_READY" != true ] && [ "$VAST_READY" != true ]; then
   warn "no working public URL yet — see the notes below for what to try"
 fi
-printf '  Dealership admin\n'
-printf '    Email     ana.reid@northshore.co.nz\n'
-printf '    Password  %s\n' "$SEED_ADMIN_PASSWORD"
-printf '  Platform admin (belongs to no dealership — for testing dealership creation)\n'
-printf '    Email     admin@autopivot.example.com\n'
-printf '    Password  %s\n' "$SEED_PLATFORM_ADMIN_PASSWORD"
+# The same defaults the two seed scripts use, so an override shows here too.
+show_account "Dealership admin" \
+  "${SEED_ADMIN_EMAIL:-ana.reid@northshore.co.nz}" "$SEED_ADMIN_PASSWORD"
+show_account "Platform admin (belongs to no dealership — for testing dealership creation)" \
+  "${SEED_PLATFORM_ADMIN_EMAIL:-admin@autopivot.example.com}" "$SEED_PLATFORM_ADMIN_PASSWORD"
+printf '  A password shown here is the initial one; first sign-in asks for a new one.\n'
 printf '\033[1m════════════════════════════════════════════════════════\033[0m\n\n'
 if [ -n "$PROXY_URL" ] && [ "$PROXY_READY" != true ]; then
   cat <<PROXY

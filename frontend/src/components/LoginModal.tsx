@@ -7,11 +7,12 @@ import { C, SANS } from '../design'
 import { Field, Modal, ModalHeading, SolidBtn } from './primitives'
 
 export default function LoginModal({
-  onClose, onSuccess, onSwitchToDemo,
+  onClose, onSuccess, onSwitchToDemo, notice,
 }: {
   onClose: () => void
   onSuccess: () => void
   onSwitchToDemo: () => void
+  notice?: string | null
 }) {
   const { login } = useAuth()
   const [email, setEmail] = useState('')
@@ -64,6 +65,18 @@ export default function LoginModal({
 
       <div style={{ padding: 32 }}>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {notice && (
+            <p
+              role="status"
+              style={{
+                fontFamily: SANS, fontSize: 13, color: C.ink, margin: 0,
+                padding: '10px 14px', background: C.paper, borderRadius: 8,
+              }}
+            >
+              {notice}
+            </p>
+          )}
+
           {error && (
             <p
               role="alert"

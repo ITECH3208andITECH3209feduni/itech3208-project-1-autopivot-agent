@@ -43,8 +43,10 @@ def _elevation_for_camera_height(camera_height_m: float) -> float:
 
 def camera_height_for_elevation(elevation_deg: float) -> float:
     """How high the camera stood, in metres, to see the wheel centre at this angle."""
-    return WHEEL_CENTRE_HEIGHT_M + TYPICAL_SHOOTING_DISTANCE_M * math.tan(
-        math.radians(elevation_deg)
+    return max(
+        0.0,
+        WHEEL_CENTRE_HEIGHT_M
+        + TYPICAL_SHOOTING_DISTANCE_M * math.tan(math.radians(elevation_deg)),
     )
 
 

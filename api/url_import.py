@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import io
 import ipaddress
 import json
@@ -16,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from urllib.parse import urljoin, urlparse
 
+import anyio
+import httpcore
 import httpx
 from bs4 import BeautifulSoup
 from PIL import Image
@@ -31,6 +32,7 @@ MIN_IMAGE_PIXELS = int(os.getenv("URL_IMPORT_MIN_IMAGE_PIXELS", "200"))
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 FETCH_TIMEOUT = 10.0
 CONCURRENT_DOWNLOADS = 6
+MAX_REDIRECTS = 5
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
@@ -145,14 +147,6 @@ class FetchedImage:
     content_type: str
     content: bytes
 
-    def as_payload(self) -> dict:
-        """Base64 form, for the unauthenticated processing endpoint."""
-        return {
-            "filename": self.filename,
-            "content_type": self.content_type,
-            "data": base64.b64encode(self.content).decode("ascii"),
-        }
-
 
 @dataclass
 class VehicleDetails:
@@ -181,31 +175,83 @@ class ImportResult:
 
 # ── Host policy ────────────────────────────────────────────────────────────────
 
-def is_safe_host(hostname: str | None) -> bool:
-    """Reject hostnames resolving to private, loopback, link-local or reserved IPs."""
+def _address_is_public(raw_ip: str) -> bool:
+    """True only for a genuinely public, routable unicast address."""
+    try:
+        ip = ipaddress.ip_address(raw_ip)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast and not ip.is_reserved
+
+
+async def _resolve(hostname: str, port: int = 0) -> list[str]:
+    """Resolve a hostname to its IP strings without blocking the event loop."""
+    infos = await anyio.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    return [info[4][0] for info in infos]
+
+
+async def is_safe_host(hostname: str | None) -> bool:
+    """True if the hostname resolves, and every address it resolves to is public."""
     if not hostname:
         return False
     try:
-        infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
+        addresses = await _resolve(hostname)
+    except (socket.gaierror, OSError):
         return False
-    if not infos:
-        return False
-    for info in infos:
+    return bool(addresses) and all(_address_is_public(a) for a in addresses)
+
+
+async def _ensure_public_host(hostname: str | None) -> None:
+    """Raise UrlImportError unless the hostname resolves only to public IPs."""
+    if not await is_safe_host(hostname):
+        raise UrlImportError("That address cannot be reached from the server.")
+
+
+class _BlockedAddressError(httpcore.ConnectError):
+    """Refused a connection because the host resolved to a non-public address."""
+
+
+class _PublicOnlyBackend(httpcore.AsyncNetworkBackend):
+    """A network backend that resolves and validates before it connects."""
+
+    def __init__(self, inner: httpcore.AsyncNetworkBackend) -> None:
+        self._inner = inner
+
+    async def connect_tcp(
+        self, host, port, timeout=None, local_address=None, socket_options=None
+    ):
         try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return False
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return False
-    return True
+            addresses = await _resolve(host, port)
+        except (socket.gaierror, OSError) as exc:
+            raise httpcore.ConnectError(str(exc)) from exc
+        if not addresses or not all(_address_is_public(a) for a in addresses):
+            raise _BlockedAddressError(
+                f"refusing to connect to non-public host {host!r}"
+            )
+        return await self._inner.connect_tcp(
+            addresses[0],
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(self, *args, **kwargs):
+        raise httpcore.ConnectError("Unix socket connections are not permitted.")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+def _guarded_transport() -> httpx.AsyncHTTPTransport:
+    """An httpx transport whose connections are pinned to validated public IPs."""
+    transport = httpx.AsyncHTTPTransport(retries=0)
+    transport._pool._network_backend = _PublicOnlyBackend(
+        transport._pool._network_backend
+    )
+    return transport
 
 
 def check_host_policy(hostname: str | None) -> None:
@@ -470,111 +516,186 @@ def _build(source_url: str, content: bytes, content_type: str, index: int) -> Fe
 
 # ── Fetch ──────────────────────────────────────────────────────────────────────
 
-async def fetch_vehicle_details(url: str) -> VehicleDetails | None:
+async def _read_capped(response: httpx.Response, max_bytes: int) -> tuple[bytes, bool]:
+    """Read a streamed body, stopping the moment it exceeds max_bytes."""
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            return bytes(body[:max_bytes]), True
+    return bytes(body), False
+
+
+def _text(headers: httpx.Headers, body: bytes) -> str:
+    """Decode a page body to text using httpx's own charset handling.
+
+    The body was already decompressed as it streamed in, so the encoding
+    headers are dropped; kept, httpx would try to decompress it a second time.
+    """
+    plain = {
+        k: v for k, v in headers.items()
+        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+    }
+    return httpx.Response(200, headers=plain, content=body).text
+
+
+async def _open(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    enforce_policy: bool = False,
+) -> tuple[httpx.Response, str]:
+    """Open a GET, following redirects by hand and validating every hop's host."""
+    current = url
+    hops = 0
+    while True:
+        parsed = urlparse(current)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise UrlImportError("That address cannot be reached from the server.")
+        if enforce_policy:
+            check_host_policy(parsed.hostname)
+        await _ensure_public_host(parsed.hostname)
+
+        response = await client.send(
+            client.build_request("GET", current), stream=True
+        )
+        if response.has_redirect_location:
+            await response.aclose()
+            hops += 1
+            if hops > MAX_REDIRECTS:
+                raise UrlImportError("That page redirected too many times.")
+            nxt = response.next_request
+            current = (
+                str(nxt.url)
+                if nxt is not None
+                else urljoin(current, response.headers.get("location", ""))
+            )
+            continue
+        return response, str(response.url)
+
+
+async def fetch_vehicle_details(
+    url: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> VehicleDetails | None:
     """Fetch a listing page and return whatever `extract_vehicle_details` can read from
     it, without downloading any of its photographs.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise UrlImportError("Enter a full address beginning http:// or https://.")
-
     check_host_policy(parsed.hostname)
-    if not is_safe_host(parsed.hostname):
-        raise UrlImportError("That address cannot be reached from the server.")
 
     async with httpx.AsyncClient(
-        headers=REQUEST_HEADERS, timeout=FETCH_TIMEOUT, follow_redirects=True,
+        headers=REQUEST_HEADERS,
+        timeout=FETCH_TIMEOUT,
+        follow_redirects=False,
+        trust_env=False,
+        transport=transport or _guarded_transport(),
     ) as client:
         try:
-            response = await client.get(url)
+            response, _final_url = await _open(client, url, enforce_policy=True)
+        except UrlImportError:
+            raise
         except httpx.HTTPError as exc:
             logger.info(
                 "Vehicle-details fetch could not reach %s: %s", parsed.hostname, exc
             )
             raise UrlImportError("That page could not be reached.") from exc
 
-        if response.status_code in (401, 403, 429):
-            raise UrlImportError(
-                "That site blocks automated requests, so its details could "
-                "not be read."
+        try:
+            if response.status_code in (401, 403, 429):
+                raise UrlImportError(
+                    "That site blocks automated requests, so its details could "
+                    "not be read."
+                )
+            if response.status_code >= 400:
+                raise UrlImportError(
+                    f"That page responded with status {response.status_code}."
+                )
+            content_type = (
+                response.headers.get("content-type", "").split(";")[0].strip().lower()
             )
-        if response.status_code >= 400:
-            raise UrlImportError(
-                f"That page responded with status {response.status_code}."
-            )
+            if "html" not in content_type:
+                return None
+            body, truncated = await _read_capped(response, MAX_PAGE_BYTES)
+            if truncated:
+                raise UrlImportError("That page is too large to scan.")
+            html = _text(response.headers, body)
+        finally:
+            await response.aclose()
 
-        final_host = urlparse(str(response.url)).hostname
-        check_host_policy(final_host)
-        if not is_safe_host(final_host):
-            raise UrlImportError("That address cannot be reached from the server.")
-
-        content_type = (
-            response.headers.get("content-type", "").split(";")[0].strip().lower()
-        )
-        if "html" not in content_type:
-            return None
-        if len(response.content) > MAX_PAGE_BYTES:
-            raise UrlImportError("That page is too large to scan.")
-
-        return extract_vehicle_details(response.text)
+    return extract_vehicle_details(html)
 
 
-async def fetch_images(url: str) -> ImportResult:
+async def fetch_images(
+    url: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ImportResult:
     """Fetch a listing page and return the vehicle photographs found on it."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise UrlImportError("Enter a full address beginning http:// or https://.")
 
     check_host_policy(parsed.hostname)
-    if not is_safe_host(parsed.hostname):
-        raise UrlImportError("That address cannot be reached from the server.")
 
     async with httpx.AsyncClient(
         headers=REQUEST_HEADERS,
         timeout=FETCH_TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=False,
+        trust_env=False,
         limits=httpx.Limits(max_connections=CONCURRENT_DOWNLOADS),
+        transport=transport or _guarded_transport(),
     ) as client:
         try:
-            response = await client.get(url)
+            response, final_url = await _open(client, url, enforce_policy=True)
+        except UrlImportError:
+            raise
         except httpx.HTTPError as exc:
             logger.info("URL import could not reach %s: %s", parsed.hostname, exc)
             raise UrlImportError("That page could not be reached.") from exc
 
-        if response.status_code in (401, 403, 429):
-            raise UrlImportError(
-                "That site blocks automated requests, so its photographs cannot "
-                "be imported. Download them and upload them instead."
-            )
-        if response.status_code >= 400:
-            raise UrlImportError(
-                f"That page responded with status {response.status_code}."
-            )
+        try:
+            if response.status_code in (401, 403, 429):
+                raise UrlImportError(
+                    "That site blocks automated requests, so its photographs "
+                    "cannot be imported. Download them and upload them instead."
+                )
+            if response.status_code >= 400:
+                raise UrlImportError(
+                    f"That page responded with status {response.status_code}."
+                )
 
-        final_host = urlparse(str(response.url)).hostname
-        check_host_policy(final_host)
-        if not is_safe_host(final_host):
-            raise UrlImportError("That address cannot be reached from the server.")
-
-        content_type = (
-            response.headers.get("content-type", "").split(";")[0].strip().lower()
-        )
-
-        if content_type in ALLOWED_IMAGE_TYPES:
-            entry = _build(str(response.url), response.content, content_type, 0)
-            return ImportResult(images=[entry] if entry else [])
-
-        if "html" not in content_type:
-            raise UrlImportError(
-                "That address is neither a webpage nor an image we can read."
+            content_type = (
+                response.headers.get("content-type", "").split(";")[0].strip().lower()
             )
 
-        if len(response.content) > MAX_PAGE_BYTES:
-            raise UrlImportError("That page is too large to scan.")
+            if content_type in ALLOWED_IMAGE_TYPES:
+                body, truncated = await _read_capped(response, MAX_IMAGE_BYTES)
+                if truncated:
+                    raise UrlImportError(
+                        f"That image is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB."
+                    )
+                entry = _build(final_url, body, content_type, 0)
+                return ImportResult(images=[entry] if entry else [])
 
-        vehicle = extract_vehicle_details(response.text)
+            if "html" not in content_type:
+                raise UrlImportError(
+                    "That address is neither a webpage nor an image we can read."
+                )
 
-        candidates = extract_image_urls(response.text, base_url=str(response.url))
+            body, truncated = await _read_capped(response, MAX_PAGE_BYTES)
+            if truncated:
+                raise UrlImportError("That page is too large to scan.")
+            html = _text(response.headers, body)
+        finally:
+            await response.aclose()
+
+        vehicle = extract_vehicle_details(html)
+
+        candidates = extract_image_urls(html, base_url=final_url)
         if not candidates:
             raise UrlImportError(
                 "No photographs were found on that page. Sites that build their "
@@ -585,23 +706,28 @@ async def fetch_images(url: str) -> ImportResult:
         semaphore = asyncio.Semaphore(CONCURRENT_DOWNLOADS)
 
         async def fetch_one(image_url: str, index: int) -> FetchedImage | None:
-            if not is_safe_host(urlparse(image_url).hostname):
-                return None
             async with semaphore:
                 try:
-                    reply = await client.get(image_url)
-                except httpx.HTTPError:
+                    reply, _reply_url = await _open(client, image_url)
+                except (UrlImportError, httpx.HTTPError):
                     return None
-            if reply.status_code >= 400:
+                try:
+                    if reply.status_code >= 400:
+                        return None
+                    ctype = (
+                        reply.headers.get("content-type", "")
+                        .split(";")[0].strip().lower()
+                    )
+                    if ctype not in ALLOWED_IMAGE_TYPES:
+                        return None
+                    body, truncated = await _read_capped(reply, MAX_IMAGE_BYTES)
+                finally:
+                    await reply.aclose()
+            if truncated or not MIN_IMAGE_BYTES <= len(body) <= MAX_IMAGE_BYTES:
                 return None
-            ctype = reply.headers.get("content-type", "").split(";")[0].strip().lower()
-            if ctype not in ALLOWED_IMAGE_TYPES:
+            if not is_large_enough(body):
                 return None
-            if not MIN_IMAGE_BYTES <= len(reply.content) <= MAX_IMAGE_BYTES:
-                return None
-            if not is_large_enough(reply.content):
-                return None
-            return _build(image_url, reply.content, ctype, index)
+            return _build(image_url, body, ctype, index)
 
         fetched = await asyncio.gather(
             *[fetch_one(u, i) for i, u in enumerate(candidates)]

@@ -4,7 +4,6 @@ from api.env import load_environment
 
 load_environment()
 
-import base64  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
@@ -19,11 +18,11 @@ import cv2
 import numpy as np
 import torch
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile, Body
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from huggingface_hub import get_token, hf_hub_download, login
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from PIL.PngImagePlugin import PngInfo
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation, pipeline
@@ -33,7 +32,7 @@ import classification
 import compositing
 import vehicle_isolation
 import elevation
-from api import processing, url_import
+from api import processing
 from api.app import create_app
 from api.config import BASE_DIR, HOST, PORT
 from device_utils import as_torch_device, device_info, select_device
@@ -44,8 +43,6 @@ from device_utils import as_torch_device, device_info, select_device
 
 HF_TOKEN: str       = os.getenv("HF_TOKEN", "")
 HF_AUTH_TOKEN: str  = HF_TOKEN or (get_token() or "")
-MAX_FILE_MB: int    = int(os.getenv("MAX_FILE_MB", 20))
-MAX_FILE_BYTES: int = MAX_FILE_MB * 1024 * 1024
 
 YOLO_HF_REPO: str    = os.getenv("YOLO_HF_REPO", "Ultralytics/YOLO26")
 YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", "yolo26n.pt")
@@ -130,9 +127,6 @@ _SEGMENTATION_INCOMPLETE = (
     "only part of the car."
 )
 
-ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset(
-    {"image/jpeg", "image/png", "image/webp"}
-)
 VEHICLE_CLASSES: frozenset[str] = frozenset(
     {"car", "truck", "bus", "motorcycle"}
 )
@@ -356,11 +350,17 @@ class PipelineProcessor:
         background: Optional[bytes],
         placement: Optional[processing.BackdropPlacement] = None,
         backdrop_for_angle=None,
+        *,
+        stored_kind: Optional[str] = None,
     ) -> processing.ProcessOutcome:
         source = _open_image(image).convert("RGB")
 
         classified = _classify(source)
-        if classified is not None and not classification.is_processable(classified):
+        if (
+            classified is not None
+            and stored_kind != processing.EXTERIOR
+            and not classification.is_processable(classified)
+        ):
             return processing.ProcessOutcome(
                 image_png=None,
                 vehicle_detected=False,
@@ -381,7 +381,10 @@ class PipelineProcessor:
                 message="No vehicle detected in this photograph.",
             )
 
-        edges = _frame_edges_touched(vehicle["box"], source.size)
+        edges = (
+            _frame_edges_touched(vehicle["box"], source.size)
+            if REJECT_CROPPED_VEHICLES else set()
+        )
         top_only = edges == {"top"}
         if edges and not top_only:
             return processing.ProcessOutcome(
@@ -515,7 +518,8 @@ async def lifespan(app: FastAPI):
     registry._load_birefnet()
 
     processing.set_processor(PipelineProcessor())
-    processing.resume_unfinished_jobs()
+
+    processing.recover_interrupted_jobs()
 
     logger.info(
         "AutoPivot ready — device=%s  active_bg_model=%s  yolo=%s",
@@ -541,25 +545,8 @@ app = create_app(
 # ── Validation Helpers ─────────────────────────────────────────────────────────
 
 
-def _validate_upload(file: UploadFile, content: bytes) -> None:
-    """Raise HTTP 413 / 415 for oversized or unsupported uploads."""
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail=(
-                f"Unsupported media type '{file.content_type}'. "
-                "Accepted formats: JPEG, PNG, WEBP."
-            ),
-        )
-    if len(content) > MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size exceeds the {MAX_FILE_MB} MB limit.",
-        )
-
-
 def _open_image(content: bytes) -> Image.Image:
-    """Safely decode image bytes."""
+    """Safely decode image bytes, turned the way the camera meant them to be seen."""
     try:
         probe = Image.open(io.BytesIO(content))
         probe.verify()
@@ -567,22 +554,20 @@ def _open_image(content: bytes) -> Image.Image:
         raise HTTPException(status_code=400, detail="Cannot identify image file.")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid image data: {exc}")
-    return Image.open(io.BytesIO(content))
+    return _upright(Image.open(io.BytesIO(content)))
 
 
-async def _read_optional_image(upload: Optional[UploadFile]) -> Optional[Image.Image]:
-    """Read and decode an optional UploadFile; return None if not provided."""
-    if upload is None or not upload.filename:
-        return None
-    content = await upload.read()
-    _validate_upload(upload, content)
-    return _open_image(content)
-
-
-def _encode_png(image: Image.Image) -> str:
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
+def _upright(image: Image.Image) -> Image.Image:
+    """The picture as the dealer sees it, with its EXIF orientation applied."""
+    image.load()
+    try:
+        return ImageOps.exif_transpose(image)
+    except Exception as exc:
+        logger.warning(
+            "EXIF orientation could not be applied, so this image is processed "
+            "as stored: %s", exc,
+        )
+        return image
 
 
 def _resolve_yolo_model_path(model_ref: str) -> str:
@@ -740,6 +725,9 @@ def _box_area(box: dict) -> float:
 
 
 _FRAME_EDGE_MARGIN_PX = 2
+REJECT_CROPPED_VEHICLES: bool = os.getenv("REJECT_CROPPED_VEHICLES", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 
 def _frame_edges_touched(box: dict, image_size: tuple[int, int]) -> set[str]:
@@ -822,18 +810,23 @@ def _plate_box_iou(a: dict, b: dict) -> float:
 
 
 def _detect_plates(image_rgba: Image.Image) -> list[dict]:
-    """Run the YOLOS plate detector at 1x and at PLATE_UPSCALE, merge the two."""
+    """Run the YOLOS plate detector at 1x, and again at PLATE_UPSCALE when 1x finds
+    none.
+    """
     image = image_rgba.convert("RGB")
-    found = [d for d in registry.plate_detector(image) if d["score"] > PLATE_CONFIDENCE]
+    found = [
+        d for d in registry.plate_detector(image, threshold=PLATE_CONFIDENCE)
+        if d["score"] > PLATE_CONFIDENCE
+    ]
 
     scale = max(1.0, PLATE_UPSCALE)
-    if scale > 1.0 and max(image.size) * scale <= PLATE_UPSCALE_MAX_SIDE:
+    if not found and scale > 1.0 and max(image.size) * scale <= PLATE_UPSCALE_MAX_SIDE:
         enlarged = image.resize(
             (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
             Image.Resampling.LANCZOS,
         )
         try:
-            extra = registry.plate_detector(enlarged)
+            extra = registry.plate_detector(enlarged, threshold=PLATE_CONFIDENCE)
         except Exception as exc:  # the 1x pass already succeeded
             logger.warning("Enlarged plate-detection pass skipped: %s", exc)
             extra = []
@@ -875,8 +868,13 @@ def _detect_plates_closer(
         (max(1, round(region.width * scale)), max(1, round(region.height * scale))),
         Image.Resampling.LANCZOS,
     )
+    try:
+        detections = registry.plate_detector(region, threshold=PLATE_RETRY_CONFIDENCE)
+    except Exception as exc:
+        logger.warning("Closer plate search skipped: %s", exc)
+        return []
     found = []
-    for d in registry.plate_detector(region):
+    for d in detections:
         if d["score"] <= PLATE_RETRY_CONFIDENCE:
             continue
         b = d["box"]
@@ -1003,9 +1001,23 @@ def _brand_plate_overlay() -> Optional[Image.Image]:
     return _brand_plate_overlay_cache
 
 
+def _clamp_box(
+    box: tuple[int, int, int, int], size: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    """The part of an (x1, y1, x2, y2) box that lies inside an image of `size`."""
+    width, height = size
+    x1, y1, x2, y2 = box
+    return (
+        min(max(x1, 0), width),
+        min(max(y1, 0), height),
+        min(max(x2, 0), width),
+        min(max(y2, 0), height),
+    )
+
+
 def _plate_coverage(cutout: Image.Image, box: tuple[int, int, int, int]) -> float:
     """Fraction of the box that lands on opaque pixels of the vehicle cutout."""
-    x1, y1, x2, y2 = box
+    x1, y1, x2, y2 = _clamp_box(box, cutout.size)
     alpha = np.array(cutout.convert("RGBA").getchannel("A"), dtype=np.uint8)
     region = alpha[y1:y2, x1:x2]
     if region.size == 0:
@@ -1090,6 +1102,12 @@ def _filter_plates(
                     100 * coverage, 100 * PLATE_MIN_COVERAGE, plate["score"],
                 )
                 continue
+
+            vx1, vy1, vx2, vy2 = _clamp_box((x1, y1, x2, y2), cutout.size)
+            plate = {
+                **plate,
+                "box": {"xmin": vx1, "ymin": vy1, "xmax": vx2, "ymax": vy2},
+            }
 
         kept.append(plate)
 
@@ -1222,13 +1240,13 @@ def _place_on_backdrop(
         canvas = Image.new("RGBA", original_size, (0, 0, 0, 0))
         x1, y1, x2, y2 = coords
         patch = cutout.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
-        canvas.paste(patch, (x1, y1), patch.getchannel("A"))
+        canvas.alpha_composite(patch, (x1, y1))
         return canvas, {"backdrop_style": "transparent", "shadow_applied": False}
 
     placement = placement or processing.BackdropPlacement()
     preset = compositing.dealer_preset(
-        horizon_y_ratio=placement.horizon_y_ratio,
-        floor_top_y_ratio=placement.floor_top_y_ratio,
+        horizon_y_ratio=placement.measured_horizon_y_ratio,
+        floor_top_y_ratio=placement.measured_floor_top_y_ratio,
     )
 
     elevation_deg = None
@@ -1290,174 +1308,6 @@ async def api_status() -> dict:
     }
 
 
-@app.post("/remove-background", tags=["Processing"])
-async def api_remove_background(file: UploadFile = File(...)) -> dict:
-    """Remove image background using BiRefNet. No vehicle detection or plate treatment
-    is performed.
-    """
-    content = await file.read()
-    _validate_upload(file, content)
-    image = _open_image(content)
-
-    logger.info(
-        "Background removal — file=%s  size=%d B",
-        Path(file.filename).name, len(content),
-    )
-
-    result, model_used = _remove_background(image)
-    return {
-        "success": True,
-        "processed_image": _encode_png(result),
-        "bg_model_used": model_used,
-        "background_removed": True,
-        "transparency_preserved": True,
-    }
-
-
-@app.post("/process-vehicle", tags=["Processing"])
-async def api_process_vehicle(
-    file: UploadFile = File(...),
-    background: Optional[UploadFile] = File(None),
-    plate_overlay: Optional[UploadFile] = File(None),
-) -> dict:
-    """Full processing pipeline — Developed by Vadim Rudoi:"""
-    content = await file.read()
-    _validate_upload(file, content)
-    image = _open_image(content).convert("RGB")
-
-    bg_image      = await _read_optional_image(background)
-    plate_img     = await _read_optional_image(plate_overlay)
-
-    logger.info(
-        "Full pipeline — file=%s  size=%d B  background=%s  plate_overlay=%s",
-        Path(file.filename).name,
-        len(content),
-        "yes" if bg_image else "no",
-        "yes" if plate_img else "no",
-    )
-
-    vehicle = _detect_vehicle(image)
-    if vehicle is None:
-        logger.info("No vehicle detected — pipeline aborted")
-        return {
-            "success": False,
-            "vehicle_detected": False,
-            "message": "No vehicle detected. Please upload a clear vehicle image.",
-        }
-
-    logger.info(
-        "Vehicle detected — class=%s  confidence=%.2f",
-        vehicle["class"], vehicle["score"],
-    )
-
-    crop, coords = _crop_with_padding(image, vehicle["box"])
-    bg_removed, model_used = _remove_background(crop)
-    logger.info("Background removed — model=%s", model_used)
-
-    plates = _detect_plates(crop)
-    plates = _filter_plates(plates, _box_area(vehicle["box"]), bg_removed)
-    logger.info("Plates detected — count=%d", len(plates))
-
-    bg_removed = _apply_plate_treatment(bg_removed, plates, plate_img)
-
-    final, composite_meta = _place_on_backdrop(bg_removed, bg_image, image.size, coords)
-
-    logger.info(
-        "Pipeline complete — plates_treated=%d  bg_applied=%s",
-        len(plates),
-        "custom" if bg_image else "transparent",
-    )
-
-    return {
-        "success": True,
-        "processed_image": _encode_png(final),
-        "vehicle_detected": True,
-        "vehicle": {
-            "class": vehicle["class"],
-            "score": round(vehicle["score"], 4),
-            "box": vehicle["box"],
-        },
-        "bg_model_used": model_used,
-        "plates_detected": len(plates),
-        "plate_treatment": "overlay" if plate_img else PLATE_TREATMENT,
-        "background_applied": "custom" if bg_image else "transparent",
-        "background_removed": True,
-        "transparency_preserved": bg_image is None,
-        "detections": [
-            {
-                "score": round(float(p["score"]), 4),
-                "box": {k: int(v) for k, v in p["box"].items()},
-            }
-            for p in plates
-        ],
-        **composite_meta,
-    }
-
-
-@app.post("/detect-and-hide", tags=["Processing"])
-async def api_detect_and_hide(
-    file: UploadFile = File(...),
-    plate_overlay: Optional[UploadFile] = File(None),
-) -> dict:
-    """Detect and treat licence plates only — no background removal or vehicle
-    detection.
-    """
-    content = await file.read()
-    _validate_upload(file, content)
-    image = _open_image(content).convert("RGBA")
-    plate_img = await _read_optional_image(plate_overlay)
-
-    logger.info(
-        "Plate detection — file=%s  size=%d B  overlay=%s",
-        Path(file.filename).name, len(content),
-        "yes" if plate_img else "no",
-    )
-
-    plates = _filter_plates(_detect_plates(image), 0.0, None)
-    if not plates:
-        return {
-            "success": False,
-            "plates_detected": 0,
-            "message": "No licence plates detected.",
-        }
-
-    result = _apply_plate_treatment(image, plates, plate_img)
-    logger.info("Plates treated — count=%d  method=%s",
-                len(plates), "overlay" if plate_img else PLATE_TREATMENT)
-
-    return {
-        "success": True,
-        "plates_detected": len(plates),
-        "processed_image": _encode_png(result),
-        "plate_treatment": "overlay" if plate_img else PLATE_TREATMENT,
-        "transparency_preserved": True,
-        "detections": [
-            {
-                "score": round(float(p["score"]), 4),
-                "box": {k: int(v) for k, v in p["box"].items()},
-            }
-            for p in plates
-        ],
-    }
-
-@app.post("/extract-images-from-url", tags=["Extract Images from URL"])
-async def api_extract_images_from_url(url: str = Body(..., embed=True)) -> dict:
-    """Extract images from a URL. Accepts JSON body: {"url": "https://..."}"""
-    try:
-        result = await url_import.fetch_images(url)
-    except url_import.UrlImportError as exc:
-        return {"success": False, "message": str(exc)}
-    except Exception as exc:  # a clean message beats a raw 500
-        logger.exception("URL import failed unexpectedly")
-        return {"success": False, "message": f"Unexpected error while fetching images: {exc}"}
-
-    return {
-        "success": True,
-        "images": [image.as_payload() for image in result.images],
-        "note": result.note,
-    }
-
-
 # ── React client (single-page fallback) ────────────────────────────────────────
 
 if SERVE_REACT_CLIENT:
@@ -1481,8 +1331,10 @@ if SERVE_REACT_CLIENT:
     logger.info("Serving the React client from %s", FRONTEND_DIST)
 else:
     logger.info(
-        "frontend/dist not found — serving the original demo page at /. "
-        "Run 'npm run build --prefix frontend' to serve the React client."
+        "frontend/dist not found — the React client has not been built, so only "
+        "the API is served and / answers 503 with the build command. Run "
+        "'npm ci --prefix frontend && npm run build --prefix frontend' and "
+        "restart to serve the client."
     )
 
 

@@ -61,6 +61,19 @@ Desktop.ini
 # Local safety copies made while merging branches.
 _backup_before_merge/
 
+# The local SQLite database a fresh setup creates in the project root, and its
+# write-ahead log files. It holds every account's password hash.
+autopivot.db
+autopivot.db-*
+
+# YOLO weights, which ultralytics downloads into the working directory, and
+# the settings folder it creates there when its own config directory is not
+# writable.
+*.pt
+Ultralytics/
+
+.pytest_cache/
+
 # Realism evidence (scripts/realism_report.py, --out defaults here).
 # Renders are large and regenerated every run; the metrics JSON and summary
 # are kept as the record a later phase compares against.

@@ -72,7 +72,8 @@ def dashboard_stats(user: ReadyUser, session: DbSession) -> DashboardStats:
         .join(VehicleListing, VehicleListing.id == Image.vehicle_listing_id)
         .where(
             VehicleListing.dealership_id == dealership_id,
-            Image.image_type == "original",
+            Image.image_type == "processed",
+            Image.created_at >= month_start,
         )
     )
 

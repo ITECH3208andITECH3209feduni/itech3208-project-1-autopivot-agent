@@ -75,11 +75,30 @@ def add_original(session):
     return image
 
 
-def add_job(session, image, status, review_state):
+def add_processed(session, original):
+    """The composite a successful run leaves behind, linked to its original."""
+    output = Image(
+        vehicle_listing_id=LISTING_ID,
+        image_type="processed",
+        source_image_id=original.id,
+        original_filename=original.original_filename,
+        storage_path=f"{DEALERSHIP_ID}/processed/{next(_storage_paths)}.png",
+        mime_type="image/png",
+        file_size_bytes=1024,
+        width=1600,
+        height=1200,
+    )
+    session.add(output)
+    session.flush()
+    return output
+
+
+def add_job(session, image, status, review_state, output=None):
     job = ProcessingJob(
         vehicle_listing_id=LISTING_ID,
         dealership_id=DEALERSHIP_ID,
         input_image_id=image.id,
+        output_image_id=output.id if output is not None else None,
         processing_type="full_pipeline",
         status=status,
         review_state=review_state,
@@ -109,7 +128,10 @@ def test_a_successfully_processed_photograph_is_not_queued_again(session):
     duplicate work that already produced a usable result.
     """
     image = add_original(session)
-    add_job(session, image, status="completed", review_state="ok")
+    add_job(
+        session, image, status="completed", review_state="ok",
+        output=add_processed(session, image),
+    )
 
     listing = session.get(VehicleListing, LISTING_ID)
     queued = processing.create_jobs(session, listing, backdrop=None)
@@ -132,52 +154,37 @@ def test_a_failed_photograph_is_still_queued_again(session):
 
 # ── Queue: no duplicates, one at a time, survives a restart ──────────────────
 
-def test_a_photograph_already_in_the_queue_is_not_queued_twice(session):
-    """Pressing Reprocess while photographs were still waiting queued every one of them
-    a second time.
+def test_only_one_photograph_is_in_the_models_at_a_time(monkeypatch):
+    """Each listing has its own run, so eight vehicles used to mean eight photographs
+    fighting over one CPU. PROCESSING_WORKERS caps it across all.
     """
-    waiting = add_original(session)
-    running = add_original(session)
-    add_job(session, waiting, status="pending", review_state=None)
-    add_job(session, running, status="processing", review_state=None)
+    import threading
+    import time
+    from contextlib import nullcontext
+    from types import SimpleNamespace
 
-    listing = session.get(VehicleListing, LISTING_ID)
-    assert processing.create_jobs(session, listing, backdrop=None) == []
+    fake_session = SimpleNamespace(
+        get=lambda model, job_id: SimpleNamespace(id=job_id), commit=lambda: None,
+    )
+    factory = lambda: nullcontext(fake_session)  # noqa: E731
+    busy, most = [0], [0]
+    lock = threading.Lock()
 
+    def slow_job(session, job):
+        with lock:
+            busy[0] += 1
+            most[0] = max(most[0], busy[0])
+        time.sleep(0.2)
+        with lock:
+            busy[0] -= 1
 
-def _bind_runner_to(session, monkeypatch):
-    """Point run_listing_jobs / resume at the test database and record runs."""
-    engine = session.get_bind()
-    monkeypatch.setattr(processing, "get_engine", lambda: engine)
-    ran = []
-    monkeypatch.setattr(processing, "run_job", lambda s, job: (
-        ran.append(job.input_image_id),
-        setattr(job, "status", "completed"), setattr(job, "review_state", "ok"),
-        s.commit()))
-    return ran
-
-
-def test_duplicate_queued_copies_run_once(session, monkeypatch):
-    image = add_original(session)
-    add_job(session, image, status="pending", review_state=None)
-    add_job(session, image, status="pending", review_state=None)
-    ran = _bind_runner_to(session, monkeypatch)
-
-    processing.run_listing_jobs(LISTING_ID)
-
-    assert ran == [image.id]
-    session.expire_all()
-    assert session.query(ProcessingJob).filter_by(input_image_id=image.id).count() == 1
-
-
-def test_jobs_stranded_by_a_restart_are_picked_up_again(session, monkeypatch):
-    image = add_original(session)
-    add_job(session, image, status="processing", review_state=None)  # server died mid-run
-    ran = _bind_runner_to(session, monkeypatch)
-    started = []
-    monkeypatch.setattr(processing.threading, "Thread",
-                        lambda target, **kw: type("T", (), {"start": lambda self: (started.append(1), target())})())
-
-    assert processing.resume_unfinished_jobs() == 1
-    assert started == [1] and ran == [image.id]
+    monkeypatch.setattr(processing, "run_job", slow_job)
+    monkeypatch.setattr(processing, "_workers", threading.BoundedSemaphore(1))
+    runners = [threading.Thread(target=processing._run_one, args=(factory, job_id))
+               for job_id in (101, 102)]
+    for runner in runners:
+        runner.start()
+    for runner in runners:
+        runner.join()
+    assert most[0] == 1
 

@@ -9,8 +9,12 @@ export const WORKFLOW_STEPS: Step[] = [
 
 export type WorkflowStep = 'upload' | 'process' | 'review'
 
+export function addPhotographsHref(listingId: number): string {
+  return `/app/upload?listing=${listingId}`
+}
+
 export function stepHref(step: WorkflowStep, listingId: number | null): string | null {
-  if (step === 'upload') return '/app/upload'
+  if (step === 'upload') return listingId === null ? '/app/upload' : addPhotographsHref(listingId)
   if (listingId === null) return null
   return step === 'process'
     ? `/app/processing/${listingId}`

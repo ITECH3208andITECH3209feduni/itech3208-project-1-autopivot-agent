@@ -4,8 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import cv2
+import math
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+
+MAX_HEIGHT_RATIO = .35
+
+STAGE_HEIGHT_RATIO = .86 / 3.2
 
 
 BASE_FRAME = {
@@ -708,10 +714,134 @@ def place(cutout, box, size, *, surface_mask=None, scene_mask=None,
     raise ValueError("The vehicle cannot fit within the platform and scene masks")
 
 
-def fit(cutout, box, size):
-    """Backwards-compatible wrapper for earlier callers."""
-    result = place(cutout, box, size)
-    return result.vehicle, result.x, result.y, [(p.x, p.y) for p in result.contacts]
+def _silhouette_contacts(image):
+    """Find lower silhouette support points in the left/right wheel regions."""
+    rgba = np.asarray(image.convert('RGBA'))
+    mask = rgba[:, :, 3] >= 128
+    ys, xs = np.where(mask)
+    if xs.size == 0:
+        return []
+    left, right, top, bottom = int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
+    width, height = right-left+1, bottom-top+1
+    envelope = np.full(image.width, -1., dtype=float)
+    for x in range(left, right+1):
+        column = np.flatnonzero(mask[:, x])
+        if column.size:
+            envelope[x] = column[-1]
+    radius = max(1, round(width * .012))
+    smooth = np.array([np.median(envelope[max(left,x-radius):min(right+1,x+radius+1)])
+                       for x in range(left, right+1)])
+    found = []
+    for low, high in ((.05, .47), (.53, .95)):
+        lo, hi = left+int(width*low), min(right+1,left+int(width*high))
+        candidates = np.arange(lo, hi)
+        if not candidates.size:
+            continue
+        depths = smooth[candidates-left]
+        valid = depths >= top + height*.62
+        if not valid.any():
+            continue
+        candidates, depths = candidates[valid], depths[valid]
+        near = candidates[depths >= depths.max()-max(2,height*.025)]
+        scores = []
+        for x in near:
+            y = int(envelope[x])
+            patch = rgba[max(top,y-max(3,int(height*.045))):y+1, x, :3]
+            scores.append(float(patch.mean()) if patch.size else 255.)
+        best = near[np.asarray(scores) <= min(scores)+22]
+        x = int(best[len(best)//2])
+        y = int(envelope[x])
+        found.append((x, y))
+    if not found:
+        x = int(np.median(xs[ys >= bottom-1]))
+        found = [(x, int(envelope[x]))]
+    return found
+
+
+def _sheared(vehicle, slope, ref_x):
+    """The vehicle sheared vertically, y_out = y_in + slope * (x - ref_x)."""
+    ys, xs = np.nonzero(np.asarray(vehicle.getchannel('A')))
+    if not ys.size:
+        return vehicle
+    moved = ys + slope*(xs-ref_x)
+    above = max(0, math.ceil(-moved.min()))
+    below = max(0, math.ceil(moved.max()-(vehicle.height-1)))
+    if above or below:
+        canvas = Image.new('RGBA', (vehicle.width, vehicle.height+above+below), (0, 0, 0, 0))
+        canvas.paste(vehicle, (0, above))
+        vehicle = canvas
+    return vehicle.transform(
+        vehicle.size,
+        Image.Transform.AFFINE,
+        (1, 0, 0, -slope, 1, slope*ref_x),
+        resample=Image.Resampling.BICUBIC,
+    )
+
+
+def fit(cutout, box, size, scale=None):
+    """Uniformly scale and translate; all estimated tyre contacts fit on top."""
+    cw, ch = size
+    x1,y1,x2,y2 = box
+    cx,cy = (x1+x2)*cw/2, (y1+y2)*ch/2
+    rx,ry = (x2-x1)*cw/2, (y2-y1)*ch/2
+    alpha = np.asarray(cutout.getchannel('A')) >= 128
+    ys,xs = np.where(alpha)
+    if not xs.size:
+        raise ValueError('Cannot place an empty vehicle cutout')
+    visible_w,visible_h = xs.max()-xs.min()+1,ys.max()-ys.min()+1
+    if scale is None:
+        scale = 2*rx*STAGE_HEIGHT_RATIO/visible_h
+    scale = min(scale, ch*MAX_HEIGHT_RATIO/visible_h, 2*rx/visible_w)
+    goal = visible_h*scale
+    safe_rx,safe_ry = rx*.97,ry*.94
+    for _ in range(100):
+        vehicle = cutout.resize((max(1,round(cutout.width*scale)),max(1,round(cutout.height*scale))),Image.Resampling.LANCZOS)
+        pts = _silhouette_contacts(vehicle)
+        a = np.asarray(vehicle.getchannel('A')) >= 128
+        vy,vx = np.where(a)
+        x = round(cx-(int(vx.min())+int(vx.max()))/2)
+        if len(pts) >= 2 and abs(pts[-1][0]-pts[0][0]) > 20:
+            surface_y = []
+            for px, _ in pts:
+                dx = (x+px-cx)/safe_rx
+                if abs(dx) >= 1:
+                    surface_y = []
+                    break
+                surface_y.append(cy + safe_ry*np.sqrt(1-dx*dx))
+            if len(surface_y) == len(pts):
+                dx_pts = pts[-1][0]-pts[0][0]
+                slope = ((surface_y[-1]-surface_y[0]) - (pts[-1][1]-pts[0][1])) / dx_pts
+                if abs(slope) <= .20:
+                    ref_x = pts[0][0]
+                    straight_h = int(vy.max())-int(vy.min())+1
+                    vehicle = _sheared(vehicle, slope, ref_x)
+                    pts = _silhouette_contacts(vehicle)
+                    a = np.asarray(vehicle.getchannel('A')) >= 128
+                    vy,vx = np.where(a)
+                    x = round(cx-(int(vx.min())+int(vx.max()))/2)
+                    drawn_h = int(vy.max())-int(vy.min())+1
+                    if drawn_h-straight_h > 1 and drawn_h > goal+1:
+                        scale *= goal/drawn_h
+                        continue
+        lower,upper = -float('inf'),float('inf')
+        surface_offsets = []
+        for px,py in pts:
+            dx = (x+px-cx)/safe_rx
+            if abs(dx)>=1:
+                lower,upper=1,0
+                break
+            reach = safe_ry*np.sqrt(1-dx*dx)
+            lower=max(lower,cy-reach-py)
+            upper=min(upper,cy+reach-py)
+            surface_offsets.append(cy + safe_ry*np.sqrt(1-dx*dx) - py)
+        lower=max(lower,ch*.14-int(vy.min()))
+        if pts and lower+2 <= upper:
+            desired = min(surface_offsets) if surface_offsets else cy + ry*.88 - max(py for _,py in pts)
+            y = int(round(np.clip(desired,lower+1,upper-1)))
+            return vehicle,x,y,pts
+        scale*=.97
+        goal*=.97
+    raise ValueError('The cutout cannot be placed inside the display base')
 
 
 def _contact_details(vehicle, pts):

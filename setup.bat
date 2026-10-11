@@ -30,6 +30,20 @@ if errorlevel 1 (
 for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PYVER=%%v
 echo Python %PYVER% found.
 
+REM 3.10 or newer, checked before anything is installed: the code uses
+REM "str | None" annotations at run time, which an older Python accepts all
+REM the way through the install and then crashes on when the backend starts.
+python -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: AutoPivot needs Python 3.10 or newer, and this is Python %PYVER%.
+    echo.
+    echo Install Python 3.11 or 3.12 from https://www.python.org/downloads/
+    echo During installation, tick "Add python.exe to PATH".
+    echo.
+    pause
+    exit /b 1
+)
+
 REM --- Virtual environment --------------------------------------------------
 if exist ".venv\Scripts\python.exe" (
     echo Virtual environment already exists.
@@ -47,6 +61,17 @@ call .venv\Scripts\activate.bat
 echo Using:
 python -c "import sys; print('  ' + sys.executable)"
 
+REM A .venv left by an earlier run with an older Python would otherwise be
+REM reused as it is, and fail the same way.
+python -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: the existing .venv folder was made with a Python older than 3.10.
+    echo Delete the .venv folder and run setup.bat again.
+    echo.
+    pause
+    exit /b 1
+)
+
 echo.
 echo Updating pip ...
 python -m pip install --upgrade pip --quiet
@@ -60,8 +85,9 @@ if exist ".env" (
     copy /y ".env.example" ".env" >nul
     REM A real signing key, so logins survive a restart. Written straight into
     REM .env rather than printed, because nobody copies it across by hand.
-    python -c "import secrets, pathlib; p = pathlib.Path('.env'); t = p.read_text(encoding='utf-8'); p.write_text(t.replace('JWT_SECRET=', 'JWT_SECRET=' + secrets.token_urlsafe(48), 1), encoding='utf-8')"
-    echo   A signing key was generated and written to .env.
+    REM Python reports the outcome itself, so success is only claimed when the
+    REM key was really written.
+    python -c "import secrets, pathlib; p = pathlib.Path('.env'); t = p.read_text(encoding='utf-8'); found = 'JWT_SECRET=' in t; p.write_text(t.replace('JWT_SECRET=', 'JWT_SECRET=' + secrets.token_urlsafe(48), 1), encoding='utf-8'); print('  A signing key was generated and written to .env.' if found else '  WARNING: .env.example has no JWT_SECRET= line, so no signing key was written.')"
     echo.
     echo   NOTE: to use the best background-removal model, put a Hugging Face
     echo         token in .env as HF_TOKEN. Without one the fallback model is

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Protocol
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from api import storage
@@ -20,6 +20,8 @@ logger = logging.getLogger("autopivot.processing")
 
 PROCESSING_WORKERS = max(1, int(os.getenv("PROCESSING_WORKERS", "1")))
 _workers = threading.BoundedSemaphore(PROCESSING_WORKERS)
+
+EXTERIOR = "exterior"
 
 
 @dataclass
@@ -43,16 +45,48 @@ class ProcessOutcome:
     review_note: Optional[str] = None
 
 
+_INFERRED_HORIZON_METHODS = frozenset({"assumed", "floor_junction"})
+
+
 @dataclass(frozen=True)
 class BackdropPlacement:
-    """What was measured from a backdrop when the dealer uploaded it."""
+    """What is known about a backdrop's geometry, as its row records it."""
 
     horizon_y_ratio: Optional[float] = None
     floor_top_y_ratio: Optional[float] = None
+    horizon_method: Optional[str] = None
+    horizon_confidence: Optional[float] = None
+    floor_confidence: Optional[float] = None
+    geometry_overridden: bool = False
+
+    @property
+    def measured_horizon_y_ratio(self) -> Optional[float]:
+        """The scene's eye level, if it was measured or set by hand; else None."""
+        if self.horizon_y_ratio is None:
+            return None
+        if self.geometry_overridden:
+            return self.horizon_y_ratio
+        if self.horizon_method in _INFERRED_HORIZON_METHODS or self.horizon_confidence == 0:
+            return None
+        return self.horizon_y_ratio
+
+    @property
+    def measured_floor_top_y_ratio(self) -> Optional[float]:
+        """Where the floor begins, if the analyser found it or a dealer set it; else
+        None.
+        """
+        if self.floor_top_y_ratio is None:
+            return None
+        if self.geometry_overridden or self.floor_confidence != 0:
+            return self.floor_top_y_ratio
+        return None
 
     @property
     def measured(self) -> bool:
-        return self.horizon_y_ratio is not None or self.floor_top_y_ratio is not None
+        return (
+            self.measured_horizon_y_ratio is not None
+            or self.measured_floor_top_y_ratio is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -62,17 +96,6 @@ class BackdropChoice:
     backdrop_id: int
     image: bytes
     placement: BackdropPlacement
-
-
-def _placement_for(backdrop: Backdrop) -> BackdropPlacement:
-    return BackdropPlacement(
-        horizon_y_ratio=(
-            None if backdrop.horizon_y_ratio is None else float(backdrop.horizon_y_ratio)
-        ),
-        floor_top_y_ratio=(
-            None if backdrop.floor_top_y_ratio is None else float(backdrop.floor_top_y_ratio)
-        ),
-    )
 
 
 def _angle_backdrops(session: Session, chosen: Backdrop):
@@ -114,7 +137,12 @@ class VehicleProcessor(Protocol):
         image: bytes,
         background: Optional[bytes],
         placement: Optional[BackdropPlacement] = None,
-    ) -> ProcessOutcome: ...
+        backdrop_for_angle=None,
+        *,
+        stored_kind: Optional[str] = None,
+    ) -> ProcessOutcome:
+        """Process one photograph."""
+        ...
 
 
 _processor: Optional[VehicleProcessor] = None
@@ -128,6 +156,11 @@ def set_processor(processor: VehicleProcessor) -> None:
 
 def get_processor() -> Optional[VehicleProcessor]:
     return _processor
+
+
+_live = threading.Lock()
+_live_listings: set[int] = set()
+_live_jobs: set[int] = set()
 
 
 def create_jobs(
@@ -151,22 +184,25 @@ def create_jobs(
                 ProcessingJob.vehicle_listing_id == listing.id,
                 ProcessingJob.status == "completed",
                 ProcessingJob.review_state == "ok",
+                ProcessingJob.output_image_id.is_not(None),
             )
         ).all()
     }
-    already_done |= {
-        job.input_image_id
-        for job in session.scalars(
-            select(ProcessingJob).where(
-                ProcessingJob.vehicle_listing_id == listing.id,
-                ProcessingJob.status.in_(("pending", "processing")),
-            )
-        ).all()
-    }
+    in_flight: set[int] = set()
+    for job in session.scalars(
+        select(ProcessingJob).where(
+            ProcessingJob.vehicle_listing_id == listing.id,
+            ProcessingJob.status.in_(("pending", "processing")),
+            ProcessingJob.input_image_id.not_in(sorted(already_done)),
+        )
+    ).all():
+        if job.status == "processing" and _abandoned(session, job):
+            continue
+        in_flight.add(job.input_image_id)
 
     jobs: list[ProcessingJob] = []
     for image in originals:
-        if image.id in already_done:
+        if image.id in already_done or image.id in in_flight:
             continue
         job = ProcessingJob(
             vehicle_listing_id=listing.id,
@@ -183,6 +219,22 @@ def create_jobs(
         listing.processing_status = "processing"
     session.flush()
     return jobs
+
+
+def _abandoned(session: Session, job: ProcessingJob) -> bool:
+    """Close off a "processing" job no run here is working on. True if it was closed."""
+    with _live:
+        if job.id in _live_jobs:
+            return False
+    return session.execute(
+        update(ProcessingJob)
+        .where(ProcessingJob.id == job.id, ProcessingJob.status == "processing")
+        .values(
+            status="failed",
+            error_message="Interrupted — the server stopped before it finished.",
+        )
+        .execution_options(synchronize_session="fetch")
+    ).rowcount == 1
 
 
 def latest_jobs(session: Session, listing_id: int) -> list[ProcessingJob]:
@@ -226,9 +278,15 @@ def run_job(session: Session, job: ProcessingJob) -> None:
 
     job_id = job.id
     started = datetime.now(timezone.utc)
-    job.status = "processing"
-    job.started_at = started
+    claimed = session.execute(
+        update(ProcessingJob)
+        .where(ProcessingJob.id == job_id, ProcessingJob.status == "pending")
+        .values(status="processing", started_at=started)
+        .execution_options(synchronize_session="fetch")
+    ).rowcount == 1
     session.commit()
+    if not claimed:
+        return
 
     try:
         source = session.get(Image, job.input_image_id)
@@ -247,12 +305,14 @@ def run_job(session: Session, job: ProcessingJob) -> None:
                 placement = _placement_for(backdrop)
                 for_angle = _angle_backdrops(session, backdrop)
 
+        on_record = {} if source.image_kind is None else {"stored_kind": source.image_kind}
         if for_angle is not None:
             outcome = processor.process(
-                image_bytes, background_bytes, placement, backdrop_for_angle=for_angle
+                image_bytes, background_bytes, placement,
+                backdrop_for_angle=for_angle, **on_record,
             )
         else:
-            outcome = processor.process(image_bytes, background_bytes, placement)
+            outcome = processor.process(image_bytes, background_bytes, placement, **on_record)
 
         if outcome.backdrop_id_used is not None:
             job.backdrop_id = outcome.backdrop_id_used
@@ -267,8 +327,7 @@ def run_job(session: Session, job: ProcessingJob) -> None:
         job.elevation_method = outcome.elevation_method
 
         if outcome.image_kind is not None:
-            source.image_kind = outcome.image_kind
-            source.kind_confidence = outcome.kind_confidence
+            _record_kind(session, source.id, outcome)
 
         if not outcome.vehicle_detected or outcome.image_png is None:
             job.status = "completed"
@@ -296,100 +355,186 @@ def run_job(session: Session, job: ProcessingJob) -> None:
             job.review_state = "ok"
             job.error_message = outcome.review_note
 
+        job.completed_at = datetime.now(timezone.utc)
+        session.flush()
+
     except Exception as exc:
-        logger.exception("Job %s failed", job_id)
         session.rollback()
         reloaded = session.get(ProcessingJob, job_id)
-        if reloaded is not None:
-            reloaded.status = "failed"
-            reloaded.error_message = str(exc)[:1000]
-            reloaded.started_at = started
-            reloaded.completed_at = datetime.now(timezone.utc)
-            session.flush()
-        return
+        if reloaded is None:
+            logger.info("Job %s was deleted while it ran (%s)", job_id, exc)
+            return
+        logger.exception("Job %s failed", job_id)
+        reloaded.status = "failed"
+        reloaded.error_message = str(exc)[:1000]
+        reloaded.started_at = started
+        reloaded.completed_at = datetime.now(timezone.utc)
+        session.flush()
 
-    job.completed_at = datetime.now(timezone.utc)
-    session.flush()
+
+def _placement_for(backdrop: Backdrop) -> BackdropPlacement:
+    """A backdrop's geometry as measured at upload, and how far to trust it."""
+
+    def number(value) -> Optional[float]:
+        return None if value is None else float(value)
+
+    return BackdropPlacement(
+        horizon_y_ratio=number(backdrop.horizon_y_ratio),
+        floor_top_y_ratio=number(backdrop.floor_top_y_ratio),
+        horizon_method=backdrop.horizon_method,
+        horizon_confidence=number(backdrop.horizon_confidence),
+        floor_confidence=number(backdrop.floor_confidence),
+        geometry_overridden=bool(backdrop.geometry_overridden),
+    )
+
+
+def _record_kind(session: Session, image_id: int, outcome: ProcessOutcome) -> None:
+    """Write a run's verdict onto its photograph, but never over an exterior."""
+    statement = (
+        update(Image)
+        .where(Image.id == image_id)
+        .values(image_kind=outcome.image_kind, kind_confidence=outcome.kind_confidence)
+        .execution_options(synchronize_session="fetch")
+    )
+    if outcome.image_kind != EXTERIOR:
+        statement = statement.where(Image.image_kind.is_distinct_from(EXTERIOR))
+    session.execute(statement)
 
 
 def run_listing_jobs(listing_id: int) -> None:
-    """Process every outstanding job for a listing, in its own session."""
+    """Process every outstanding job for a listing, in sessions of its own."""
     factory = sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
+    skipped: set[int] = set()
+    processed = 0
+    while True:
+        with _live:
+            if listing_id in _live_listings:
+                return
+            _live_listings.add(listing_id)
+        try:
+            while (job_id := _next_pending(factory, listing_id, skipped)) is not None:
+                if _run_one(factory, job_id):
+                    processed += 1
+                else:
+                    skipped.add(job_id)
+                _roll_up(factory, listing_id)
+            _roll_up(factory, listing_id)
+        finally:
+            with _live:
+                _live_listings.discard(listing_id)
+        if _next_pending(factory, listing_id, skipped) is None:
+            break
+
+    logger.info("Listing %s — %d jobs processed", listing_id, processed)
+
+
+def _next_pending(
+    factory: sessionmaker, listing_id: int, skipped: set[int]
+) -> Optional[int]:
     with factory() as session:
-        jobs = session.scalars(
-            select(ProcessingJob)
+        return session.scalar(
+            select(ProcessingJob.id)
             .where(
                 ProcessingJob.vehicle_listing_id == listing_id,
                 ProcessingJob.status == "pending",
+                ProcessingJob.id.not_in(sorted(skipped)),
             )
             .order_by(ProcessingJob.id)
-        ).all()
+            .limit(1)
+        )
 
-        for job in jobs:
-            duplicate = session.scalar(
-                select(ProcessingJob.id).where(
-                    ProcessingJob.input_image_id == job.input_image_id,
-                    ProcessingJob.id != job.id,
-                    or_(
-                        and_(ProcessingJob.status == "completed",
-                             ProcessingJob.review_state == "ok"),
-                        ProcessingJob.status == "processing",
-                        and_(ProcessingJob.status == "pending", ProcessingJob.id < job.id),
-                    ),
-                ).limit(1)
-            )
-            if duplicate is not None:
-                session.delete(job)
-                session.commit()
-                continue
-            with _workers:
-                claimed = session.execute(
-                    update(ProcessingJob)
-                    .where(ProcessingJob.id == job.id, ProcessingJob.status == "pending")
-                    .values(status="processing")
-                ).rowcount
-                session.commit()
-                if claimed != 1:
-                    continue
+
+def _run_one(factory: sessionmaker, job_id: int) -> bool:
+    """Run one job in a session of its own. False if it broke outside run_job."""
+    with _live:
+        _live_jobs.add(job_id)
+    try:
+        with _workers, factory() as session:
+            job = session.get(ProcessingJob, job_id)
+            if job is not None:
                 run_job(session, job)
-            _refresh_listing_status(session, listing_id)
-            session.commit()
+                session.commit()
+        return True
+    except Exception:
+        logger.exception("Job %s could not be run", job_id)
+        return False
+    finally:
+        with _live:
+            _live_jobs.discard(job_id)
 
-        logger.info("Listing %s — %d jobs processed", listing_id, len(jobs))
+
+def recover_interrupted_jobs() -> Optional[threading.Thread]:
+    """Settle what a stopped server left unfinished, and resume its queue."""
+    if get_processor() is None:
+        return None
+    try:
+        queued = _settle_interrupted()
+        if not queued:
+            return None
+        runner = threading.Thread(
+            target=_resume, args=(queued,), name="autopivot-recovery", daemon=True
+        )
+        runner.start()
+        return runner
+    except Exception:
+        logger.exception("Work left unfinished by the last server could not be recovered")
+        return None
 
 
-def resume_unfinished_jobs() -> int:
-    """Pick the queue back up after a restart."""
+def _settle_interrupted() -> list[int]:
+    """Close interrupted jobs and refresh the listings concerned, in one transaction.
+    Returns the listings with jobs still queued, oldest queue first.
+    """
     factory = sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
     with factory() as session:
-        reset = session.execute(
-            update(ProcessingJob)
-            .where(ProcessingJob.status == "processing")
-            .values(status="pending", started_at=None)
-        ).rowcount
-        session.commit()
-        listing_ids = sorted({
-            job.vehicle_listing_id
+        interrupted = [
+            job
             for job in session.scalars(
-                select(ProcessingJob).where(ProcessingJob.status == "pending")
+                select(ProcessingJob).where(ProcessingJob.status == "processing")
             ).all()
-        }, reverse=True)
-        queued = session.scalar(
-            select(func.count()).select_from(ProcessingJob)
-            .where(ProcessingJob.status == "pending")
-        ) or 0
-    if not listing_ids:
-        return 0
+            if _abandoned(session, job)
+        ]
+        queued = list(
+            session.scalars(
+                select(ProcessingJob.vehicle_listing_id)
+                .where(ProcessingJob.status == "pending")
+                .group_by(ProcessingJob.vehicle_listing_id)
+                .order_by(func.min(ProcessingJob.id))
+            ).all()
+        )
+        unsettled = session.scalars(
+            select(VehicleListing.id).where(VehicleListing.processing_status == "processing")
+        ).all()
+        for listing_id in sorted(
+            {*queued, *unsettled, *(job.vehicle_listing_id for job in interrupted)}
+        ):
+            _refresh_listing_status(session, listing_id)
+        session.commit()
 
-    def _run_all() -> None:
-        for listing_id in listing_ids:
-            try:
-                run_listing_jobs(listing_id)
-            except Exception:  # one bad listing must not stop the rest
-                logger.exception("Resuming listing %s failed", listing_id)
+    if interrupted or queued:
+        logger.info(
+            "Recovering from the last shutdown — %d interrupted job(s) closed, "
+            "%d listing(s) with queued jobs resumed",
+            len(interrupted), len(queued),
+        )
+    return queued
 
-    threading.Thread(target=_run_all, name="resume-queue", daemon=True).start()
-    logger.info("Resuming %d queued photographs across %d listings (%d were mid-run)",
-                queued, len(listing_ids), reset)
-    return int(queued)
+
+def _resume(listing_ids: list[int]) -> None:
+    """Run each listing's queue in turn, passing over one that cannot be run."""
+    for listing_id in listing_ids:
+        try:
+            run_listing_jobs(listing_id)
+        except Exception:
+            logger.exception("Listing %s — its queued jobs could not be resumed", listing_id)
+
+
+def _roll_up(factory: sessionmaker, listing_id: int) -> None:
+    """_refresh_listing_status in a session of its own."""
+    try:
+        with factory() as session:
+            _refresh_listing_status(session, listing_id)
+            session.commit()
+    except Exception:
+        logger.exception("Listing %s — status could not be refreshed", listing_id)
 

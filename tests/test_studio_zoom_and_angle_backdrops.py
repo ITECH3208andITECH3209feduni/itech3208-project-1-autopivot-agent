@@ -46,7 +46,8 @@ class _Session:
 def _backdrop(id, angles):
     return SimpleNamespace(
         id=id, dealership_id=1, suits_angles=angles, storage_path=f"b{id}.png",
-        horizon_y_ratio=None, floor_top_y_ratio=None,
+        horizon_y_ratio=None, floor_top_y_ratio=None, horizon_method=None,
+        horizon_confidence=None, floor_confidence=None, geometry_overridden=False,
     )
 
 

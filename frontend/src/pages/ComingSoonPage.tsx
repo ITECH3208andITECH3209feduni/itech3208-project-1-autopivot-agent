@@ -2,12 +2,14 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { useSignInRedirect } from '../auth/AuthContext'
 import LoginModal from '../components/LoginModal'
 import PreviewToggle from '../components/PreviewToggle'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 
 export default function ComingSoonPage() {
-  const [showLogin, setShowLogin] = useState(false)
+  const { destination, notice } = useSignInRedirect()
+  const [showLogin, setShowLogin] = useState(notice !== null)
   const navigate = useNavigate()
 
   return (
@@ -17,8 +19,9 @@ export default function ComingSoonPage() {
     }}>
       {showLogin && (
         <LoginModal
+          notice={notice}
           onClose={() => setShowLogin(false)}
-          onSuccess={() => { setShowLogin(false); navigate('/app') }}
+          onSuccess={() => { setShowLogin(false); navigate(destination, { replace: true }) }}
           onSwitchToDemo={() => setShowLogin(false)}
         />
       )}

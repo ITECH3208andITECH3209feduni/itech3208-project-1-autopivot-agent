@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import { C, CARD_SHADOW, MONO, RADIUS_CARD, RADIUS_CONTROL, SANS, serif } from '../design'
+import { lockPageScroll } from './pageScrollLock'
 
 export function SolidBtn({
   children, onClick, type = 'button', full = false, disabled = false,
@@ -135,15 +136,14 @@ export function Modal({
     }
 
     document.addEventListener('keydown', onKeyDown, true)
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
 
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
-      document.body.style.overflow = previousOverflow
       opener?.focus?.()
     }
   }, [onClose])
+
+  useEffect(() => lockPageScroll(), [])
 
   return (
     <div

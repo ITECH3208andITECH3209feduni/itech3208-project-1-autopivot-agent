@@ -9,9 +9,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
 import '../../routes.dart';
+import '../../settings/app_lock.dart';
 import '../../settings/app_preferences.dart';
 import '../../settings/biometric_auth.dart';
 import '../../widgets/primitives.dart';
@@ -65,6 +67,10 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
       );
       return;
     }
+    // The check just passed is this session's unlock. Without it, a session
+    // that had never needed unlocking (the lock was off) locked the moment
+    // the lock turned on, and asked all over again.
+    ref.read(appLockProvider.notifier).unlock();
     await ref
         .read(appPreferencesProvider.notifier)
         .setBiometricLockEnabled(true);
@@ -73,6 +79,10 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final prefs = ref.watch(appPreferencesProvider);
+    // A platform administrator belongs to no dealership, and the sample car
+    // is a listing on one: every request it makes is refused them (403).
+    final hasDealership =
+        ref.watch(currentUserProvider)?.role != 'platform_admin';
 
     return Scaffold(
       body: SafeArea(
@@ -158,16 +168,18 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: Space.sm),
-                          _SettingsActionRow(
-                            icon: Icons.auto_awesome_outlined,
-                            title: 'Sample car',
-                            subtitle:
-                                'Run a sample photograph through the real '
-                                'pipeline — handy for showing someone what '
-                                'it does.',
-                            onTap: () => context.push(AppRoutes.demo),
-                          ),
+                          if (hasDealership) ...[
+                            const SizedBox(height: Space.sm),
+                            _SettingsActionRow(
+                              icon: Icons.auto_awesome_outlined,
+                              title: 'Sample car',
+                              subtitle:
+                                  'Run a sample photograph through the real '
+                                  'pipeline — handy for showing someone what '
+                                  'it does.',
+                              onTap: () => context.push(AppRoutes.demo),
+                            ),
+                          ],
                           const SizedBox(height: Space.sm),
                           _SettingsActionRow(
                             icon: Icons.info_outline,

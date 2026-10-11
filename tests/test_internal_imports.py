@@ -6,7 +6,24 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 SEARCH_DIRS = ["api", "database", "scripts", "migrations"]
-SEARCH_FILES = ["autopivot_backend.py", "compositing.py", "device_utils.py"]
+
+PURE_MODULES = [
+    "compositing.py",
+    "metrics.py",
+    "elevation.py",
+    "backdrop_analysis.py",
+    "platform_placement.py",
+]
+
+SEARCH_FILES = ["autopivot_backend.py", "device_utils.py", *PURE_MODULES]
+
+FORBIDDEN_IN_PURE_MODULES = (
+    "torch",
+    "transformers",
+    "ultralytics",
+    "sqlalchemy",
+    "fastapi",
+)
 
 SKIP_DIRS = {"__pycache__", "node_modules", "dist", ".git", "frontend"}
 

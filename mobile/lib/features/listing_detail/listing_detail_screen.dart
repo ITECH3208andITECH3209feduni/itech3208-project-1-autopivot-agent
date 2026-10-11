@@ -29,7 +29,9 @@
 /// `inputImageId`. Without that correlation this screen cannot tell "still
 /// queued" apart from "ran and gave up", and both used to sit in the same
 /// unexplained "awaiting processing" bucket — see `_loadedBody`'s
-/// `needsReviewOriginals` split and [_NeedsReviewTile].
+/// `needsReviewOriginals` split and [_NeedsReviewTile]. A job that failed
+/// outright belongs in that same bucket: its `reviewState` stays null, and
+/// only its `status` says it is finished.
 library;
 
 import 'dart:async';
@@ -215,9 +217,13 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   /// polling forever in the background.
   void _pollWhileProcessing(String processingStatus) {
     _pollTimer?.cancel();
-    if (processingStatus != 'pending' && processingStatus != 'processing') {
-      return;
-    }
+    // Only real work in hand is worth watching for. A 'pending' listing has
+    // had nothing queued at all, and polling one — as this used to — waited
+    // on a pipeline that had not been asked for anything, for as long as the
+    // screen stayed open.
+    final inProgress =
+        processingStatus == 'processing' || (_progress?.isInProgress ?? false);
+    if (!inProgress) return;
 
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
       final api = ref.read(apiClientProvider);
@@ -349,12 +355,13 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
     }
   }
 
-  /// The backdrop a needs_review photograph last ran with, if any — reused
-  /// so pressing Retry does not silently fall back to a transparent
+  /// The backdrop a failed or needs_review photograph last ran with, if any
+  /// — reused so pressing Retry does not silently fall back to a transparent
   /// background just because this screen was not the one that originally
   /// chose one. Every flagged photograph on one listing was queued together
   /// from the same review-screen choice, so the first one found is as good
-  /// as any.
+  /// as any. A listing nothing was ever queued for has no such choice to
+  /// reuse, and goes on a transparent background, as the sample car does.
   int? _retryBackdropId() {
     for (final job in _progress?.jobs ?? const <ProcessingJobSummary>[]) {
       if (job.backdropId != null) return job.backdropId;
@@ -362,11 +369,13 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
     return null;
   }
 
-  /// Queues every outstanding photograph again — including one flagged
-  /// needs_review, now that `create_jobs` on the server treats that as
-  /// unfinished rather than done. Listing-wide because there is no
-  /// per-photograph retry endpoint: `POST /process` is what Reprocess has
-  /// always meant here, for the set the review screen originally submitted.
+  /// Queues every outstanding photograph — one never queued, one that
+  /// failed, and one flagged needs_review, now that `create_jobs` on the
+  /// server treats that as unfinished rather than done. Listing-wide because
+  /// there is no per-photograph retry endpoint: `POST /process` is what
+  /// Reprocess has always meant here, for the set the review screen
+  /// originally submitted. Offered as Process or as Retry, depending on
+  /// which of those is waiting (see `_loadedBody`); it is the same call.
   Future<void> _handleRetry() async {
     if (_retrying) return;
     setState(() {
@@ -517,15 +526,26 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
         job.inputImageId: job,
     };
 
+    // A job that failed belongs with the needs_review ones, not under
+    // "awaiting": its reviewState stays null, which is how a failed
+    // photograph used to sit there with no error and no way to retry it.
     final originals = listing.originals;
     final awaitingOriginals = <ListingImage>[];
     final needsReviewOriginals = <ListingImage>[];
+    // Whether any photograph awaiting processing has never been queued at
+    // all — processing never started (a server without the vision stack
+    // refuses it), or it was added afterwards. Nothing happens to one of
+    // those until someone presses Process, which is offered for exactly
+    // that; one already queued is on its way.
+    var neverQueued = false;
     for (final image in originals) {
       if (image.isExcluded || pairedOriginalIds.contains(image.id)) continue;
-      if (jobsByInputImageId[image.id]?.reviewState == 'needs_review') {
+      final job = jobsByInputImageId[image.id];
+      if (job != null && job.needsAttention) {
         needsReviewOriginals.add(image);
       } else {
         awaitingOriginals.add(image);
+        if (job == null) neverQueued = true;
       }
     }
     final excludedOriginals = originals.where((i) => i.isExcluded).toList();
@@ -572,8 +592,15 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                   ),
                 if (awaitingOriginals.isNotEmpty) ...[
                   const SizedBox(height: Space.xl),
-                  _sectionHeading(
-                    'AWAITING PROCESSING (${awaitingOriginals.length})',
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _sectionHeading(
+                        'AWAITING PROCESSING (${awaitingOriginals.length})',
+                      ),
+                      if (neverQueued)
+                        _processButton(_retrying ? 'Starting…' : 'Process'),
+                    ],
                   ),
                   const SizedBox(height: Space.sm),
                   _plainGrid(
@@ -589,18 +616,7 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                       _sectionHeading(
                         'NEEDS REVIEW (${needsReviewOriginals.length})',
                       ),
-                      TextButton(
-                        onPressed: _retrying ? null : _handleRetry,
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: Text(
-                          _retrying ? 'Retrying…' : 'Retry',
-                          style: T.caption.copyWith(color: C.forest),
-                        ),
-                      ),
+                      _processButton(_retrying ? 'Retrying…' : 'Retry'),
                     ],
                   ),
                   const SizedBox(height: Space.sm),
@@ -697,6 +713,17 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
 
   Widget _sectionHeading(String label) => Text(label, style: T.caption);
 
+  /// [_handleRetry], beside the section heading it is offered for.
+  Widget _processButton(String label) => TextButton(
+    onPressed: _retrying ? null : _handleRetry,
+    style: TextButton.styleFrom(
+      padding: EdgeInsets.zero,
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+    child: Text(label, style: T.caption.copyWith(color: C.forest)),
+  );
+
   /// A responsive grid of plain (non-excluded) photographs — processed
   /// results or usable originals. Square tiles at a target width, rather than
   /// a fixed column count, so the same section reads sensibly on a phone in
@@ -739,9 +766,12 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       spacing: Space.sm,
       runSpacing: Space.md,
       children: images.map((image) {
+        final job = jobsByInputImageId[image.id];
         final reason =
-            jobsByInputImageId[image.id]?.errorMessage ??
-            'No vehicle was found in this photograph.';
+            job?.errorMessage ??
+            (job?.status == 'failed'
+                ? 'Processing this photograph failed.'
+                : 'No vehicle was found in this photograph.');
         return SizedBox(
           width: 148,
           child: _NeedsReviewTile(
@@ -1249,11 +1279,12 @@ class _ExcludedTile extends StatelessWidget {
   }
 }
 
-/// One photograph the pipeline ran but found no vehicle to cut out —
-/// [reason] is the job's own [ProcessingJobSummary.errorMessage], not a
-/// guess made on this screen. Deleting it is the one per-photograph action;
-/// see [ListingDetailScreen]'s `_needsReviewWrap` for why there is no
-/// per-tile "include anyway" here the way [_ExcludedTile] has.
+/// One photograph the pipeline ran but found no vehicle to cut out, or
+/// failed on outright — [reason] is the job's own
+/// [ProcessingJobSummary.errorMessage], not a guess made on this screen.
+/// Deleting it is the one per-photograph action; see [ListingDetailScreen]'s
+/// `_needsReviewWrap` for why there is no per-tile "include anyway" here the
+/// way [_ExcludedTile] has.
 class _NeedsReviewTile extends StatelessWidget {
   const _NeedsReviewTile({
     required this.image,

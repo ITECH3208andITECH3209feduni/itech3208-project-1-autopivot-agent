@@ -44,21 +44,21 @@ enum CaptureAngle {
     label: 'Front-right corner',
     pipelineAngle: 'front_quarter',
     shape: VehicleGuideShape.frontQuarter,
-    mirrored: true,
+    mirrored: false,
     targetElevationDeg: 4.61,
   ),
   rightSide(
     label: 'Right side',
     pipelineAngle: 'side',
     shape: VehicleGuideShape.side,
-    mirrored: true,
+    mirrored: false,
     targetElevationDeg: 11.16,
   ),
   rearRightCorner(
     label: 'Rear-right corner',
     pipelineAngle: 'rear_quarter',
     shape: VehicleGuideShape.rearQuarter,
-    mirrored: true,
+    mirrored: false,
     targetElevationDeg: 14.30,
   ),
   rear(
@@ -72,21 +72,21 @@ enum CaptureAngle {
     label: 'Rear-left corner',
     pipelineAngle: 'rear_quarter',
     shape: VehicleGuideShape.rearQuarter,
-    mirrored: false,
+    mirrored: true,
     targetElevationDeg: 14.30,
   ),
   leftSide(
     label: 'Left side',
     pipelineAngle: 'side',
     shape: VehicleGuideShape.side,
-    mirrored: false,
+    mirrored: true,
     targetElevationDeg: 11.16,
   ),
   frontLeftCorner(
     label: 'Front-left corner',
     pipelineAngle: 'front_quarter',
     shape: VehicleGuideShape.frontQuarter,
-    mirrored: false,
+    mirrored: true,
     targetElevationDeg: 4.61,
   );
 
@@ -111,6 +111,18 @@ enum CaptureAngle {
   /// Whether that base silhouette should be flipped horizontally for this
   /// slot — every shape has one canonical (unmirrored) side and one
   /// mirrored side, so only 5 shapes need drawing for all 8 slots.
+  ///
+  /// The canonical side is the car's right. The traced side and quarter
+  /// outlines (see vehicle_silhouette_painter.dart) are all views of the
+  /// scan's right-hand side, front to the photographer's right, the way it
+  /// points from anywhere along a car's right: the side profile has its
+  /// bonnet on the right, the front quarter its front end near and on the
+  /// right, the rear quarter its rear end near and on the left. So the
+  /// right-hand slots show them as traced and the left-hand ones flip them.
+  /// These flags used to be the other way round, carried over unchanged from
+  /// the hand-drawn outlines the tracings replaced, which put every left and
+  /// right slot's guide the wrong way round against the car it was meant to
+  /// be lined up with.
   final bool mirrored;
 
   /// Degrees below horizontal the camera is expected to be tilted for this

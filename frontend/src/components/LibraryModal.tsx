@@ -1,6 +1,7 @@
 
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 
+import { lockPageScroll } from './pageScrollLock'
 import { Modal } from './primitives'
 
 const FOCUSABLE = [
@@ -13,23 +14,6 @@ const FOCUSABLE = [
 ].join(',')
 
 const openDialogs: symbol[] = []
-
-let savedOverflow = ''
-let savedPaddingRight = ''
-
-function lockPageScroll() {
-  const { body } = document
-  savedOverflow = body.style.overflow
-  savedPaddingRight = body.style.paddingRight
-  const gap = window.innerWidth - document.documentElement.clientWidth
-  body.style.overflow = 'hidden'
-  if (gap > 0) body.style.paddingRight = `${gap}px`
-}
-
-function unlockPageScroll() {
-  document.body.style.overflow = savedOverflow
-  document.body.style.paddingRight = savedPaddingRight
-}
 
 export function useDialogKeys({
   active,
@@ -48,12 +32,14 @@ export function useDialogKeys({
 
     const token = Symbol('dialog')
     openDialogs.push(token)
-    if (openDialogs.length === 1) lockPageScroll()
+    const releaseScroll = lockPageScroll()
 
     const opener = document.activeElement as HTMLElement | null
 
     function focusableItems(container: HTMLElement): HTMLElement[] {
       return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE))
+        // offsetParent is null for anything display:none, which would otherwise
+        // become a stop on the tab ring that focuses nothing.
         .filter(element => element.offsetParent !== null)
     }
 
@@ -105,7 +91,7 @@ export function useDialogKeys({
       document.removeEventListener('keydown', onKeyDown, true)
       const index = openDialogs.indexOf(token)
       if (index >= 0) openDialogs.splice(index, 1)
-      if (openDialogs.length === 0) unlockPageScroll()
+      releaseScroll()
       if (opener && document.contains(opener)) opener.focus()
     }
   }, [active, containerRef])

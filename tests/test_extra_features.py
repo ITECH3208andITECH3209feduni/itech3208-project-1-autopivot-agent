@@ -58,7 +58,7 @@ def test_plate_search_merges_the_enlarged_pass(monkeypatch):
     backend = pytest.importorskip("autopivot_backend")
     calls = []
 
-    def fake_detector(image):
+    def fake_detector(image, threshold=None):
         calls.append(image.size)
         if len(calls) == 1:  # 1x: the plate is just under the threshold
             return [_box(100, 200, 160, 220, backend.PLATE_CONFIDENCE - 0.05)]
@@ -76,15 +76,21 @@ def test_plate_search_merges_the_enlarged_pass(monkeypatch):
     assert found[0]["box"] == {"xmin": 100, "ymin": 200, "xmax": 160, "ymax": 220}
 
 
-def test_plate_search_does_not_double_count_one_plate(monkeypatch):
+def test_plate_search_skips_the_enlarged_pass_when_the_first_finds_the_plate(monkeypatch):
     backend = pytest.importorskip("autopivot_backend")
-    answers = iter([[_box(100, 200, 160, 220, 0.9)], [_box(202, 398, 322, 442, 0.7)]])
+    calls = []
+
+    def fake_detector(image, threshold=None):
+        calls.append(image.size)
+        return [_box(100, 200, 160, 220, 0.9)]
+
     class FakeRegistry:
-        plate_detector = staticmethod(lambda image: next(answers))
+        plate_detector = staticmethod(fake_detector)
 
     monkeypatch.setattr(backend, "registry", FakeRegistry())
     monkeypatch.setattr(backend, "PLATE_UPSCALE", 2.0)
     found = backend._detect_plates(Image.new("RGBA", (400, 300)))
+    assert calls == [(400, 300)]
     assert len(found) == 1 and found[0]["score"] == 0.9
 
 
@@ -231,7 +237,8 @@ def test_relight_keeps_the_paint_colour_and_the_silhouette():
 
 
 def test_relight_keeps_the_original_brightness():
-    """The studio look may lift the car slightly but must not wash it out or darken it."""
+    """The studio look may lift the car slightly but must not wash it out or darken it.
+    """
     for colour in ((150, 152, 155), (40, 42, 46), (190, 30, 35)):  # silver, dark, red
         car = _painted_car(colour)
         lit = np.array(compositing.studio_relight(car).convert("L"), dtype=float)

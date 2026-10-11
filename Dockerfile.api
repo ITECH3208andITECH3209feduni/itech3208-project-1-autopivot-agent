@@ -29,6 +29,8 @@ COPY database ./database
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY alembic.ini .
+# api/routes_backdrops.py imports this top-level module; it needs no ML stack.
+COPY backdrop_analysis.py .
 
 ENV HOST=0.0.0.0
 ENV PORT=8000

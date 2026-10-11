@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from sqlalchemy import inspect
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database.base import Base
-from database.connection import get_database_url, get_engine
+from sqlalchemy import inspect  # noqa: E402
+
+from api.env import load_environment  # noqa: E402
+
+load_environment()
+
+from database.base import Base  # noqa: E402
+from database.connection import get_database_url, get_engine  # noqa: E402
 
 
 def main() -> int:

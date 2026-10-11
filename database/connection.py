@@ -23,10 +23,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_SQLITE_PATH = BASE_DIR / "autopivot.db"
 
 
+_DRIVERLESS_POSTGRES_SCHEMES = ("postgres", "postgresql")
+
+
 def get_database_url() -> str:
     """The configured database URL, defaulting to a local SQLite file."""
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
+        scheme, separator, rest = database_url.partition("://")
+        if separator and scheme.lower() in _DRIVERLESS_POSTGRES_SCHEMES:
+            return f"postgresql+psycopg://{rest}"
         return database_url
     return f"sqlite+pysqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
 
