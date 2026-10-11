@@ -1,35 +1,10 @@
-"""add stock number, processing status and pipeline results
-
-Three changes:
-
-1. vehicle_listings gains stock_number ("STOCK #4471") and processing_status.
-   processing_status is a separate axis to status: status is where the vehicle
-   is in the sales cycle, processing_status is where its photographs are in the
-   pipeline. A listing can be sold with images still awaiting review.
-
-2. processing_jobs drops background_image_id and gains backdrop_id. The old
-   composite key forced the background to be an image of the same listing,
-   which made a reusable backdrop library impossible to express. Isolation is
-   preserved by a denormalised dealership_id tied to both the listing and the
-   backdrop, so a job can never reference another dealership's backdrop.
-
-3. processing_jobs gains the per-image pipeline results the Results screen
-   shows: detected angle and confidence, plate count and treatment, and a
-   review state distinct from status, since a job can succeed and still need a
-   human to look at it.
-
-Revision ID: a92e0e36bda3
-Revises: b3c7d1a95e42
-Create Date: 2026-08-09 19:24:58.515955
-
-"""
+"""add stock number, processing status and pipeline results"""
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
 revision: str = 'a92e0e36bda3'
 down_revision: Union[str, Sequence[str], None] = 'b3c7d1a95e42'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -38,25 +13,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Reordered from autogenerate output, which grouped operations by table and
-    # so created the foreign key onto vehicle_listings (id, dealership_id)
-    # before the unique constraint that key requires. vehicle_listings is set up
-    # first here for that reason.
 
-    # ── vehicle_listings ──
     op.add_column('vehicle_listings', sa.Column('stock_number', sa.String(length=50), nullable=True))
     op.add_column('vehicle_listings', sa.Column('processing_status', sa.String(length=20), server_default='pending', nullable=False))
-    # Must precede job_listing_same_dealership below.
     op.create_unique_constraint('listing_dealership_pair', 'vehicle_listings', ['id', 'dealership_id'])
-    # NULL stock numbers stay unconstrained: PostgreSQL treats NULLs as distinct
-    # in a unique index, so any number of listings may have none.
     op.create_unique_constraint('stock_number_per_dealership', 'vehicle_listings', ['dealership_id', 'stock_number'])
     op.create_check_constraint(op.f('ck_vehicle_listings_processing_status_allowed'), 'vehicle_listings', "processing_status IN ('pending', 'processing', 'complete', 'needs_review')")
 
-    # ── processing_jobs ──
-    # dealership_id is added nullable, backfilled from the owning listing, then
-    # tightened. Adding it NOT NULL in one step — as autogenerate proposed —
-    # would fail on any database that already has jobs in it.
     op.add_column('processing_jobs', sa.Column('dealership_id', sa.BigInteger(), nullable=True))
     op.execute(
         """
@@ -87,8 +50,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Mirror image of upgrade(): processing_jobs is dismantled first, so the
-    # unique constraint its foreign key depends on is still present.
     op.add_column('processing_jobs', sa.Column('background_image_id', sa.BIGINT(), autoincrement=False, nullable=True))
     op.drop_constraint(op.f('ck_processing_jobs_review_state_allowed'), 'processing_jobs', type_='check')
     op.drop_constraint(op.f('ck_processing_jobs_plates_detected_non_negative'), 'processing_jobs', type_='check')
@@ -111,3 +72,4 @@ def downgrade() -> None:
     op.drop_constraint('listing_dealership_pair', 'vehicle_listings', type_='unique')
     op.drop_column('vehicle_listings', 'processing_status')
     op.drop_column('vehicle_listings', 'stock_number')
+

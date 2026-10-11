@@ -1,18 +1,3 @@
-// One photograph on its way through the pipeline.
-//
-// Processing used to draw a job as a row that said "Complete" and nothing
-// else, which told a dealer neither which photograph it was about nor what
-// came out of it. A card carries the thumbnail — the only thing that actually
-// identifies a photograph to the person who took it — next to the outcome.
-//
-// The five states here are deliberately not the four the shared StatusPill
-// knows. A job can fail, which a listing's processing_status never does; and a
-// job can come back `completed` with review_state 'needs_review', meaning the
-// pipeline ran perfectly and decided a person should look — no vehicle was
-// found, or the photograph turned out to be an advertisement banner rather
-// than a car. Calling that a failure would send a dealer hunting for a bug
-// that is not there, so it gets its own words, its own icon and its own weight
-// of colour.
 
 import type { CSSProperties } from 'react'
 
@@ -23,7 +8,6 @@ import { Card } from './primitives'
 
 export type WorkflowJobState = 'queued' | 'working' | 'ready' | 'needs_person' | 'failed'
 
-/** The job's own fields, read the way a dealer would read them. */
 export function workflowJobState(job: ProcessingJob): WorkflowJobState {
   if (job.status === 'failed') return 'failed'
   if (job.status === 'completed') {
@@ -43,19 +27,12 @@ export const WORKFLOW_STATE_LABEL: Record<WorkflowJobState, string> = {
 
 const BADGE_STYLE: Record<WorkflowJobState, CSSProperties> = {
   queued: { color: C.inkSoft, background: C.bone },
-  // The same amber pairing the StatusPill uses for "Processing": amberText
-  // rather than amber, because this is body-sized text on a tint.
   working: { color: C.amberText, background: C.amberTint },
   ready: { color: C.forest, background: C.forestTint },
   needs_person: { color: C.rust, background: C.rustTint },
-  // Solid, not tinted. Guidelines §2 give rust to errors and to the
-  // needs-review pill alike, so hue alone cannot separate a photograph the
-  // pipeline set aside from one that broke. Weight does — and the label and
-  // icon say it outright for anyone who cannot see either.
   failed: { color: C.white, background: C.rust },
 }
 
-/** The colour a card's own border takes, so a failure is findable in a grid. */
 export function workflowJobAccent(state: WorkflowJobState): string {
   if (state === 'failed') return C.rust
   if (state === 'needs_person') return C.lineStrong
@@ -83,7 +60,6 @@ function StateIcon({ state }: { state: WorkflowJobState }) {
     )
   }
   if (state === 'needs_person') {
-    // An eye: this photograph is waiting to be looked at, not repaired.
     return (
       <svg {...shared}>
         <path d="M1 6s1.9-3.1 5-3.1S11 6 11 6s-1.9 3.1-5 3.1S1 6 1 6z" stroke="currentColor" strokeWidth="1.2" />
@@ -106,7 +82,6 @@ function StateIcon({ state }: { state: WorkflowJobState }) {
   )
 }
 
-/** The pill shape of the design system, carrying a job's vocabulary. */
 export function WorkflowStateBadge({ state }: { state: WorkflowJobState }) {
   return (
     <span style={{
@@ -120,16 +95,6 @@ export function WorkflowStateBadge({ state }: { state: WorkflowJobState }) {
   )
 }
 
-/**
- * The one animation this workflow uses, and the escape hatch for it.
- *
- * Inline style objects cannot express @keyframes, so the rule lives here and
- * the view renders it once rather than adding a stylesheet the rest of the app
- * does not have. Under prefers-reduced-motion the sweep becomes a static bar:
- * a dozen stripes sliding at once is precisely the repetitive motion that
- * provokes vestibular symptoms, and `!important` is what lets a stylesheet
- * override the inline width and transform.
- */
 export const WORKFLOW_MOTION_CSS = `
 @keyframes autopivot-sweep {
   from { transform: translateX(-110%); }
@@ -146,8 +111,6 @@ export const WORKFLOW_MOTION_CSS = `
 }
 `
 
-/** An indeterminate stripe. The API reports no percentage inside a job, and
- *  inventing one would be a lie told at 2-second intervals. */
 function WorkingBar() {
   return (
     <div aria-hidden style={{
@@ -178,7 +141,6 @@ function durationSentence(job: ProcessingJob): string | null {
   return ms < 1000 ? 'under a second' : `${(ms / 1000).toFixed(1)}s`
 }
 
-/** What the job produced, in the order a dealer cares about it. */
 function producedFacts(job: ProcessingJob): string[] {
   const facts: string[] = []
 
@@ -199,7 +161,6 @@ function producedFacts(job: ProcessingJob): string[] {
   return facts
 }
 
-/** Why the pipeline stood a photograph down, when the image itself explains it. */
 function kindSentence(image: ListingImage | undefined): string | null {
   if (!image) return null
   if (image.image_kind === 'advertisement') {
@@ -215,14 +176,10 @@ export function WorkflowJobCard({
 }: {
   job: ProcessingJob
   index: number
-  /** The original photograph this job was given, when the listing has loaded. */
   image?: ListingImage
 }) {
   const state = workflowJobState(job)
   const name = image?.original_filename ?? `Photograph ${index + 1}`
-  // The result is the payoff, so it replaces the original the moment it
-  // exists. Until then the original is what tells the dealer which car door
-  // they are looking at.
   const preview = job.output_image_url ?? image?.image_url ?? null
   const showingResult = job.output_image_url !== null
   const facts = state === 'ready' ? producedFacts(job) : []

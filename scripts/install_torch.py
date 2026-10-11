@@ -1,27 +1,4 @@
-"""Install the build of torch that can actually use this machine's GPU.
-
-    python scripts/install_torch.py            # detect and install
-    python scripts/install_torch.py cu118      # force a specific CUDA build
-    python scripts/install_torch.py cpu        # force the CPU build
-
-On macOS, the default command installs the normal PyPI wheels. Those wheels
-include the MPS support used by Apple Silicon; the special CUDA indexes are
-only used for NVIDIA machines.
-
-This exists because `pip install torch` does the wrong thing on Windows. PyPI
-serves the CPU-only build there, and it gives no sign of being the wrong one:
-it installs cleanly, imports cleanly, and simply reports that no GPU exists.
-People lose an afternoon to it. The CUDA builds are on PyTorch's own package
-index and have to be requested explicitly.
-
-Which build depends mostly on the NVIDIA driver. Thanks to CUDA minor version
-compatibility, any 12.x runtime runs on a 527.41+ Windows driver, so for most
-cards the choice is just "recent driver or not". The exception is the card
-itself being newer than the build: Blackwell (the RTX 50 series) has no kernels
-in anything before CUDA 12.8, so its compute capability is checked as well.
-
-Uses only the standard library: it runs before anything is installed.
-"""
+"""Install the build of torch that can actually use this machine's GPU."""
 
 from __future__ import annotations
 
@@ -30,37 +7,20 @@ import re
 import subprocess
 import sys
 
-# Driver floors, from NVIDIA's CUDA compatibility table. Windows numbers; the
-# Linux ones are a little lower, and using the stricter of the two is harmless.
 WINDOWS_DRIVER_FOR_CUDA_12 = 527.41
 WINDOWS_DRIVER_FOR_CUDA_11_8 = 452.39
 
 INDEX = "https://download.pytorch.org/whl/{}"
 
-# Kept slightly behind the newest release on purpose. A CUDA build only a few
-# weeks old is the one most likely to want a driver the machine has not been
-# updated to, and the failure it produces — everything installs, nothing runs
-# on the GPU — is the exact failure this script exists to prevent.
 DEFAULT_CUDA = "cu126"
 OLD_DRIVER_CUDA = "cu118"
 
-# Blackwell cards — compute capability 10.x for the data-centre parts, 12.x for
-# the RTX 50 series — have no kernels in any build before CUDA 12.8. A cu126
-# build still installs on one, imports, and reports the GPU as available; it
-# then fails on the first real operation ("no kernel image is available"), and
-# the application's startup probe falls back to the CPU without anything
-# looking wrong. Any card that can be this new has a driver new enough for
-# CUDA 12.8, since older drivers do not support the card at all.
 BLACKWELL_CUDA = "cu128"
 FIRST_BLACKWELL_CAPABILITY = (10, 0)
 
 
 def query_gpus(field: str) -> list[str] | None:
-    """nvidia-smi's answer for one --query-gpu field, a line per GPU.
-
-    None if there is no nvidia-smi, or it cannot answer — which is also what
-    an older driver does for a field it does not know.
-    """
+    """nvidia-smi's answer for one --query-gpu field, a line per GPU."""
     try:
         result = subprocess.run(
             ["nvidia-smi", f"--query-gpu={field}", "--format=csv,noheader"],
@@ -91,12 +51,7 @@ def detect_gpu_name() -> str | None:
 
 
 def detect_compute_capability() -> tuple[int, int] | None:
-    """The newest compute capability among the GPUs, e.g. (12, 0) for an RTX 5090.
-
-    The newest, because a build without kernels for it leaves that card — most
-    likely the one that was bought for this — unusable. None when nvidia-smi
-    does not report it.
-    """
+    """The newest compute capability among the GPUs, e.g. (12, 0) for an RTX 5090."""
     found = []
     for line in query_gpus("compute_cap") or []:
         match = re.fullmatch(r"(\d+)\.(\d+)", line)
@@ -108,8 +63,6 @@ def detect_compute_capability() -> tuple[int, int] | None:
 def choose_build() -> str | None:
     """Return a CUDA/CPU index tag, or None for the normal macOS wheels."""
     if platform.system() == "Darwin":
-        # Apple Silicon uses the MPS backend, which ships in the normal PyPI
-        # wheel. Installing from the CPU-only index can remove that support.
         print("macOS detected — installing the standard PyTorch wheel with MPS support.")
         return None
 
@@ -150,7 +103,6 @@ def choose_build() -> str | None:
     return "cpu"
 
 
-# Run in a fresh interpreter after pip, so it sees the torch just installed.
 CHECK_SCRIPT = """\
 import torch
 print("torch", torch.__version__)
@@ -188,7 +140,6 @@ def gpu_problem(build: str, check_output: str) -> str | None:
             "slowly."
         )
         if "no kernel image" in check_output and build != BLACKWELL_CUDA:
-            # The card is newer than the build: an RTX 50 series, for one.
             return (
                 f"{warning} The card is newer than this build supports; install "
                 f"the newer one:\n    python scripts/install_torch.py {BLACKWELL_CUDA}"
@@ -238,8 +189,6 @@ def main() -> int:
         )
         return result.returncode
 
-    # Verifying here rather than at first use: a CPU build that slipped through
-    # is worth catching now, while the fix is still one command away.
     print("\nChecking the installed build ...")
     check = subprocess.run(
         [sys.executable, "-c", CHECK_SCRIPT],
@@ -265,3 +214,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

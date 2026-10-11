@@ -1,9 +1,4 @@
-"""add platform administration fields and audit log
-
-Revision ID: e4a161237240
-Revises: d7e2c9a13f84
-Create Date: 2026-09-10 00:00:00.000000
-"""
+"""add platform administration fields and audit log"""
 
 from typing import Sequence, Union
 
@@ -73,3 +68,4 @@ def downgrade() -> None:
     op.drop_column("dealerships", "contact_phone")
     op.drop_column("dealerships", "contact_email")
     op.drop_column("dealerships", "contact_name")
+

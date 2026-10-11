@@ -1,16 +1,3 @@
-// Before and after for one vehicle, full size.
-//
-// The judgement a dealership has to make about a processed photograph is
-// binary — is this good enough to publish — and it cannot be made from a
-// thumbnail in a table. What it needs is the original and the processed image
-// in the same frame, at the same scale, with a divider that can be dragged
-// across them. That is what this is: one stage, two layers, and a handle.
-//
-// The original and processed images are paired through the processing jobs,
-// which carry the input and output image ids. The listing's own image list
-// only says which images are 'original' and which are 'processed', so without
-// the jobs there is nothing linking a particular output back to the photograph
-// it came from.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -27,14 +14,12 @@ import AuthedImage from './AuthedImage'
 import LibraryModal from './LibraryModal'
 import { ModalHeading, SolidBtn, StatusPill } from './primitives'
 
-/** One photograph and, when the pipeline has produced it, its processed twin. */
 type Pair = {
   original: ListingImage
   processed: ListingImage | null
   job: ProcessingJob | null
 }
 
-/** `front_three_quarter` is a database value, not something to show a dealer. */
 const humanise = (value: string) => value.replace(/_/g, ' ')
 
 function pairImages(
@@ -51,25 +36,13 @@ function pairImages(
 
     return {
       original,
-      // Falling back to position only when the jobs are genuinely unavailable:
-      // the pipeline does write outputs in input order, so it is usually right,
-      // but it is an assumption rather than a fact and must not override a job
-      // that says this photograph has not been processed.
       processed: jobs === null ? processed[index] ?? null : output,
       job,
     }
   })
 }
 
-/**
- * The two images, stacked, with a draggable divider.
- *
- * The divider is also a range input. That is not decoration: dragging is a
- * mouse-only gesture, and the slider is what makes the comparison work from
- * the keyboard, where each arrow press moves the divider a percent.
- */
 function Comparison({ pair, title, height }: { pair: Pair; title: string; height: string }) {
-  // Percent of the frame, from the left, still showing the original.
   const [split, setSplit] = useState(50)
   const dragging = useRef(false)
 
@@ -79,11 +52,6 @@ function Comparison({ pair, title, height }: { pair: Pair; title: string; height
     width: '100%',
     height: '100%',
     objectFit: 'contain' as const,
-    // Two reasons to paint ink behind the image. AuthedImage's own placeholder
-    // is a light grey block, which flashes hard against this stage while the
-    // bytes are fetched. And a vehicle processed without a backdrop comes back
-    // on transparency, which needs a dark ground to read against — guidelines
-    // §4, dark grounds for imagery.
     background: C.ink,
   }
 
@@ -98,8 +66,6 @@ function Comparison({ pair, title, height }: { pair: Pair; title: string; height
   return (
     <div>
       <div
-        // touchAction none, or dragging the divider on a tablet scrolls the
-        // dialog instead of moving it.
         style={{
           position: 'relative', height, background: C.ink, overflow: 'hidden',
           touchAction: 'none', cursor: processed ? 'ew-resize' : 'default',
@@ -158,9 +124,6 @@ function Comparison({ pair, title, height }: { pair: Pair; title: string; height
           </div>
         )}
 
-        {/* Solid ink rather than a translucent veil: these sit over photography
-            of unknown brightness, and only a solid ground guarantees the label
-            keeps its contrast. */}
         <span style={{
           position: 'absolute', left: 12, bottom: 12, background: C.ink,
           color: C.bone, fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em',
@@ -221,7 +184,6 @@ export default function LibraryVehiclePreview({
   listingId, title, onClose,
 }: {
   listingId: number
-  /** Known from the card that opened this, so the heading is never empty. */
   title: string
   onClose: () => void
 }) {
@@ -236,8 +198,6 @@ export default function LibraryVehiclePreview({
     let cancelled = false
     Promise.all([
       api.listing(listingId),
-      // The comparison still works without the jobs, so a failure here is not
-      // a failure of the dialog.
       api.listingJobs(listingId).then(summary => summary.jobs).catch(() => null),
     ])
       .then(([listing, listingJobs]) => {
@@ -310,9 +270,6 @@ export default function LibraryVehiclePreview({
             <Comparison
               pair={pair}
               title={detail.title}
-              // Sized so that the heading, the stage, the divider, the
-              // filmstrip and the footer all fit a laptop viewport without the
-              // dialog having to scroll to reach its own buttons.
               height={compact ? 'min(38vh, 280px)' : 'min(46vh, 440px)'}
             />
 

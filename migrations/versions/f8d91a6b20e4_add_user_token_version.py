@@ -1,8 +1,4 @@
-"""Add user token version for immediate reset session revocation.
-
-Revision ID: f8d91a6b20e4
-Revises: e4a161237240
-"""
+"""Add user token version for immediate reset session revocation."""
 
 from alembic import op
 import sqlalchemy as sa
@@ -19,3 +15,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("users", "token_version")
+

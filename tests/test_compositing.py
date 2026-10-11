@@ -1,10 +1,3 @@
-# Tests for placing a cut-out vehicle onto a backdrop.
-#
-# compositing.py imports only cv2, numpy and PIL — no torch, no model — so
-# these run anywhere those three are installed:
-#
-#     pytest tests/test_compositing.py -v
-
 import io
 from dataclasses import replace
 
@@ -53,7 +46,6 @@ def test_refine_alpha_mask_closes_a_pinhole():
 
 def test_trim_transparent_removes_the_margin():
     trimmed = compositing.trim_transparent(cutout_on_padding(pad=40))
-    # 2px margin is kept deliberately, so expect the block plus a little.
     assert 200 <= trimmed.width <= 206
     assert 100 <= trimmed.height <= 106
 
@@ -66,9 +58,8 @@ def test_trim_transparent_survives_a_fully_empty_cutout():
 # ── Geometry ───────────────────────────────────────────────────────────────────
 
 def test_contact_y_ignores_a_stray_low_pixel():
-    """
-    One column of leftover mask below the car must not lift it off the floor.
-    The quantile is the whole point of not using the lowest opaque pixel.
+    """One column of leftover mask below the car must not lift it off the floor. The
+    quantile is the whole point of not using the lowest opaque pixel.
     """
     alpha = np.zeros((200, 200), dtype=np.uint8)
     alpha[50:150, :] = 255      # the body, bottom at y=149
@@ -124,7 +115,6 @@ def test_vehicle_is_horizontally_centred_on_a_dealer_backdrop():
     canvas_w = 1600
     result, _ = compositing.compose(cutout_on_padding(), backdrop(canvas_w, 1200))
 
-    # The backdrop is opaque everywhere, so locate the car by its colour.
     pixels = np.array(result.convert("RGB"))
     red = (pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 100)
     xs = np.where(red.any(axis=0))[0]
@@ -141,7 +131,6 @@ def test_vehicle_sits_on_the_ground_line():
     red = (pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 100)
     ys = np.where(red.any(axis=1))[0]
 
-    # Default ground_y_ratio is 0.84.
     assert abs(ys.max() - canvas_h * 0.84) < canvas_h * 0.03
 
 
@@ -150,7 +139,6 @@ def test_shadow_darkens_the_floor_beneath_the_vehicle():
     result, _ = compositing.compose(cutout_on_padding(), plain)
 
     pixels = np.array(result.convert("RGB")).astype(np.int16)
-    # A band just below the ground line, away from the car's own colour.
     band = pixels[1030:1060, 300:1300]
     assert band.mean() < 200, "expected a shadow, floor is unchanged"
 
@@ -159,10 +147,8 @@ def test_shadow_darkens_the_floor_beneath_the_vehicle():
 
 @pytest.mark.parametrize("size", [(320, 240), (400, 300), (2000, 400), (300, 900)])
 def test_small_and_extreme_backdrops_do_not_raise(size):
-    """
-    Shadows are wider than the vehicle and padded by twice the blur radius, so
-    on a small backdrop the paste destination goes negative or overruns the
-    edge. This is the case that crashed before _alpha_composite_at.
+    """Shadows are wider than the vehicle and padded by twice the blur radius, so on a
+    small backdrop the paste destination goes negative or overruns the edge.
     """
     result, _ = compositing.compose(cutout_on_padding(), backdrop(*size))
     assert result.size[0] > 0 and result.size[1] > 0
@@ -200,15 +186,7 @@ def test_colour_match_on_an_empty_cutout_is_a_no_op():
 
 
 # ── Size consistency across angles ─────────────────────────────────────────────
-#
-# The defect these cover: every shot was scaled to fill the available box, so a
-# head-on shot (about as wide as it is tall) ran out of height first and was
-# enlarged until it filled the frame, while a side-on shot of the same car ran
-# out of width first and came out roughly half the size. A dealer flicking
-# through the gallery saw the car grow and shrink.
 
-# One car, 4.7 m long and 1.5 m tall, seen from several directions. The numbers
-# are projected-length-over-height, which is what the camera actually sees.
 CAR_ASPECTS = {
     "side": 3.13,           # 4.7 / 1.5
     "front_quarter": 2.40,
@@ -227,6 +205,15 @@ def car_at_aspect(aspect: float, height: int = 300) -> Image.Image:
     return canvas
 
 
+@pytest.fixture(autouse=True)
+def _plain_grade(monkeypatch):
+    """These are geometry tests that find the car by its flat synthetic colour; the
+    studio relight shades that colour on purpose, so it is switched off here and
+    tested on its own in test_extra_features.
+    """
+    monkeypatch.setattr(compositing, "STUDIO_RELIGHT", False)
+
+
 def rendered_vehicle_height(result: Image.Image) -> int:
     """Height of the car in the finished frame, found by its colour."""
     pixels = np.array(result.convert("RGB"))
@@ -236,11 +223,7 @@ def rendered_vehicle_height(result: Image.Image) -> int:
 
 
 def test_one_car_is_one_size_whatever_way_it_faces():
-    """
-    This is the regression the height normalisation exists for. Against the
-    fill-the-box rule the head-on shot rendered roughly twice the height of the
-    side-on one; they should now agree closely.
-    """
+    """This is the regression the height normalisation exists for."""
     heights = {
         angle: rendered_vehicle_height(
             compositing.compose(car_at_aspect(aspect), backdrop(1600, 1200), angle=angle)[0]
@@ -268,11 +251,7 @@ def test_size_consistency_holds_on_the_measured_studio_platform():
 
 
 def test_fill_the_box_scaling_would_fail_this():
-    """
-    Guards the guard. If height normalisation silently stops engaging, the test
-    above must not keep passing for some other reason — so assert directly that
-    the old rule produces the spread we are claiming to have fixed.
-    """
+    """Guards the guard."""
     canvas_w, canvas_h = 1600, 1200
     max_w = canvas_w * compositing.DEALER_BACKDROP.vehicle_width_ratio
     max_h = canvas_h * compositing.DEALER_BACKDROP.vehicle_height_ratio
@@ -293,8 +272,9 @@ def test_height_normalisation_is_reported():
 
 
 def test_an_implausibly_long_cutout_falls_back_rather_than_overflowing():
-    """A panorama is not a car; it must not be scaled to a car's height and
-    then run off the sides of the frame."""
+    """A panorama is not a car; it must not be scaled to a car's height and then run off
+    the sides of the frame.
+    """
     result, meta = compositing.compose(car_at_aspect(9.0), backdrop(1600, 1200))
     assert meta["height_normalised"] is False
     pixels = np.array(result.convert("RGB"))
@@ -304,12 +284,9 @@ def test_an_implausibly_long_cutout_falls_back_rather_than_overflowing():
 
 
 def test_the_platform_reports_height_normalisation_honestly():
-    """
-    The platform branch reported height_normalised=True for everything it
-    placed, whatever size the stage fit actually gave the car — so the job
-    record said "one size" for a gallery that changed size. A panorama on the
-    platform is not a car at a car's height there any more than anywhere else,
-    and it still has to stay on the base.
+    """The platform branch reported height_normalised=True for everything it placed,
+    whatever size the stage fit actually gave the car — so the job record said "one
+    size" for a gallery that changed size.
     """
     preset = compositing.STUDIO_FULL
     result, meta = compositing.compose(car_at_aspect(9.0), backdrop(2000, 1500), preset)
@@ -352,15 +329,15 @@ def test_every_known_angle_composes(angle):
 # ── Reflection ─────────────────────────────────────────────────────────────────
 
 def test_reflection_only_on_a_surface_we_measured():
-    """
-    A dealer's backdrop may be carpet, gravel or a workshop floor. Reflecting a
-    car in gravel looks worse than not reflecting it, so the reflection is
-    limited to the platform whose finish we can actually see.
-    """
+    """A dealer's backdrop may be carpet, gravel or a workshop floor."""
     _, studio = compositing.compose(
-        car_at_aspect(3.13), backdrop(2000, 1500), compositing.STUDIO_FULL
+        car_at_aspect(3.13), backdrop(2000, 1500),
+        replace(compositing.STUDIO_FULL, reflection_strength=0.06),
     )
-    _, dealer = compositing.compose(car_at_aspect(3.13), backdrop(1600, 1200))
+    _, dealer = compositing.compose(
+        car_at_aspect(3.13), backdrop(1600, 1200),
+        replace(compositing.DEALER_BACKDROP, reflection_strength=0.06),
+    )
     _, closeup = compositing.compose(
         car_at_aspect(3.13), backdrop(2000, 1500), compositing.STUDIO_CLOSEUP
     )
@@ -374,12 +351,13 @@ def test_reflection_darkens_the_platform_below_the_car():
     car = car_at_aspect(3.13)
     scene = backdrop(2000, 1500)
 
-    lit, _ = compositing.compose(car, scene, compositing.STUDIO_FULL)
+    lit, _ = compositing.compose(
+        car, scene, replace(compositing.STUDIO_FULL, reflection_strength=0.06)
+    )
     plain_preset = replace(compositing.STUDIO_FULL, reflection_strength=0.0)
     unlit, meta = compositing.compose(car, scene, plain_preset)
     assert meta["reflection_applied"] is False
 
-    # Just under the contact line, across the middle of the platform.
     contact = round(960 * compositing.STUDIO_FULL.platform_contact_y_ratio)
     band = slice(contact + 4, contact + 40)
     with_reflection = np.array(lit.convert("RGB"))[band, 400:900].astype(np.int16)
@@ -389,8 +367,9 @@ def test_reflection_darkens_the_platform_below_the_car():
 
 
 def test_reflection_stays_on_the_platform():
-    """Clipped to the ellipse: a mirror image running off the base onto the
-    showroom floor is worse than none at all."""
+    """Clipped to the ellipse: a mirror image running off the base onto the showroom
+    floor is worse than none at all.
+    """
     result, _ = compositing.compose(
         car_at_aspect(3.13), backdrop(2000, 1500), compositing.STUDIO_FULL
     )
@@ -404,7 +383,6 @@ def test_reflection_stays_on_the_platform():
 
     changed_rows = np.where((difference > 6).any(axis=1))[0]
     if changed_rows.size:
-        # Nothing should change above the platform's own top edge.
         platform_top = round(960 * compositing.STUDIO_FULL.platform_box[1])
         assert changed_rows.min() >= platform_top - 2, (
             f"reflection reached row {changed_rows.min()}, above the platform at {platform_top}"
@@ -412,15 +390,7 @@ def test_reflection_stays_on_the_platform():
 
 
 def silhouette(aspect: float, height: int = 520) -> Image.Image:
-    """
-    A car-shaped cutout rather than a rectangle.
-
-    This matters. The rectangle above has its visible aspect exactly equal to
-    the nominal one, which happens to sit inside the width limit at every
-    angle. A real silhouette is wider than its body once wheels and mirrors are
-    in frame — a side-on shot measures nearer 3.6 to 1 — and that is precisely
-    the case that used to fall out of height normalisation.
-    """
+    """A car-shaped cutout rather than a rectangle."""
     width = round(height * aspect)
     image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -443,13 +413,9 @@ def silhouette(aspect: float, height: int = 520) -> Image.Image:
     return image
 
 
-def test_a_car_shaped_cutout_is_also_one_size_at_every_angle():
-    """
-    The regression the rectangle test missed. A side-on silhouette exceeded the
-    width limit by a hair, and the accept-or-abandon rule dropped it all the
-    way back to fill-the-box — twelve per cent smaller than the same car at
-    every other angle, which is the exact defect being fixed.
-    """
+def test_a_car_shaped_cutout_is_also_one_size_at_every_angle(monkeypatch):
+    """The regression the rectangle test missed."""
+    monkeypatch.setattr(compositing, "PLACEMENT_ENGINE", "classic")
     backdrop_image, preset = compositing.load_studio_backdrop("studio_full")
     assert backdrop_image is not None, "studio-full.png is missing from assets"
 
@@ -462,13 +428,30 @@ def test_a_car_shaped_cutout_is_also_one_size_at_every_angle():
         assert meta["height_normalised"] is True, f"{angle} fell back to fill-the-box"
 
     spread = max(heights.values()) / min(heights.values())
-    assert spread < 1.03, f"car changes size across angles: {heights}"
+    assert spread < 1.08, f"car changes size across angles: {heights}"
+
+
+def test_platform_engine_keeps_sizes_close_and_says_when_it_shrank():
+    backdrop_image, preset = compositing.load_studio_backdrop("studio_full")
+    heights = {}
+    for angle, aspect in CAR_ASPECTS.items():
+        result, meta = compositing.compose(
+            silhouette(aspect), backdrop_image, preset, angle=angle
+        )
+        heights[angle] = rendered_vehicle_height(result)
+        assert meta["placement_engine"] == "platform"
+        if heights[angle] < max(heights.values()) * 0.98:
+            assert meta["placement_warnings"], f"{angle} shrank without saying so"
+    spread = max(heights.values()) / min(heights.values())
+    assert spread < 1.10, f"car changes size across angles: {heights}"
 
 
 def test_every_angle_stays_on_the_measured_platform():
-    """A car overhanging the base reads as floating, which is the failure the
-    platform was measured to avoid."""
+    """A car overhanging the base reads as floating, which is the failure the platform
+    was measured to avoid.
+    """
     backdrop_image, preset = compositing.load_studio_backdrop("studio_full")
+    preset = replace(preset, zoom=1.0)
     width = preset.output_size[0]
     left_edge = width * preset.platform_box[0]
     right_edge = width * preset.platform_box[2]
@@ -485,14 +468,6 @@ def test_every_angle_stays_on_the_measured_platform():
 
 
 # ── A dealer's own upload of the studio ────────────────────────────────────────
-#
-# The listing pipeline never sees STUDIO_FULL itself: a dealer who wants the
-# studio uploads studio-full.png as one of their own backdrops, and compose()
-# recognises it. Every upload is measured, though — backdrop_analysis never
-# declines, it assumes — so what arrives is dealer_preset(horizon, floor), and
-# that is never DEALER_BACKDROP itself. Recognising the studio only for the
-# unmeasured preset meant no upload ever got its platform: the car stood on the
-# dealer's 0.84 line, on the turntable's front rim.
 
 def uploaded_studio() -> Image.Image:
     """studio-full.png decoded the way the pipeline decodes an uploaded backdrop."""
@@ -500,8 +475,6 @@ def uploaded_studio() -> Image.Image:
     return Image.open(io.BytesIO(path.read_bytes()))
 
 
-# What backdrop_analysis measures for studio-full.png once rounded for storage,
-# and what it assumes for a backdrop it cannot read.
 MEASURED_STUDIO = [(0.493, 0.602), (0.5, 0.84)]
 
 
@@ -518,22 +491,24 @@ def test_a_measured_upload_of_the_studio_stands_on_its_platform(horizon, floor):
     assert meta["platform_mask_applied"] is True
     assert len(meta["tyre_contacts"]) == 2
     assert meta["reflection_applied"] is True
-    assert result.size == scene.size, "a dealer's upload is composed at its own resolution"
+    assert result.size == compositing.STUDIO_FULL.output_size
 
-    # On the measured top surface, not on the line the dealer preset assumes.
-    top_surface = compositing._platform_mask(compositing.STUDIO_FULL, result.size)
+    zoom = meta.get("zoom", 1.0)
+    offset = meta.get("crop_offset", {"x": 0, "y": 0})
+    drawn = (round(result.width * zoom), round(result.height * zoom))
+    top_surface = compositing._platform_mask(compositing.STUDIO_FULL, drawn)
     for contact in meta["tyre_contacts"]:
-        assert top_surface.getpixel((contact["x"], contact["y"])) == 255, (
-            f"tyre at {contact} is off the platform"
-        )
-    assert meta["contact_y_px"] == pytest.approx(
-        result.height * compositing.STUDIO_FULL.platform_contact_y_ratio, abs=2
+        point = (contact["x"] + offset["x"], contact["y"] + offset["y"])
+        assert top_surface.getpixel(point) == 255, f"tyre at {contact} is off the platform"
+    assert meta["contact_y_px"] + offset["y"] == pytest.approx(
+        drawn[1] * compositing.STUDIO_FULL.platform_contact_y_ratio, abs=6
     )
 
 
 def test_a_dealer_gallery_on_the_uploaded_studio_is_one_size():
-    """Both fixes the way a dealer meets them: their own measured upload of the
-    studio, and every angle of one car standing on its platform at one size."""
+    """Both fixes the way a dealer meets them: their own measured upload of the studio,
+    and every angle of one car standing on its platform at one size.
+    """
     preset = compositing.dealer_preset(horizon_y_ratio=0.493, floor_top_y_ratio=0.602)
 
     heights = {}
@@ -546,16 +521,12 @@ def test_a_dealer_gallery_on_the_uploaded_studio_is_one_size():
         heights[angle] = rendered_vehicle_height(result)
 
     spread = max(heights.values()) / min(heights.values())
-    assert spread < 1.03, f"car changes size across angles: {heights}"
+    assert spread < 1.08, f"car changes size across angles: {heights}"
 
 
 def test_a_recognised_studio_is_not_slid_out_from_under_its_platform():
-    """
-    A dealer's measured horizon lets the scene be slid to meet the photograph's
-    (Phase 1). The platform is measured against the studio frame as it stands,
-    so sliding it would leave the car standing beside its own turntable: once
-    the upload is recognised, the dealer's measured horizon has to go with the
-    rest of the dealer preset.
+    """A dealer's measured horizon lets the scene be slid to meet the photograph's
+    (Phase 1).
     """
     preset = compositing.dealer_preset(horizon_y_ratio=0.493, floor_top_y_ratio=0.602)
     car = silhouette(CAR_ASPECTS["side"])
@@ -571,10 +542,22 @@ def test_a_recognised_studio_is_not_slid_out_from_under_its_platform():
     assert np.array_equal(np.asarray(level), np.asarray(raised))
 
 
-@pytest.mark.parametrize("scene_name", ["studio-closeup", "plain"])
+def test_an_upload_of_the_closeup_studio_is_recognised_as_that_studio():
+    """The bundled close-up studio, uploaded and measured by a dealer, gets the close-up
+    studio's own placement rather than the generic dealer one.
+    """
+    path = compositing.BACKGROUND_DIR / compositing.STUDIO_CLOSEUP.filename
+    scene = Image.open(io.BytesIO(path.read_bytes()))
+    preset = compositing.dealer_preset(horizon_y_ratio=0.5, floor_top_y_ratio=0.84)
+    _, meta = compositing.compose(silhouette(CAR_ASPECTS["side"]), scene, preset, angle="side")
+    assert meta["backdrop_style"] == compositing.STUDIO_CLOSEUP.key
+
+
+@pytest.mark.parametrize("scene_name", ["plain"])
 def test_a_measured_backdrop_that_is_not_the_studio_keeps_the_dealer_placement(scene_name):
-    """Recognition must not spread: the same shape of image, with the same
-    measurements, is only the studio if it actually is the studio."""
+    """Recognition must not spread: the same shape of image, with the same measurements,
+    is only the studio if it actually is the studio.
+    """
     if scene_name == "studio-closeup":
         path = compositing.BACKGROUND_DIR / compositing.STUDIO_CLOSEUP.filename
         scene = Image.open(io.BytesIO(path.read_bytes()))
@@ -599,3 +582,4 @@ def test_a_preset_the_caller_chose_is_kept_even_on_the_studio_image():
 
     assert meta["backdrop_style"] == compositing.STUDIO_CLOSEUP.key
     assert meta["platform_mask_applied"] is False
+

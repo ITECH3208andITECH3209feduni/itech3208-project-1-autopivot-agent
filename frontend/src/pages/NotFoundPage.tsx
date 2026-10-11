@@ -1,9 +1,3 @@
-// A designed 404, replacing the catch-all redirect to "/".
-//
-// Silently redirecting is worse than it looks: a mistyped or stale link lands
-// the user somewhere plausible with no indication anything went wrong, and a
-// signed-in user gets dropped to the public page as if they had been signed
-// out. This says what happened and offers the two places worth going.
 
 import { useLocation, useNavigate } from 'react-router-dom'
 
@@ -52,8 +46,6 @@ export default function NotFoundPage() {
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {/* Signed-in users are sent back into the application rather than out
-            to the public page, which would read as having been logged out. */}
         {user ? (
           <SolidBtn onClick={() => navigate('/app')}>Back to Overview</SolidBtn>
         ) : (

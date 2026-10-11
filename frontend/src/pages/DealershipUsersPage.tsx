@@ -91,9 +91,6 @@ export default function DealershipUsersPage() {
             <div style={{ fontSize: 13, color: C.inkSoft, marginTop: 4 }}>{target.email} · {target.role === 'dealership_admin' ? 'Administrator' : 'Staff'} · {target.is_active ? 'Active' : 'Deactivated'}</div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
-            {/* Never on your own row: a reset signs its target out and leaves
-                a one-time password as the only way back in, and a
-                deactivation would lock you out outright. */}
             {target.id === administrator?.id
               ? <Link to="/app/change-password" style={{ fontFamily: SANS, color: C.forest }}>Change password</Link>
               : target.is_active && <>

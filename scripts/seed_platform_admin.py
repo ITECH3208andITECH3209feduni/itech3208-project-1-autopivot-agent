@@ -1,8 +1,4 @@
-"""Provision the initial AutoPivot platform administrator.
-
-    python -m scripts.seed_platform_admin
-    python scripts/seed_platform_admin.py
-"""
+"""Provision the initial AutoPivot platform administrator."""
 
 from __future__ import annotations
 
@@ -11,17 +7,11 @@ import secrets
 import sys
 from pathlib import Path
 
-# Lets this run as `python scripts/seed_platform_admin.py` as well as with -m,
-# as scripts/seed_dealership.py does. Without it the file form fails on
-# "No module named 'api'".
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-# Loads .env from the project directory, and before api.security is imported:
-# that module reads JWT_SECRET once, at import time, and would otherwise warn
-# about a key that .env does set.
 from api.env import load_environment  # noqa: E402
 
 load_environment()
@@ -32,7 +22,6 @@ from database.models import User  # noqa: E402
 
 
 def main() -> int:
-    # The login API validates EmailStr; .local is reserved and cannot sign in.
     email = os.getenv("SEED_PLATFORM_ADMIN_EMAIL", "admin@autopivot.example.com").strip().lower()
     first_name = os.getenv("SEED_PLATFORM_ADMIN_FIRST_NAME", "AutoPivot").strip()
     last_name = os.getenv("SEED_PLATFORM_ADMIN_LAST_NAME", "Administrator").strip()
@@ -76,3 +65,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

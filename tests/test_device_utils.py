@@ -82,3 +82,4 @@ def test_device_info_is_json_safe():
     assert info["device"] == "mps"
     assert info["accelerator"] == "Apple Metal (MPS)"
     assert info["mps_available"] is True
+

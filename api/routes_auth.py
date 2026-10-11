@@ -1,9 +1,4 @@
-"""Authentication routes.
-
-There is deliberately no registration endpoint. Per the product design, dealer
-accounts are provisioned by AutoPivot rather than self-served, which is also why
-users.must_change_password defaults to true.
-"""
+"""Authentication routes."""
 
 from __future__ import annotations
 
@@ -27,15 +22,12 @@ logger = logging.getLogger("autopivot.auth")
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Unknown email, wrong password and deactivated account all return this. The
-# distinction is recorded in the log, never in the response.
 _INVALID_CREDENTIALS = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Incorrect email or password.",
     headers={"WWW-Authenticate": "Bearer"},
 )
 
-# The same answer api.deps gives any token it refuses.
 _SESSION_REVOKED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Not authenticated.",
@@ -44,8 +36,9 @@ _SESSION_REVOKED = HTTPException(
 
 
 def _signed_in(session: Session, user: User, token_version: int) -> LoginResponse:
-    """A session for user at token_version, as both login and a password
-    change hand one back."""
+    """A session for user at token_version, as both login and a password change hand one
+    back.
+    """
     token, expires_in = create_access_token(
         user_id=user.id,
         email=user.email,
@@ -67,8 +60,6 @@ def login(payload: LoginRequest, session: DbSession) -> LoginResponse:
     user = session.scalar(select(User).where(User.email == email))
 
     if user is None:
-        # Verify against a decoy hash so a missing account takes the same time
-        # as a real one, keeping this endpoint from confirming which emails exist.
         waste_password_time()
         logger.info("Login rejected — unknown email")
         raise _INVALID_CREDENTIALS
@@ -97,14 +88,7 @@ def change_password(
     user: CurrentUser,
     session: DbSession,
 ) -> LoginResponse:
-    """Change the caller's own password and sign out every session they had.
-
-    Bumping token_version refuses every token issued before now, including the
-    one this request was made with: a session left signed in on another
-    device, or a stolen token, stops working immediately rather than when it
-    expires. The caller carries on with the token in the response, which has
-    the same shape as POST /auth/login's.
-    """
+    """Change the caller's own password and sign out every session they had."""
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -119,11 +103,6 @@ def change_password(
 
     new_hash = hash_password(payload.new_password)
 
-    # Compare-and-set against the version this request was authenticated at,
-    # rather than writing the stale in-memory row back. An administrator's
-    # reset or deactivation that commits while the hashing above runs has
-    # already revoked this session; writing over it would undo the reset and
-    # hand back a token that survives it.
     authenticated_at = user.token_version
     saved = session.execute(
         update(User)
@@ -147,6 +126,5 @@ def change_password(
     session.refresh(user)
 
     logger.info("Password changed, earlier sessions revoked — user_id=%s", user.id)
-    # The version written above, not whatever the row holds by now: a later
-    # revocation must not be folded into the token handed back.
     return _signed_in(session, user, authenticated_at + 1)
+

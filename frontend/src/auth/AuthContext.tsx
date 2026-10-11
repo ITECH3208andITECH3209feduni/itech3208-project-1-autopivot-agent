@@ -1,5 +1,3 @@
-// Authentication state, held above the router so a page reload restores the
-// session instead of dropping the user back on the landing page.
 
 import {
   createContext,
@@ -16,12 +14,7 @@ import { api, onSessionEnded, onTokenChangedElsewhere, tokenStore, type User } f
 
 type AuthState = {
   user: User | null
-  /** True until the stored token has been checked, so guards do not redirect early. */
   loading: boolean
-  /**
-   * The user was signed out by the server refusing the session, or by another
-   * tab — not by pressing Log out. Cleared by the next sign-in or sign-out.
-   */
   sessionEnded: boolean
   login: (email: string, password: string) => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
@@ -36,10 +29,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [sessionEnded, setSessionEnded] = useState(false)
 
-  // Whichever request finds out first — the check on load below, or any call
-  // from any screen. client.ts has dropped the token and announces each
-  // refused token once, however many requests it was refused on.
-  // Subscribed before that first check runs, so its answer is heard.
   useEffect(() => onSessionEnded(() => {
     setUser(null)
     setSessionEnded(true)
@@ -53,26 +42,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       const current = await api.me()
-      // Another tab may have signed in as someone else while this was asked.
       if (tokenStore.get() !== token) return
       setUser(current)
       setSessionEnded(false)
     } catch {
-      // A refused token has already ended the session, above. Anything else
-      // — the API restarting, a network blip — is no reason to sign out.
     }
   }, [])
 
-  // Validate any stored token once on mount. The token is checked against the
-  // server rather than trusted, so an account deactivated since it was issued
-  // does not keep working.
   useEffect(() => {
     refresh().finally(() => setLoading(false))
   }, [refresh])
 
-  // Tabs share the token but not this state. A sign-in or a password change
-  // in another tab leaves a token here to pick up; a sign-out there takes it
-  // away.
   const signedIn = user !== null
   useEffect(() => onTokenChangedElsewhere(token => {
     if (token) {
@@ -98,8 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
     const result = await api.changePassword(currentPassword, newPassword)
-    // The change revoked every earlier token, the one this tab was using
-    // included; carrying on means carrying on with the new one.
     tokenStore.set(result.access_token)
     setUser(result.user)
   }, [])
@@ -118,25 +96,16 @@ export function useAuth(): AuthState {
   return context
 }
 
-/** What RequireAuth hands the sign-in page when it turns a signed-out user away. */
 export type SignInRedirect = {
-  /** The page they were on, or asked for. */
   from?: Partial<Path>
-  /** Their session ended under them, rather than them never having had one. */
   sessionEnded?: boolean
 }
 
 export const SESSION_ENDED_NOTICE = 'Your session has ended. Please sign in again.'
 
-/**
- * For a page that signs people in: where to send them once they have, and
- * what to tell them first. They go back to the page RequireAuth turned them
- * away from, so a lapsed session costs them only the sign-in.
- */
 export function useSignInRedirect(): { destination: string; notice: string | null } {
   const state = useLocation().state as SignInRedirect | null
   const from = state?.from
-  // Only ever back into the app. History state outlives the visit that set it.
   const destination = from?.pathname === '/app' || from?.pathname?.startsWith('/app/')
     ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}`
     : '/app'

@@ -71,7 +71,6 @@ def test_create_is_scoped_and_forces_password_change(setup):
     assert client.get("/api/dashboard/counts", headers=fresh).status_code == 403
     changed = client.post("/auth/change-password", headers=fresh, json={"current_password": created["initial_password"], "new_password": "NewPasswordThatIsPrivate123"})
     assert changed.status_code == 200
-    # The change revokes the token it was made with and hands back a new one.
     assert client.get("/api/dashboard/counts", headers=fresh).status_code == 401
     assert client.get("/api/dashboard/counts", headers={"Authorization": f"Bearer {changed.json()['access_token']}"}).status_code == 200
 
@@ -89,8 +88,6 @@ def test_reset_and_deactivation_revoke_sessions_and_keep_user(setup):
     assert client.get("/api/dashboard/counts", headers=temporary).status_code == 403
     changed = client.post("/auth/change-password", headers=temporary, json={"current_password": reset.json()["initial_password"], "new_password": "NewPasswordThatIsPrivate123"})
     assert changed.status_code == 200
-    # Carried on with the token the change handed back, so the deactivation
-    # below is what revokes it.
     temporary = {"Authorization": f"Bearer {changed.json()['access_token']}"}
     assert client.get("/api/dashboard/counts", headers=temporary).status_code == 200
     deactivated = client.post(f"/api/dealership/users/{ids['staff@second.example.com']}/deactivate", headers=admin)
@@ -123,3 +120,4 @@ def test_only_dealership_admin_can_manage_and_no_public_registration(setup):
     assert client.post("/api/dealership/users", json={}).status_code == 401
     assert client.post("/auth/register", json={}).status_code == 404
     assert client.post("/auth/signup", json={}).status_code == 404
+

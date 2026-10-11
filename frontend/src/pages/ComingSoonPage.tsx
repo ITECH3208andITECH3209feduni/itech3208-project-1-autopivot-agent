@@ -1,14 +1,3 @@
-// The public face until the product has something real to show.
-//
-// The full landing page makes claims the pipeline cannot yet demonstrate — its
-// configurator shows the same photograph for every backdrop, and the hero
-// promises angle-matched backdrops that nothing computes. Rather than publish
-// that, this page says less and means it. The landing page stays reachable at
-// /preview through the toggle.
-//
-// Dark ground, per the guidelines: light carries chrome, dark carries
-// photographs. There are no photographs yet, and an empty light page would read
-// as broken where an empty dark one reads as deliberate.
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -20,9 +9,6 @@ import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 
 export default function ComingSoonPage() {
   const { destination, notice } = useSignInRedirect()
-  // Sent here because the session ended mid-use: straight back into signing
-  // in, told why, rather than left on a page that looks signed out for no
-  // reason.
   const [showLogin, setShowLogin] = useState(notice !== null)
   const navigate = useNavigate()
 
@@ -35,8 +21,6 @@ export default function ComingSoonPage() {
         <LoginModal
           notice={notice}
           onClose={() => setShowLogin(false)}
-          // Replacing this page, so Back from where they land does not
-          // reopen a sign-in they have already done.
           onSuccess={() => { setShowLogin(false); navigate(destination, { replace: true }) }}
           onSwitchToDemo={() => setShowLogin(false)}
         />

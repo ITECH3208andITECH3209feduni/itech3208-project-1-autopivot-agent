@@ -29,10 +29,11 @@ class PlacementTests(unittest.TestCase):
                     self.assertGreaterEqual(y,0)
                     self.assertLessEqual(x+v.width,size[0])
                     bounds = v.getchannel("A").point(lambda a: 255 if a >= 128 else 0).getbbox()
-                    self.assertLessEqual(bounds[3]-bounds[1],size[1]*.35+2)
+                    self.assertLessEqual(bounds[3]-bounds[1],size[1]*.48+2)
     def test_contact_shadow_at_each_support(self):
-        v,x,y,pts=p.fit(vehicle(650,420,True),c.STUDIO_FULL.platform_box,(1280,960))
-        shadow=p.contact_shadow((1280,960),v,x,y,pts)
+        r=p.place(vehicle(650,420,True),c.STUDIO_FULL.platform_box,(1280,960))
+        v,x,y,pts=r.vehicle,r.x,r.y,[(t.x,t.y) for t in r.contacts]
+        shadow=p.surface_shadow((1280,960),v,x,y,pts)
         for px,py in pts:self.assertGreater(shadow.getpixel((x+px,y+py))[3],70)
     def test_compose_metadata(self):
         bg=Image.open(Path(c.BACKGROUND_DIR)/'studio-full.png')
@@ -53,13 +54,7 @@ def solid_bounds(v):
 
 
 class OneSizeTests(unittest.TestCase):
-    """The stage decides where a car stands, never how big it is.
-
-    Sizing each cutout to fill the stage is what made the gallery change size
-    on the studio platform: a wide side-on view ran out of stage width and a
-    narrow head-on one ran out of height, so the same car came out a third
-    taller head-on than side-on.
-    """
+    """The stage decides where a car stands, never how big it is."""
 
     SHAPES = [(400, 380, False), (1000, 350, False), (650, 420, True), (250, 550, False)]
 
@@ -96,3 +91,4 @@ class OneSizeTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+

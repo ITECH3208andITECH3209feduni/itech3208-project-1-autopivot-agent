@@ -1,16 +1,3 @@
-// Step two of the workflow: watching a run happen.
-//
-// Polls rather than streams: a run is a handful of jobs taking seconds to
-// minutes each, so a two-second poll is simpler than websockets and costs
-// almost nothing. Polling stops as soon as no job is outstanding.
-//
-// What changed is what the poll is used for. The screen used to be a flat list
-// of rows reading "Complete", which is the least a progress screen can say. A
-// dealer waiting on eighteen photographs wants to know which one is being
-// worked on, what came back for it, and — when something needs them — whether
-// it needs a decision or a fix. So each job is a card with the photograph on
-// it, the run gets a summary that reads like a report rather than a spinner,
-// and finishing hands over to Review instead of leaving the dealer to find it.
 
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -37,8 +24,6 @@ function Tally({ value, label, tone }: { value: number; label: string; tone: str
     <div>
       <p style={{
         fontFamily: MONO, fontSize: 22, margin: '0 0 2px', lineHeight: 1,
-        // The numeral carries the colour, but the label under it carries the
-        // meaning — nothing here depends on telling forest from rust.
         color: value === 0 ? C.inkSoft : tone,
       }}>
         {value}
@@ -55,8 +40,6 @@ function Tally({ value, label, tone }: { value: number; label: string; tone: str
 export default function ProcessingView() {
   const { listingId } = useParams()
   const navigate = useNavigate()
-  // Only treated as a listing id if it genuinely is one. /app/processing/abc
-  // would otherwise poll the API with NaN in the path every two seconds.
   const parsed = listingId ? Number(listingId) : Number.NaN
   const id = Number.isInteger(parsed) ? parsed : null
 
@@ -70,21 +53,13 @@ export default function ProcessingView() {
     if (id === null) return
     const target = id
     let cancelled = false
-    // Whether anything was ever outstanding, so a run that was already over
-    // when the screen opened does not fetch the listing twice.
     let sawOutstanding = false
 
-    // The originals are where the thumbnails and filenames come from. The
-    // classifier writes its verdict onto the image rather than the job, so the
-    // listing is read again once the run settles — that is what lets a
-    // set-aside photograph say "this is an advertisement banner".
     async function loadListing() {
       try {
         const next = await api.listing(target)
         if (!cancelled) setListing(next)
       } catch {
-        // Thumbnails are a courtesy; the jobs still report themselves without
-        // the listing, so this failure is not worth an alert.
       }
     }
 
@@ -107,10 +82,6 @@ export default function ProcessingView() {
       } catch (err) {
         if (cancelled) return
         setError((err as Error).message)
-        // One dropped request should not freeze a run someone is watching, so
-        // the poll keeps going while there is still work outstanding and the
-        // next success clears the message. Once nothing is outstanding there is
-        // nothing to catch up on, and retrying forever would be noise.
         if (sawOutstanding) timer.current = window.setTimeout(() => void poll(), POLL_MS)
       }
     }
@@ -128,8 +99,6 @@ export default function ProcessingView() {
   }, [id])
 
   function goToStep(step: Step) {
-    // Clicking the step you are on should do nothing rather than push another
-    // copy of this page onto the history stack.
     if (step.key === 'process') return
     const href = stepHref(step.key as WorkflowStep, id)
     if (href) navigate(href)
@@ -161,8 +130,6 @@ export default function ProcessingView() {
   const done = summary ? summary.completed + summary.failed : 0
   const failed = summary?.failed ?? 0
   const needsPerson = summary?.needs_review ?? 0
-  // `completed` counts every job that ran to the end, including the ones the
-  // pipeline handed back for a person to look at.
   const ready = summary ? summary.completed - summary.needs_review : 0
   const waiting = Math.max(total - done, 0)
   const percent = total ? Math.round((done / total) * 100) : 0
@@ -172,8 +139,6 @@ export default function ProcessingView() {
     (listing?.images ?? []).map(image => [image.id, image]),
   )
 
-  // Every job in a run carries the same backdrop, so it is named once here
-  // rather than repeated on every card.
   const backdropId = jobs.find(j => j.backdrop_id !== null)?.backdrop_id ?? null
   const backdropName = backdrops.find(b => b.id === backdropId)?.name ?? null
 
@@ -193,8 +158,6 @@ export default function ProcessingView() {
           : failed === 0 && needsPerson === 0 ? `All ${total} photograph${total === 1 ? '' : 's'} are ready`
             : 'Finished, with some to look at'
 
-  // Said once, in full sentences, rather than assembled inside the markup
-  // where the grammar of "1 was" versus "2 were" gets lost.
   const outstandingParts = [
     needsPerson > 0
       ? `${needsPerson} ${needsPerson === 1 ? 'was' : 'were'} set aside for a person to decide on`
@@ -212,7 +175,6 @@ export default function ProcessingView() {
 
   return (
     <div>
-      {/* The workflow's one animation, declared once for the whole screen. */}
       <style>{WORKFLOW_MOTION_CSS}</style>
 
       <Stepper steps={WORKFLOW_STEPS} current="process" onNavigate={goToStep} />
@@ -220,8 +182,6 @@ export default function ProcessingView() {
       <h1 style={{ ...serif(40), color: C.ink, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.05 }}>
         {listing?.title ?? 'Processing'}
       </h1>
-      {/* A live region: the count changes under the dealer while they watch,
-          and a screen reader should hear it rather than have to go looking. */}
       <p
         role="status"
         aria-live="polite"
@@ -271,10 +231,6 @@ export default function ProcessingView() {
               aria-valuetext={statusLine}
               style={{ height: 6, borderRadius: 999, background: C.line, overflow: 'hidden' }}
             >
-              {/* Plain amber on the track: 3:1 is sufficient for a non-text
-                  boundary, which is why the pill uses the darker amberText and
-                  this does not. It turns forest when the run is over, matching
-                  the completed step in the bar above. */}
               <div style={{
                 width: `${percent}%`, height: '100%',
                 background: finished ? C.forest : C.amber,
@@ -341,8 +297,6 @@ export default function ProcessingView() {
       </Card>
 
       {jobs.length > 0 && (
-        // auto-fill, so the same grid gives a laptop two columns and a 32-inch
-        // monitor six without either being told how many to draw.
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16,
         }}>

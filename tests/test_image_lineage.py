@@ -1,14 +1,3 @@
-# Tests for images.source_image_id — the link from a processed photograph back
-# to the original it was made from.
-#
-# The schema is built on in-memory SQLite with foreign key enforcement switched
-# on, so none of this needs PostgreSQL:
-#
-#     pytest tests/test_image_lineage.py -v
-#
-# SQLite is not the production database, but it does enforce composite foreign
-# keys and ON DELETE RESTRICT, which is the whole of what is under test here.
-
 import io
 import itertools
 
@@ -24,12 +13,6 @@ from database.base import Base
 from database.models import Dealership, Image, ProcessingJob, User, VehicleListing
 
 
-# SQLite assigns a primary key only for a column declared exactly INTEGER
-# PRIMARY KEY, and every key in this schema is BigInteger, which is the right
-# choice for PostgreSQL. Without this narrowing the rows the application creates
-# for itself could not be inserted here at all — a processed image never picks
-# its own id — and the pipeline test below would be reduced to asserting
-# something it had set up by hand. It rewrites the SQLite DDL only.
 @compiles(BigInteger, "sqlite")
 def _bigint_is_integer_on_sqlite(type_, compiler, **kw):
     return "INTEGER"
@@ -44,18 +27,12 @@ _storage_paths = itertools.count()
 @pytest.fixture
 def session(tmp_path, monkeypatch):
     """One dealership, one user, one listing, and nowhere real to write."""
-    # The deletion routes remove files once their rows are gone. Pointing the
-    # storage root at a temporary directory means a test can never reach a file
-    # a developer actually cares about.
     monkeypatch.setattr(storage, "STORAGE_ROOT", tmp_path.resolve())
 
     engine = create_engine("sqlite://")
 
     @event.listens_for(engine, "connect")
     def _enforce_foreign_keys(connection, record):
-        # SQLite ignores every foreign key unless each connection asks for
-        # them, and a test that has quietly stopped checking constraints passes
-        # whatever it is given.
         connection.execute("PRAGMA foreign_keys=ON")
 
     Base.metadata.create_all(engine)
@@ -157,13 +134,7 @@ class StubProcessor:
 # ── The constraint itself ─────────────────────────────────────────────────────
 
 def test_the_source_link_is_a_listing_scoped_pair():
-    """
-    Handover gap 4 is that a processed image cannot be traced to its original.
-    The pair form is what keeps the trace inside one tenant: a plain reference
-    to images.id would let a derived row name a photograph belonging to another
-    dealership's listing, which is the leak every other composite key here
-    exists to prevent.
-    """
+    """Handover gap 4 is that a processed image cannot be traced to its original."""
     pair = constraint("source_image_same_listing")
 
     assert [column.name for column in pair.columns] == [
@@ -177,21 +148,12 @@ def test_the_source_link_is_a_listing_scoped_pair():
 
 
 def test_the_source_link_restricts_on_delete():
-    """
-    RESTRICT, matching every neighbouring constraint. CASCADE would take the
-    composite away with its original unasked, and SET NULL would leave an
-    "after" that can no longer be shown beside anything — both discard the
-    before-and-after pair the realism work is measured on, and neither says so.
-    """
+    """RESTRICT, matching every neighbouring constraint."""
     assert constraint("source_image_same_listing").ondelete == "RESTRICT"
 
 
 def test_the_referenced_pair_is_backed_by_a_unique_constraint():
-    """
-    A composite foreign key needs a unique index over exactly the columns it
-    names. Without image_listing_pair, PostgreSQL rejects the constraint as it
-    is created, so the migration fails on a clean database rather than the
-    schema quietly coming up without the rule.
+    """A composite foreign key needs a unique index over exactly the columns it names.
     """
     assert [column.name for column in constraint("image_listing_pair").columns] == [
         "id",
@@ -200,11 +162,9 @@ def test_the_referenced_pair_is_backed_by_a_unique_constraint():
 
 
 def test_source_image_id_is_nullable():
-    """
-    An original has no source, and neither has anything processed before the
-    column existed — the job that produced it is long gone, so the pairing
-    cannot be backfilled. NOT NULL would have made the migration unrunnable on
-    any database with rows in it.
+    """An original has no source, and neither has anything processed before the column
+    existed — the job that produced it is long gone, so the pairing cannot be
+    backfilled.
     """
     assert Image.__table__.c.source_image_id.nullable
 
@@ -235,10 +195,9 @@ def test_a_source_in_another_listing_is_refused(session):
 
 
 def test_an_image_cannot_be_its_own_source(session):
-    """
-    A row naming itself could never be deleted: RESTRICT is checked against the
-    row being removed as well, so its own reference would refuse the delete and
-    the dealer would be left with a photograph that cannot be got rid of.
+    """A row naming itself could never be deleted: RESTRICT is checked against the row
+    being removed as well, so its own reference would refuse the delete and the
+    dealer would be left with a photograph that cannot be got rid of.
     """
     image = add_image(session)
     image.source_image_id = image.id
@@ -251,12 +210,7 @@ def test_an_image_cannot_be_its_own_source(session):
 # ── The pipeline records it ───────────────────────────────────────────────────
 
 def test_a_finished_job_records_which_original_its_output_came_from(session, monkeypatch):
-    """
-    Handover gap 4 at the point where it is created. The pipeline wrote the
-    processed image with nothing on it naming its input, so the only route back
-    was the job — and a job is deleted along with the photograph it consumed,
-    so the pairing disappeared at the first tidy-up.
-    """
+    """Handover gap 4 at the point where it is created."""
     source_png = png_bytes()
     stored = storage.save_image(DEALERSHIP_ID, "original", source_png)
     original = Image(
@@ -294,14 +248,7 @@ def test_a_finished_job_records_which_original_its_output_came_from(session, mon
 # ── Deletion, which the new reference is in the way of ────────────────────────
 
 def test_a_photograph_can_still_be_deleted_after_it_has_been_processed(session):
-    """
-    The defect this exists to catch. source_image_id adds a RESTRICT reference
-    from the composite back to the original, so the original's delete is
-    refused while the composite is still there. Unhandled, a dealer could not
-    remove a photograph once it had been through the pipeline — which is
-    exactly when they want to, because an advertisement banner pulled in by a
-    URL import is only recognisable as junk after it has been processed.
-    """
+    """The defect this exists to catch."""
     original, processed, job = processed_photograph(session)
     original_id, processed_id, job_id = original.id, processed.id, job.id
 
@@ -313,13 +260,7 @@ def test_a_photograph_can_still_be_deleted_after_it_has_been_processed(session):
 
 
 def test_a_listing_can_still_be_deleted_after_it_has_been_processed(session):
-    """
-    The same reference, reached by the other route. delete_listing removes
-    every photograph in one flush, so whichever order the session happens to
-    emit them in decides the outcome: an original emitted before the composite
-    made from it is refused, and the dealer is told a listing they are looking
-    at cannot be deleted.
-    """
+    """The same reference, reached by the other route."""
     processed_photograph(session)
 
     routes_listings.delete_listing(LISTING_ID, session.get(User, 1), session)
@@ -342,13 +283,9 @@ def test_deleting_a_composite_leaves_its_original_and_the_job(session):
 
 
 def test_a_composite_is_found_by_its_source_link_not_only_through_its_job(session):
-    """
-    _release_job_references finds derived images through the job's output
-    pointer, which is a second copy of the same fact — and one the function
-    itself sets to NULL a few lines earlier. The database enforces RESTRICT on
-    images.source_image_id, so with the job pointer already cleared, following
-    it alone leaves the composite in place and the original's delete is
-    refused.
+    """_release_job_references finds derived images through the job's output pointer,
+    which is a second copy of the same fact — and one the function itself sets to
+    NULL a few lines earlier.
     """
     original, processed, job = processed_photograph(session)
     original_id, processed_id = original.id, processed.id
@@ -365,9 +302,11 @@ def test_a_composite_is_found_by_its_source_link_not_only_through_its_job(sessio
 # ── What the API says about it ────────────────────────────────────────────────
 
 def test_the_api_reports_which_original_a_processed_image_came_from(session):
-    """A before/after pair is buildable from the listing alone, without also
-    fetching its jobs."""
+    """A before/after pair is buildable from the listing alone, without also fetching
+    its jobs.
+    """
     original, processed, _ = processed_photograph(session)
 
     assert routes_listings._serialise_image(processed).source_image_id == original.id
     assert routes_listings._serialise_image(original).source_image_id is None
+

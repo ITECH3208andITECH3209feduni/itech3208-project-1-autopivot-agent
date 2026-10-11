@@ -1,10 +1,4 @@
-// AutoPivot Agent — Brand Guidelines
-// Ver6 · For APA-152 definition of done and Technical Report §3.3
 
-// The whole point of this page is that it renders the live system, so
-// documentation cannot drift from the product. The Figma Make export undermined
-// that by redeclaring the palette and type faces locally — this now imports
-// them, so a token change here is a token change everywhere.
 import { C, MONO, SANS, serif } from './design'
 
 const rule: React.CSSProperties = { borderTop: `1px solid ${C.line}`, margin: '48px 0 0', paddingTop: 40 }
@@ -82,7 +76,6 @@ export default function Guidelines() {
 
   return (
     <div style={{ background: C.paper, minHeight: '100vh' }}>
-      {/* Cover */}
       <div style={{ background: C.ink, padding: '80px 64px 64px' }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <div style={{ fontFamily: MONO, fontSize: 11, color: C.bone, opacity: 0.4, letterSpacing: '0.12em', marginBottom: 24, textTransform: 'uppercase' }}>
@@ -97,10 +90,8 @@ export default function Guidelines() {
         </div>
       </div>
 
-      {/* Body */}
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '64px 64px 96px' }}>
 
-        {/* 1. Brand foundation */}
         <Heading>1. Brand foundation</Heading>
         <Body>
           AutoPivot Agent is a professional instrument for Australian and New Zealand car dealerships. Its purpose is to
@@ -110,11 +101,9 @@ export default function Guidelines() {
           sophisticated. Trustworthy over trendy. Precise over decorative.
         </Body>
 
-        {/* 2. Colour */}
         <div style={rule}>
           <Heading>2. Colour</Heading>
           <div style={{ background: C.white, border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden', marginBottom: 24 }}>
-            {/* Header */}
             <div style={{ display: 'grid', gridTemplateColumns: '40px 120px 160px 1fr', gap: 16, padding: '10px 20px', background: C.bone, borderBottom: `1px solid ${C.line}` }}>
               {['', 'TOKEN', 'HEX', 'ROLE'].map(h => (
                 <span key={h} style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', color: C.inkSoft }}>{h}</span>
@@ -138,7 +127,6 @@ export default function Guidelines() {
           </Body>
         </div>
 
-        {/* 3. Typography */}
         <div style={rule}>
           <Heading>3. Typography</Heading>
           <div style={{ background: C.white, border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden', marginBottom: 24 }}>
@@ -174,7 +162,6 @@ export default function Guidelines() {
           <Body style={{ fontSize: 14 }}>Weights 400 and 500 only throughout.</Body>
         </div>
 
-        {/* 4. Surface and layout */}
         <div style={rule}>
           <Heading>4. Surface and layout</Heading>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
@@ -203,7 +190,6 @@ export default function Guidelines() {
           </Body>
         </div>
 
-        {/* 5. Components */}
         <div style={rule}>
           <Heading>5. Components</Heading>
           <div style={{ background: C.white, border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
@@ -216,7 +202,6 @@ export default function Guidelines() {
           </div>
         </div>
 
-        {/* 6. Decisions and rejected alternatives */}
         <div style={rule}>
           <Heading>6. Design decisions and rejected alternatives</Heading>
           <Body>
@@ -233,7 +218,6 @@ export default function Guidelines() {
           </div>
         </div>
 
-        {/* 7. Accessibility */}
         <div style={rule}>
           <Heading>7. Accessibility</Heading>
           <Label>Contrast ratios (WCAG AA — 4.5:1 body, 3:1 large text)</Label>

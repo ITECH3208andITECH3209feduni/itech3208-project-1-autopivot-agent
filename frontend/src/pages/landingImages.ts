@@ -1,13 +1,3 @@
-// Placeholder photography for the landing page, lifted from the Figma Make
-// export.
-//
-// These are Unsplash stock images, not AutoPivot output. Note that several
-// backdrop variants resolve to the SAME photograph — cx5-studio-grey-front3q,
-// cx5-forecourt-front3q and cx5-open-sky-front3q are all photo-1617469767068 —
-// so switching backdrop in the configurator currently changes nothing on
-// screen. The section claims "Any vehicle. Any backdrop. Any angle." and does
-// not yet demonstrate it. Replacing this with a real 3x3x6 matrix of pipeline
-// renders is tracked separately.
 
 import { UNSPLASH } from '../design'
 

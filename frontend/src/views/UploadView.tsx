@@ -1,31 +1,3 @@
-// Step one of the workflow: get a vehicle, its photographs and its backdrop in,
-// then hand straight over to processing.
-//
-// The Upload design shows only a drop zone and a URL field, but make, model and
-// year are NOT NULL in the schema — a listing cannot be built from photographs
-// alone, and the dashboard's "2021 Mazda CX-5 GT" has to come from somewhere.
-// The vehicle details step is added for that reason.
-//
-// It used to end by dropping the dealer on the vehicle page to find "process"
-// for themselves, and a note here said backdrop selection happened elsewhere.
-// Both were the same fault: three screens that each did a third of one job. So
-// the backdrop is chosen here, the last button starts the run, and the dealer
-// lands on Processing already watching it. The vehicle page keeps its own
-// controls for everything that comes back to a listing later.
-//
-// The order of operations is deliberate and hard-won. The listing is created
-// before the photographs are uploaded, so a failed upload leaves a listing to
-// retry into rather than losing the typed details; the URL import runs last,
-// against the saved listing, because it is the step most likely to fail.
-//
-// The same form also adds photographs to a vehicle that already exists, at
-// /app/upload?listing=12. It used to have no such mode, so every "Add
-// photographs" on a vehicle landed on a blank form, and typing the details in
-// again made a duplicate listing (or a 409, if the stock number was reused).
-// Opened for a vehicle, the form shows it rather than asking for it, and starts
-// out in the state it is in once it has saved a vehicle of its own — so the
-// rest of the flow, and everything that guards against a second listing, is
-// the code that already runs after a save.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -38,9 +10,6 @@ import { WORKFLOW_STEPS, stepHref, type WorkflowStep } from '../workflow'
 
 const MAX_FILE_MB = 25
 const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
-// A form does not improve with a metre of width. The shell centres the page at
-// up to 1520px for galleries; this holds the reading and typing to something a
-// person can scan on a 32-inch monitor, while the grids inside still reflow.
 const FORM_MAX_WIDTH = 1080
 
 type Draft = { file: File; previewUrl: string }
@@ -76,7 +45,6 @@ function Section({ step, title, description, children }: {
   )
 }
 
-/** Guidelines §9: thumbnail and label, forest border and tint when selected. */
 function BackdropChoice({
   label, hint, selected, disabled, onSelect, preview,
 }: {
@@ -95,9 +63,6 @@ function BackdropChoice({
       border: `1px solid ${selected ? C.forest : C.lineStrong}`,
       background: selected ? C.forestTint : C.white,
       cursor: disabled ? 'not-allowed' : 'pointer',
-      // The native ring lands on a 13px radio inside a large tile, which is
-      // easy to lose. Repeating it around the tile is what makes keyboard
-      // position obvious without suppressing the real focus indicator.
       outline: focused ? `2px solid ${C.forest}` : 'none',
       outlineOffset: 2,
       transition: 'border-color 0.15s, background 0.15s',
@@ -130,7 +95,6 @@ function BackdropChoice({
   )
 }
 
-/** A saved vehicle's details, to read rather than to type in again. */
 function VehicleFacts({ listing }: { listing: VehicleListingDetail }) {
   const facts: [string, string][] = [
     ['Make', listing.make],
@@ -141,9 +105,6 @@ function VehicleFacts({ listing }: { listing: VehicleListingDetail }) {
   ]
 
   return (
-    // The same grid and label style as the fields it replaces, so the page
-    // keeps its shape; a description list because label and value is what
-    // each pair is.
     <dl style={{
       display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
       gap: 12, margin: 0,
@@ -164,14 +125,9 @@ function VehicleFacts({ listing }: { listing: VehicleListingDetail }) {
 }
 
 export default function UploadView() {
-  // Present when the form was opened for a vehicle that already exists (see
-  // addPhotographsHref); absent for a new one.
   const [searchParams] = useSearchParams()
   const reference = searchParams.get('listing')
 
-  // Keyed on it: "+ New vehicle" from vehicle #12's form is the same route
-  // with the query dropped, so the router keeps the form mounted — and with it
-  // vehicle #12's id, which the "new" vehicle's photographs would go into.
   return <UploadForm key={reference === null ? 'new vehicle' : `vehicle ${reference}`} reference={reference} />
 }
 
@@ -181,7 +137,6 @@ function UploadForm({ reference }: { reference: string | null }) {
   const parsedReference = reference === null ? Number.NaN : Number(reference)
   const targetId = Number.isInteger(parsedReference) && parsedReference > 0 ? parsedReference : null
 
-  // The vehicle being added to, once it has loaded.
   const [existing, setExisting] = useState<VehicleListingDetail | null>(null)
   const [existingError, setExistingError] = useState<string | null>(null)
 
@@ -193,21 +148,18 @@ function UploadForm({ reference }: { reference: string | null }) {
 
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [dragging, setDragging] = useState(false)
-  // The label doubles as the busy flag: a four-stage submit should say which
-  // stage it is on rather than leave "Saving…" up while it uploads 40 MB.
   const [busyLabel, setBusyLabel] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
-  // Listing URL import. Held separately from `error` so a site that refuses
-  // the import does not read as a problem with the vehicle details.
   const [importUrl, setImportUrl] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
   const [importNote, setImportNote] = useState<string | null>(null)
 
-  // Set the moment the listing exists on the server. Everything after that
-  // point is recoverable rather than lost, and a second press must not create
-  // a second vehicle.
+  const [previewedUrl, setPreviewedUrl] = useState<string | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const [autoFilledNote, setAutoFilledNote] = useState<string | null>(null)
+
   const [savedListingId, setSavedListingId] = useState<number | null>(null)
   const [attachedCount, setAttachedCount] = useState(0)
 
@@ -216,9 +168,6 @@ function UploadForm({ reference }: { reference: string | null }) {
 
   const busy = busyLabel !== null
 
-  // Object URLs outlive the component unless they are revoked, and leaving the
-  // page mid-form is the most likely way to leave some behind. The ref is what
-  // lets the unmount cleanup see the current drafts without re-running.
   const draftsRef = useRef<Draft[]>([])
   draftsRef.current = drafts
   useEffect(() => () => {
@@ -231,14 +180,10 @@ function UploadForm({ reference }: { reference: string | null }) {
       .then(next => {
         if (cancelled) return
         setBackdrops(next)
-        // The dealership's default is the sensible starting choice; anything
-        // else asks the dealer to make a decision they usually do not have.
         const preferred = next.find(b => b.is_default)
         if (preferred) setBackdropId(preferred.id)
       })
       .catch(() => {
-        // The library is optional — a vehicle processes onto transparency
-        // without one — so a failure here must not block the form.
         if (!cancelled) setBackdrops([])
       })
     return () => { cancelled = true }
@@ -251,16 +196,11 @@ function UploadForm({ reference }: { reference: string | null }) {
       .then(listing => {
         if (cancelled) return
         setExisting(listing)
-        // From here the form is exactly where it would be had it just saved
-        // this vehicle itself: no second listing can be created, and what is
-        // already on the vehicle counts towards what there is to process.
         setSavedListingId(listing.id)
         setAttachedCount(listing.images.filter(image => image.image_type === 'original').length)
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        // The API answers 404 for a vehicle that belongs to another dealership
-        // as well as for one that has gone, so this does not guess which.
         setExistingError(
           err instanceof ApiError && err.status === 404
             ? `Vehicle #${targetId} could not be found. It may have been deleted, or the link may be wrong.`
@@ -295,6 +235,38 @@ function UploadForm({ reference }: { reference: string | null }) {
     })
   }
 
+  async function handleUrlBlur() {
+    const url = importUrl.trim()
+    if (!url || url === previewedUrl || busy) return
+    setPreviewedUrl(url)
+    setPreviewBusy(true)
+    setAutoFilledNote(null)
+    try {
+      const { vehicle } = await api.previewListingUrl(url)
+      if (!vehicle) return
+      let filledAny = false
+      if (vehicle.make && !make.trim()) { setMake(vehicle.make); filledAny = true }
+      if (vehicle.model && !model.trim()) { setModel(vehicle.model); filledAny = true }
+      if (vehicle.year && !year.trim()) { setYear(String(vehicle.year)); filledAny = true }
+      if (vehicle.variant && !variant.trim()) { setVariant(vehicle.variant); filledAny = true }
+      if (vehicle.stock_number && !stockNumber.trim()) { setStockNumber(vehicle.stock_number); filledAny = true }
+      if (filledAny) {
+        setAutoFilledNote('Filled in from the listing page — check it over before saving.')
+      }
+    } catch {
+    } finally {
+      setPreviewBusy(false)
+    }
+  }
+
+  const urlBlurRef = useRef(handleUrlBlur)
+  urlBlurRef.current = handleUrlBlur
+  useEffect(() => {
+    if (!/^https?:\/\/\S+\.\S+/i.test(importUrl.trim())) return
+    const timer = window.setTimeout(() => { void urlBlurRef.current() }, 700)
+    return () => window.clearTimeout(timer)
+  }, [importUrl])
+
   const yearNumber = Number(year)
   const detailsValid =
     make.trim() !== '' &&
@@ -307,11 +279,8 @@ function UploadForm({ reference }: { reference: string | null }) {
   const queuedHere = drafts.length > 0 || willImport
   const chosenBackdrop = backdrops?.find(b => b.id === backdropId) ?? null
 
-  /** The last step, split out so the recovery panel can retry just this part. */
   async function startProcessing(listingId: number, attached: number) {
     if (attached === 0) {
-      // Nothing to process. The vehicle is real, so go to it rather than to a
-      // progress screen with nothing on it.
       navigate(`/app/vehicles/${listingId}`)
       return
     }
@@ -321,9 +290,6 @@ function UploadForm({ reference }: { reference: string | null }) {
       await api.processListing(listingId, backdropId)
       navigate(`/app/processing/${listingId}`)
     } catch (err) {
-      // The server says useful things here — that this deployment has no
-      // vehicle processor, or that every photograph is already done — so its
-      // words are shown rather than replaced with a generic failure.
       setError((err as Error).message)
       setBusyLabel(null)
     }
@@ -361,8 +327,6 @@ function UploadForm({ reference }: { reference: string | null }) {
       try {
         await api.uploadImages(listingId, drafts.map(d => d.file))
         attached += drafts.length
-        // Uploaded files are on the server now, so the local previews are both
-        // redundant and a leak waiting to happen.
         drafts.forEach(d => URL.revokeObjectURL(d.previewUrl))
         setDrafts([])
         setAttachedCount(attached)
@@ -380,13 +344,8 @@ function UploadForm({ reference }: { reference: string | null }) {
         attached += result.images.length
         setAttachedCount(attached)
         setImportNote(result.note)
-        // Cleared so a retry of anything later does not import the same
-        // gallery twice.
         setImportUrl('')
       } catch (err) {
-        // The vehicle and any uploaded photographs are already safe: a site
-        // that refuses costs the URL and nothing else. Stop here so the dealer
-        // decides what to do rather than being carried past the failure.
         setImportError((err as Error).message)
         setBusyLabel(null)
         return
@@ -397,17 +356,11 @@ function UploadForm({ reference }: { reference: string | null }) {
   }
 
   function goToStep(step: Step) {
-    // The Stepper leaves the current step clickable so it can be announced as
-    // a button; navigating to the page you are already on would only add a
-    // history entry to back out of.
     if (step.key === 'upload') return
     const href = stepHref(step.key as WorkflowStep, savedListingId)
     if (href) navigate(href)
   }
 
-  // The button says which of the four things it is about to do, and the
-  // sentence beside it says what that means, because "Create listing" told a
-  // dealer nothing about whether their photographs were about to be processed.
   const backdropPhrase = chosenBackdrop ? `onto ${chosenBackdrop.name}` : 'onto transparency'
   const queuedPhrase = drafts.length > 0
     ? `${drafts.length} photograph${drafts.length === 1 ? '' : 's'}${willImport ? ' and whatever the listing URL gives up' : ''}`
@@ -425,21 +378,15 @@ function UploadForm({ reference }: { reference: string | null }) {
     ? queuedHere
       ? `Uploads ${queuedPhrase} to the vehicle that is already saved, then starts processing ${backdropPhrase}.`
       : existing
-        // A vehicle opened here may have been through the pipeline before,
-        // and the server queues only what has not.
         ? `Starts processing whatever on this vehicle has not been processed yet, ${backdropPhrase}.`
         : `Starts processing the ${attachedCount} photograph${attachedCount === 1 ? '' : 's'} already on this vehicle, ${backdropPhrase}.`
     : queuedHere
       ? `Saves the vehicle, uploads ${queuedPhrase}, then starts processing ${backdropPhrase}.`
       : 'Saves the vehicle so you can add photographs to it later. Nothing is processed until there are some.'
 
-  // A new vehicle needs its details; an existing one only needs something to
-  // add, or something already on it to process.
   const ready = existing ? queuedHere || attachedCount > 0 : detailsValid
 
   if (reference !== null && existing === null) {
-    // Nothing is offered until the vehicle has loaded. The form without it is
-    // the new-vehicle form, and its button would create one.
     const problem = targetId === null
       ? `“${reference}” is not a vehicle reference.`
       : existingError
@@ -520,8 +467,6 @@ function UploadForm({ reference }: { reference: string | null }) {
           title="Vehicle details"
           description="Make, model and year identify the listing. Everything else is optional."
         >
-          {/* auto-fit rather than a column count: three fields side by side on a
-              wide monitor, stacked on a laptop, without either being named. */}
           <div style={{
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
             gap: 12, marginBottom: 12,
@@ -609,9 +554,6 @@ function UploadForm({ reference }: { reference: string | null }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
               {drafts.map((draft, i) => (
                 <div key={draft.previewUrl} style={{ position: 'relative' }}>
-                  {/* A local file, not a stored one: this is the one place a
-                      plain <img> is correct, because there is no request to
-                      authenticate. */}
                   <img
                     src={draft.previewUrl}
                     alt={draft.file.name}
@@ -659,9 +601,27 @@ function UploadForm({ reference }: { reference: string | null }) {
           label="Listing URL"
           value={importUrl}
           onChange={setImportUrl}
+          onBlur={handleUrlBlur}
           placeholder="https://… (optional)"
           disabled={busy}
         />
+
+        {previewBusy && (
+          <p style={{
+            fontFamily: SANS, fontSize: 13, color: C.inkSoft, margin: '10px 0 0',
+          }}>
+            Reading the listing page…
+          </p>
+        )}
+
+        {autoFilledNote && (
+          <p style={{
+            fontFamily: SANS, fontSize: 14, color: C.forest, background: C.forestTint,
+            borderRadius: 8, padding: '12px 16px', margin: '16px 0 0', lineHeight: 1.6,
+          }}>
+            {autoFilledNote}
+          </p>
+        )}
 
         {importNote && (
           <p style={{
@@ -689,7 +649,7 @@ function UploadForm({ reference }: { reference: string | null }) {
       <Section
         step="03"
         title="Backdrop"
-        description="The scene each vehicle is placed onto once it has been cut out and its plates covered. One choice covers the whole run."
+        description="The scene each vehicle is placed onto once it has been cut out and its plates covered. Backdrops tagged with a shot angle (on the Backdrops page) are used automatically for photos taken from that angle; everything else uses this one."
       >
         {backdrops === null ? (
           <p style={{ fontFamily: SANS, fontSize: 14, color: C.inkSoft, margin: 0 }}>
@@ -715,9 +675,6 @@ function UploadForm({ reference }: { reference: string | null }) {
                     aria-hidden
                     style={{
                       width: '100%', aspectRatio: '4 / 3',
-                      // The chequerboard that means transparency everywhere else
-                      // in image software, drawn from the palette rather than an
-                      // asset.
                       background: `repeating-conic-gradient(${C.bone} 0% 25%, ${C.white} 0% 50%) 50% / 18px 18px`,
                     }}
                   />
@@ -758,8 +715,6 @@ function UploadForm({ reference }: { reference: string | null }) {
         )}
       </Section>
 
-      {/* The saved-vehicle panel below is news only when this screen did the
-          saving. A vehicle that was opened here keeps the ordinary row. */}
       {savedListingId === null || existing ? (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 24,
@@ -778,10 +733,6 @@ function UploadForm({ reference }: { reference: string | null }) {
           </span>
         </div>
       ) : (
-        // Once the listing exists, this panel is the only action area on the
-        // screen. Two solid buttons offering the same run would be one more
-        // decision than the situation deserves, and the guidelines allow one
-        // primary action per view.
         <Card style={{ padding: 24, marginTop: 24, borderColor: C.lineStrong }}>
           <h2 style={{ fontFamily: SANS, fontSize: 18, fontWeight: 500, color: C.ink, margin: '0 0 6px' }}>
             This vehicle is saved

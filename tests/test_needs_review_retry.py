@@ -1,9 +1,3 @@
-# Tests for create_jobs's "already done" check — specifically that a
-# needs_review outcome (status "completed", review_state "needs_review") does
-# not count as done, so pressing Reprocess can pick it up again.
-#
-#     pytest tests/test_needs_review_retry.py -v
-
 import itertools
 
 from sqlalchemy import BigInteger, create_engine, event
@@ -115,13 +109,9 @@ def add_job(session, image, status, review_state, output=None):
 
 
 def test_a_needs_review_photograph_is_queued_again_by_reprocess(session):
-    """
-    The defect this exists to catch: `run_job` records a "no vehicle
-    detected" outcome as status "completed" (the run itself did not fail),
-    with review_state "needs_review" marking it for a person. Before this
-    fix, create_jobs treated any status == "completed" job as already done
-    and silently skipped it forever — a dealer could delete the photograph
-    and retake it, but pressing Reprocess could never try the same one again.
+    """The defect this exists to catch: `run_job` records a "no vehicle detected"
+    outcome as status "completed" (the run itself did not fail), with review_state
+    "needs_review" marking it for a person.
     """
     image = add_original(session)
     add_job(session, image, status="completed", review_state="needs_review")
@@ -134,12 +124,9 @@ def test_a_needs_review_photograph_is_queued_again_by_reprocess(session):
 
 
 def test_a_successfully_processed_photograph_is_not_queued_again(session):
-    """Unchanged behaviour: real success is still skipped, so Reprocess does
-    not duplicate work that already produced a usable result.
-
-    Real success means a composite exists. A completed job whose composite has
-    since been deleted is queued again on purpose — see
-    tests/test_reprocess_deleted_output.py."""
+    """Unchanged behaviour: real success is still skipped, so Reprocess does not
+    duplicate work that already produced a usable result.
+    """
     image = add_original(session)
     add_job(
         session, image, status="completed", review_state="ok",
@@ -153,8 +140,9 @@ def test_a_successfully_processed_photograph_is_not_queued_again(session):
 
 
 def test_a_failed_photograph_is_still_queued_again(session):
-    """Unchanged behaviour, checked directly: a crashed job was never
-    status == "completed", so it was never in scope for this fix."""
+    """Unchanged behaviour, checked directly: a crashed job was never status ==
+    "completed", so it was never in scope for this fix.
+    """
     image = add_original(session)
     add_job(session, image, status="failed", review_state=None)
 
@@ -162,3 +150,41 @@ def test_a_failed_photograph_is_still_queued_again(session):
     queued = processing.create_jobs(session, listing, backdrop=None)
 
     assert [j.input_image_id for j in queued] == [image.id]
+
+
+# ── Queue: no duplicates, one at a time, survives a restart ──────────────────
+
+def test_only_one_photograph_is_in_the_models_at_a_time(monkeypatch):
+    """Each listing has its own run, so eight vehicles used to mean eight photographs
+    fighting over one CPU. PROCESSING_WORKERS caps it across all.
+    """
+    import threading
+    import time
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    fake_session = SimpleNamespace(
+        get=lambda model, job_id: SimpleNamespace(id=job_id), commit=lambda: None,
+    )
+    factory = lambda: nullcontext(fake_session)  # noqa: E731
+    busy, most = [0], [0]
+    lock = threading.Lock()
+
+    def slow_job(session, job):
+        with lock:
+            busy[0] += 1
+            most[0] = max(most[0], busy[0])
+        time.sleep(0.2)
+        with lock:
+            busy[0] -= 1
+
+    monkeypatch.setattr(processing, "run_job", slow_job)
+    monkeypatch.setattr(processing, "_workers", threading.BoundedSemaphore(1))
+    runners = [threading.Thread(target=processing._run_one, args=(factory, job_id))
+               for job_id in (101, 102)]
+    for runner in runners:
+        runner.start()
+    for runner in runners:
+        runner.join()
+    assert most[0] == 1
+

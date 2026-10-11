@@ -6,8 +6,6 @@ import { C, RADIUS_CONTROL, SANS, serif } from '../design'
 
 export default function ChangePasswordPage() {
   const { user, changePassword } = useAuth()
-  // Forced after an account is created or reset; otherwise reached from the
-  // team page to change a password that is already private.
   const initial = user?.must_change_password ?? true
   const navigate = useNavigate()
   const [currentPassword, setCurrentPassword] = useState('')

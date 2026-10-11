@@ -1,39 +1,4 @@
-"""Record what a realism change actually did, as numbers and as pictures.
-
-REALISM_PLAN.md closes by asking that the before and the after of every phase be
-recorded as it lands, "far more convincing than an assertion that the output
-looks better". This is where that recording happens. Point it at a folder of
-cut-out vehicles and it composites every one of them, writes the renders where a
-person can look at them side by side, measures everything metrics.py can
-measure, asks elevation.py where the camera was, and writes the lot out as a
-metrics file and a short summary.
-
-    python -m scripts.realism_report --synthetic --label 'harness smoke test'
-    python -m scripts.realism_report --cutouts ~/cutouts --label 'before phase 1'
-    python -m scripts.realism_report --cutouts ~/cutouts --label 'after phase 1' \
-        --out evidence/after --baseline evidence/metrics.json
-
-The third form is the one that matters. A phase is judged as a delta against a
-metrics file saved before it started, not as an absolute: nobody reading the
-report knows whether an edge-quality ratio of 0.27 is good, and everybody can
-see that it used to be 0.11.
-
-INPUTS, AND WHY THE HARNESS INSISTS ON SAYING WHERE THEY CAME FROM.
-
-The repository contains no real cut-outs — they are dealer photographs — so
-`--synthetic` draws its own. A synthetic run proves this harness works end to
-end. It proves nothing whatever about realism, because the vehicles in it were
-drawn by the same repository that is being measured. Every synthetic run is
-therefore labelled as one, in the metrics file and at the top of the summary, and
-the label survives a cut-out being copied out of the smoke-run directory without
-its sidecar because it is also written into the PNG itself. A technical report
-quoting these figures as evidence that a composite looks better would be
-dishonest, and this labelling is what stops it happening by accident.
-
-Nothing here needs a GPU, a model, a database or a network: only the standard
-library, cv2, numpy, PIL and the three pure modules. That is deliberate. A
-measurement nobody else can reproduce on their own laptop is not evidence.
-"""
+"""Record what a realism change actually did, as numbers and as pictures."""
 
 from __future__ import annotations
 
@@ -57,74 +22,31 @@ import metrics
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Renders are large binaries and the metrics file is small, so .gitignore keeps
-# the second and drops the first. Defaulting to a path under the repository
-# rather than to the working directory is what makes that hold wherever the
-# script is run from.
 DEFAULT_OUTPUT_DIR = ROOT / "evidence"
 
-# Stamped into every metrics file. A later stage comparing against a baseline
-# needs to know it is reading the same shape of file, and "the keys I expected
-# are missing" is a far worse thing to work out from a traceback than a version
-# that does not match.
 SCHEMA = "autopivot.realism-report/1"
 
-# Written into the PNG of every cut-out this script draws. A sidecar can be lost
-# by copying the image somewhere else; a text chunk travels inside the file, and
-# a synthetic vehicle silently reported as a photograph is the one failure this
-# harness exists to prevent.
 SYNTHETIC_PNG_KEY = "autopivot-synthetic"
 
 CUTOUT_SUFFIXES = (".png", ".webp")
 
-# Taken from the module that owns the vocabulary rather than typed out again
-# here, so that an angle added there does not leave this script rejecting it.
-# Only used to warn: both compositing.py and elevation.py degrade gracefully on
-# a label they do not recognise, so an unknown angle costs accuracy rather than
-# failing the run, and a typo in a sidecar would otherwise be invisible.
 KNOWN_ANGLES = tuple(elevation.ANGLE_ELEVATION_PRIOR_DEG)
 
-# The rungs of elevation.py's cascade that measured something, as against the
-# two that fall back on how dealers are known to shoot. Pooling the two kinds
-# together without saying which is which would let a population prior be quoted
-# as an observation. Taken from the module that owns the cascade rather than
-# repeated here: the compositor gates horizon alignment on the same distinction,
-# and two copies of it would eventually disagree about which is which.
 MEASURED_ELEVATION_METHODS = elevation.MEASURED_METHODS
 
 
 # ── The synthetic vehicles ─────────────────────────────────────────────────────
 
-# Big enough that a wheel clears elevation.WHEEL_MIN_MAJOR_PX: a 0.632 m wheel at
-# 400 px/m is 253 px across, which is roughly what a car filling a 3000 px
-# photograph gives and is the regime that module says it needs.
 SYNTHETIC_PIXELS_PER_METRE = 400
 
-# Saturated paint against near-neutral rubber, which is the discrimination
-# elevation.TYRE_SATURATION_MAX and TYRE_LIGHTNESS_CEILING are drawn to make. A
-# body colour that happened to be dark and grey would leave the wheel rung
-# segmenting the whole car as one tyre, and the smoke run would then exercise
-# nothing.
 SYNTHETIC_BODY_COLOUR = (176, 62, 58)
 SYNTHETIC_TYRE_COLOUR = (28, 28, 30)
 
-# A 16-inch rim inside the tyre, drawn light. Not decoration: elevation.py takes
-# its darkness threshold from the 15th percentile of the search band, so a wheel
-# that is dark all the way through pushes that percentile down into the rubber
-# itself and the threshold then selects nothing at all. Drawn without a rim the
-# whole set fell through to the shot-angle prior, and the smoke run exercised
-# none of the machinery it exists to exercise.
 SYNTHETIC_RIM_COLOUR = (185, 185, 190)
 SYNTHETIC_RIM_RADIUS_M = 0.2032
 
-# The wheel arch, reproduced as the thing that actually happens in a photograph:
-# body paint over the top of the tyre. elevation._chord_ratio exists because of
-# it, so a synthetic set without it would exercise the easy case only.
 SYNTHETIC_ARCH_CLIP = 0.15
 
-# A soft edge, because a segmentation mask has one and a drawn shape does not.
-# Without it every synthetic cut-out scores exactly zero for edge quality, which
-# is a true number about a fixture rather than a smoke test of the measure.
 SYNTHETIC_EDGE_SOFTNESS_PX = 1.4
 
 SYNTHETIC_WHEELBASE_M = 2.70
@@ -133,9 +55,6 @@ SYNTHETIC_ROCKER_HEIGHT_M = 0.16
 SYNTHETIC_SHOULDER_HEIGHT_M = 0.80
 SYNTHETIC_MARGIN_PX = 12
 
-# Three camera heights across three azimuths: the spread REALISM_PLAN.md's Phase
-# 1 is about, and between them they reach every rung of the elevation cascade.
-# (name, shot angle, nominal elevation in degrees, azimuth away from side-on)
 SYNTHETIC_SET: tuple[tuple[str, str, float, float], ...] = (
     ("side-crouching", "side", elevation.CROUCHING_ELEVATION_DEG, 0.0),
     ("side-standing", "side", elevation.STANDING_ELEVATION_DEG, 0.0),
@@ -146,56 +65,17 @@ SYNTHETIC_SET: tuple[tuple[str, str, float, float], ...] = (
 
 
 def synthetic_cutout(elevation_deg: float, azimuth_deg: float) -> Image.Image:
-    """
-    A drawn RGBA cut-out of a car, seen from a stated camera elevation.
-
-    A cartoon, and it has to be read as one. The silhouette is a rounded body
-    with a cabin on top and is not the projection of any real vehicle; what is
-    faithful is the geometry the estimator actually reads. The car's dimensions
-    come from elevation.py's own reference vehicle rather than being invented
-    here, and each wheel is drawn as the ellipse that circle really projects to,
-    minor over major = |cos(elevation) * cos(azimuth)|, which is the relationship
-    elevation.py documents its departure from REALISM_PLAN.md over.
-
-    Three things encode the nominal elevation, and all three had to, because
-    while only the first was drawn a sweep over this fixture measured the drawing
-    rather than the estimator — and read as evidence against elevation.py's
-    second rung when it was really evidence about what was missing here:
-
-      * Each wheel is the ellipse its circle projects to.
-      * The underbody gap closes as the camera rises, following the same
-        c - b*tan(theta) that `elevation.UNDERSIDE_GEOMETRY` states, so rung 2
-        has something real to read. Drawn at a fixed rocker height it never
-        varied, and the rung duly reported nearly the same angle across a whole
-        sweep — which looks exactly like an overconfident estimator and was not.
-      * The contact line tilts with azimuth. A nearer wheel projects lower than
-        a far one, so a quarter-angle car does not stand on a level line, and
-        rung 2 declines there as it was written to. Drawn level, it answered in
-        precisely the case its own wheelbase test exists to refuse.
-
-    It remains a cartoon: the silhouette is a rounded body with a cabin on top
-    and is not the projection of any real vehicle. What is faithful is the
-    geometry the estimator reads, and the car's dimensions come from
-    elevation.py's reference vehicle rather than being invented here.
-    """
+    """A drawn RGBA cut-out of a car, seen from a stated camera elevation."""
     metres_to_px = SYNTHETIC_PIXELS_PER_METRE
     azimuth = math.radians(azimuth_deg)
     cos_azimuth, sin_azimuth = math.cos(azimuth), math.sin(azimuth)
 
-    # The width the body projects to as it turns: 4.70 m side-on falling to
-    # 1.83 m head-on, which is the collapse compositing.REFERENCE_VEHICLE_ASPECT
-    # is derived from and the reason a gallery has to be sized by height.
     length_m = (
         elevation.REFERENCE_VEHICLE_LENGTH_M * abs(cos_azimuth)
         + elevation.REFERENCE_VEHICLE_WIDTH_M * abs(sin_azimuth)
     )
     height_m = elevation.REFERENCE_VEHICLE_HEIGHT_M
 
-    # Where each of the four wheels lands across the frame, and how near the
-    # camera it is. Both are needed: projecting the wheelbase alone would put
-    # the pair on top of one another head-on, where what a photograph actually
-    # shows is two wheels a track apart, and it is the depth that says which
-    # pair the body hides.
     wheels = sorted(
         (
             lateral * cos_azimuth + longitudinal * sin_azimuth,
@@ -238,19 +118,7 @@ def synthetic_cutout(elevation_deg: float, azimuth_deg: float) -> Image.Image:
         return 0.0 if remaining <= 0.1 else camera_height_m * depth_m / remaining
 
     def depth_lift_px(depth_m: float) -> float:
-        """
-        How much HIGHER a wheel this far behind the nearest one projects.
-
-        A pinhole puts a ground point at distance D below the horizon by f*h/D,
-        so wheels at different depths do not share a contact row. Measured
-        against the nearest wheel rather than the car's centre, so the car still
-        stands on its own ground line and only the far wheels ride up.
-
-        Side-on and end-on the two visible wheels share a depth and this is zero
-        for both, which is why those cases keep the level contact line rung 2
-        needs. At a quarter angle they separate and no level line exists — which
-        is exactly what that rung's wheelbase test refuses, and it should.
-        """
+        """How much HIGHER a wheel this far behind the nearest one projects."""
         return metres_to_px * (_drop(depth_m) - _drop(nearest_depth))
 
     def draw_wheel(offset_m: float, clip_the_arch: bool, depth_m: float = 0.0) -> None:
@@ -280,20 +148,10 @@ def synthetic_cutout(elevation_deg: float, azimuth_deg: float) -> Image.Image:
                 fill=body,
             )
 
-    # Far wheels, then the body over them, then the near pair on top, which is
-    # the order a photograph presents them in. Drawing all four above the body
-    # would show the far side of the car through it at a quarter angle.
     for depth, offset_m in wheels:
         if depth <= 0:
             draw_wheel(offset_m, clip_the_arch=False, depth_m=depth)
 
-    # The lower edge of the body IS the underbody gap rung 2 measures, so it is
-    # drawn from that rung's own model rather than at a fixed rocker height:
-    # the gap is the clearance less the lever times tan(elevation), closing to
-    # nothing once the camera is high enough to see the valance instead of the
-    # cavity. Reusing elevation.UNDERSIDE_GEOMETRY means a change to the
-    # estimator's constants moves the fixture with it, instead of leaving the
-    # two silently describing different cars.
     clearance_m, lever_m = elevation.UNDERSIDE_GEOMETRY[
         "side" if abs(cos_azimuth) > 0.85
         else "end" if abs(cos_azimuth) < 0.35
@@ -319,11 +177,6 @@ def synthetic_cutout(elevation_deg: float, azimuth_deg: float) -> Image.Image:
         fill=body,
     )
 
-    # The cavity between the contact patches, filling in as the camera rises.
-    # Inset to the wheels on purpose: what closes the gap in a photograph is the
-    # far rocker and the underbody coming into view BETWEEN the wheels, and
-    # drawing it across them instead would bury the lower part of each ellipse
-    # and quietly destroy the measurement rung 1 depends on.
     if gap_m < SYNTHETIC_ROCKER_HEIGHT_M:
         inner = sorted(offset for _, offset in wheels)
         left_edge = inner[0] + elevation.WHEEL_DIAMETER_M / 2.0
@@ -343,10 +196,6 @@ def synthetic_cutout(elevation_deg: float, azimuth_deg: float) -> Image.Image:
 
     rgb = np.array(canvas.convert("RGB"), dtype=np.uint8)
     alpha = np.array(canvas.getchannel("A"), dtype=np.uint8)
-    # The colour is spread outwards before the alpha is feathered, or the soft
-    # ring would be transparent black over the top of the paint and every
-    # synthetic vehicle would composite with a dark halo — the very artefact
-    # compositing.refine_alpha_mask erodes the mask to remove.
     rgb = cv2.dilate(rgb, np.ones((3, 3), dtype=np.uint8), iterations=2)
     alpha = cv2.GaussianBlur(alpha, (0, 0), SYNTHETIC_EDGE_SOFTNESS_PX)
 
@@ -356,15 +205,7 @@ def synthetic_cutout(elevation_deg: float, azimuth_deg: float) -> Image.Image:
 
 
 def write_synthetic_set(directory: Path) -> list[Path]:
-    """
-    Draw the smoke-run set into `directory`, tagged so it cannot pass for real.
-
-    Each cut-out gets the synthetic marker inside the PNG and a sidecar carrying
-    the shot angle and the elevation it was drawn from. The sidecar is the same
-    file format a person can write by hand next to a real photograph, so the
-    smoke run exercises exactly the path real inputs take rather than a private
-    one of its own.
-    """
+    """Draw the smoke-run set into `directory`, tagged so it cannot pass for real."""
     directory.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for name, angle, elevation_deg, azimuth_deg in SYNTHETIC_SET:
@@ -392,12 +233,7 @@ def write_synthetic_set(directory: Path) -> list[Path]:
 
 @dataclass(frozen=True)
 class Cutout:
-    """One input photograph and everything known about it before it is measured.
-
-    `angle` and `vehicle_horizon_ratio` are read rather than derived: nothing in
-    this harness classifies a shot angle or finds a horizon, and inventing either
-    would be putting a guess into the provenance of a measurement.
-    """
+    """One input photograph and everything known about it before it is measured."""
 
     path: Path
     image: Image.Image
@@ -418,13 +254,7 @@ def file_digest(path: Path) -> str:
 
 
 def read_sidecar(path: Path) -> dict:
-    """
-    The optional `<name>.json` beside a cut-out, or an empty mapping.
-
-    A malformed sidecar warns and is ignored rather than stopping the run: a
-    batch of thirty photographs should not be lost to one stray comma, and the
-    photograph it belonged to still measures perfectly well without its angle.
-    """
+    """The optional `<name>.json` beside a cut-out, or an empty mapping."""
     sidecar = path.with_suffix(".json")
     if not sidecar.is_file():
         return {}
@@ -449,10 +279,6 @@ def load_cutouts(directory: Path) -> list[Cutout]:
         image = Image.open(path)
         image.load()
         if "A" not in image.getbands():
-            # Not fatal, but worth saying loudly. Everything downstream treats a
-            # missing alpha channel as a fully opaque rectangle: the edge quality
-            # comes out at zero and the composite is a photograph pasted on as a
-            # block, and both are numbers rather than errors.
             print(
                 f"warning: {path.name} has no alpha channel, so it is not a cut-out",
                 file=sys.stderr,
@@ -472,9 +298,6 @@ def load_cutouts(directory: Path) -> list[Cutout]:
                 image=image.convert("RGBA"),
                 digest=file_digest(path),
                 angle=angle,
-                # Either witness is enough. The sidecar is the one a person
-                # writes; the PNG marker is the one that survives the file being
-                # copied somewhere else on its own.
                 synthetic=bool(sidecar.get("synthetic"))
                 or image.info.get(SYNTHETIC_PNG_KEY) == "1",
                 nominal_elevation_deg=sidecar.get("nominal_elevation_deg"),
@@ -492,19 +315,10 @@ def measure(
     preset: compositing.BackdropPreset,
     backdrop_horizon_ratio: float | None = None,
 ) -> tuple[dict, Image.Image]:
-    """
-    Composite one cut-out and reduce it to a row of the metrics file.
-
-    Returns the row and the render, so that the caller decides where the picture
-    goes and this stays a function a test can call without a directory.
-    """
+    """Composite one cut-out and reduce it to a row of the metrics file."""
     render, composed = compositing.compose(cutout.image, backdrop, preset, angle=cutout.angle)
     estimate = elevation.estimate_elevation(cutout.image, cutout.angle)
 
-    # Measured on the cut-out and never on the render. A finished composite is
-    # opaque everywhere, so metrics.edge_quality finds no boundary in it and
-    # returns zeros — which is exactly the score a hopelessly binary matte gets,
-    # and would make the mistake invisible in a results table.
     edge = metrics.edge_quality(cutout.image)
 
     offset = None
@@ -521,12 +335,6 @@ def measure(
         "synthetic": cutout.synthetic,
         "angle": cutout.angle,
         "cutout_size": {"width": cutout.image.width, "height": cutout.image.height},
-        # estimate_elevation hands back the inference and not the measurement
-        # behind it — the raw axis ratio and the raw underside gap stay inside
-        # elevation.py's own rungs — so the method name is recorded beside every
-        # figure. A 'wheel_ellipse' row and an 'assumed' row are not the same kind
-        # of number, and averaging them without saying so is the easiest way to
-        # quote a population prior as an observation.
         "elevation": {
             "degrees": round(estimate.degrees, 2),
             "confidence": round(estimate.confidence, 3),
@@ -541,22 +349,12 @@ def measure(
         "horizon_offset_px": None if offset is None else round(offset, 1),
     }
     if cutout.nominal_elevation_deg is not None:
-        # Only ever present when something outside the harness knew the truth,
-        # which today means a drawn vehicle. It is recorded rather than scored
-        # against: a synthetic set cannot tell anyone how accurate the estimator
-        # is on photographs.
         record["nominal_elevation_deg"] = round(float(cutout.nominal_elevation_deg), 2)
     return record, render
 
 
 def summarise(records: list[dict]) -> dict:
-    """
-    Roll the per-photograph rows up into the figures a phase is judged on.
-
-    Edge quality is pooled from the counts rather than averaged from the ratios,
-    which is what metrics.EdgeQuality carries both counts for: averaging ratios
-    over a set weights a wing mirror the same as a whole car.
-    """
+    """Roll the per-photograph rows up into the figures a phase is judged on."""
     fractional = sum(row["edge_quality"]["fractional_px"] for row in records)
     silhouette = sum(row["edge_quality"]["silhouette_px"] for row in records)
     degrees = [row["elevation"]["degrees"] for row in records]
@@ -569,9 +367,6 @@ def summarise(records: list[dict]) -> dict:
     try:
         spread = round(metrics.size_spread(heights), 4)
     except ValueError as exc:
-        # A height of zero is a photograph that rendered nothing, which is a
-        # failed composite rather than an incoherent gallery. Reporting it as a
-        # blank with the reason beats losing the other four figures to it.
         print(f"warning: gallery coherence not measured — {exc}", file=sys.stderr)
         spread = None
 
@@ -609,9 +404,6 @@ def build_report(
         "schema": SCHEMA,
         "label": label,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        # Repeated at the top level as well as per photograph because this is the
-        # field a reader has to see before any figure below it, and burying it in
-        # a list of thirty rows would be a good way to have it missed.
         "synthetic": bool(inputs.get("synthetic")),
         "inputs": inputs,
         "backdrop": backdrop,
@@ -623,7 +415,6 @@ def build_report(
 
 # ── Comparing against a saved baseline ─────────────────────────────────────────
 
-# The totals a phase moves, with how many places each is worth quoting to.
 COMPARED_TOTALS: tuple[tuple[str, int], ...] = (
     ("edge_quality_ratio", 4),
     ("size_spread", 4),
@@ -634,15 +425,7 @@ COMPARED_TOTALS: tuple[tuple[str, int], ...] = (
 
 
 def compare(report: dict, baseline: dict) -> dict:
-    """
-    The deltas between this run and a saved one, with what invalidates them.
-
-    The warnings are the point of doing this in code rather than by eye. Two
-    metrics files always subtract, and the difference is meaningless when they
-    were measured over different photographs, against a different backdrop, or
-    when one of them was synthetic — all three of which are easy to do by
-    accident weeks apart and impossible to spot in a table of numbers.
-    """
+    """The deltas between this run and a saved one, with what invalidates them."""
     warnings: list[str] = []
     if bool(baseline.get("synthetic")) != bool(report.get("synthetic")):
         warnings.append(
@@ -737,13 +520,7 @@ def _figure(value: float | None, places: int) -> str:
 def render_summary(
     report: dict, comparison: dict | None = None, output_dir: Path | None = None
 ) -> str:
-    """
-    The short human-readable summary, derived entirely from the metrics file.
-
-    Taking the whole thing from the report rather than from the run means the
-    summary and the numbers cannot disagree, and that a saved metrics file is a
-    complete record on its own.
-    """
+    """The short human-readable summary, derived entirely from the metrics file."""
     totals = report.get("totals", {})
     backdrop = report.get("backdrop", {})
     inputs = report.get("inputs", {})
@@ -829,11 +606,6 @@ def render_summary(
             + ("" if not drawn_from else f"{_figure(nominal, 2):>9}")
         )
     if drawn_from:
-        # Said here rather than left for the reader to assume, because the two
-        # columns sit next to each other and invite being read as an error. Only
-        # the wheel ellipse of a drawn vehicle carries the elevation it was drawn
-        # from, so a row answered by any other rung is not being compared with
-        # anything at all.
         lines.append(
             "  'drawn' is the elevation the vehicle was drawn from, and only a "
             "wheel_ellipse row"
@@ -891,13 +663,7 @@ CONTACT_SHEET_BACKGROUND = (24, 24, 26)
 
 
 def thumbnail(image: Image.Image) -> Image.Image:
-    """One cell of the contact sheet.
-
-    Separate from the sheet itself so that a run can reduce each render as it
-    finishes it. Holding a listing's worth of full-size composites in memory to
-    assemble the sheet at the end is a couple of hundred megabytes, and this is
-    meant to run on whatever laptop the person writing the report has.
-    """
+    """One cell of the contact sheet."""
     return image.convert("RGB").resize(
         (
             CONTACT_SHEET_THUMBNAIL_WIDTH,
@@ -908,14 +674,7 @@ def thumbnail(image: Image.Image) -> Image.Image:
 
 
 def contact_sheet(renders: list[Image.Image]) -> Image.Image | None:
-    """
-    Every render in one frame, so a reviewer opens one file rather than thirty.
-
-    Deliberately unlabelled. Drawing a caption under each cell would need a font
-    and the only one PIL is sure to have is unreadable at this scale; the sheet
-    is in the same order as the photograph list in the summary, which is said
-    where the sheet is named.
-    """
+    """Every render in one frame, so a reviewer opens one file rather than thirty."""
     if not renders:
         return None
     cells = [thumbnail(image) for image in renders]
@@ -1002,8 +761,6 @@ comparing two runs
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m scripts.realism_report",
-        # Wrapped by hand: RawDescriptionHelpFormatter is what keeps the epilogue
-        # below readable, and it leaves this alone too.
         description=(
             "Composite a folder of cut-out vehicles, measure the result and\n"
             "write the evidence a realism phase is judged on."
@@ -1093,11 +850,6 @@ def resolve_backdrop(
         "sha256": digest,
         "preset": preset.key,
         "label": preset.label,
-        # The size of the file, which is not the size of the renders: a preset
-        # carrying an output_size composites onto its own canvas whatever the
-        # asset measures. Every figure in canvas pixels — the horizon offset
-        # above all — belongs to the canvas recorded per photograph, so the two
-        # are named differently here rather than both being "width".
         "source_width": image.width,
         "source_height": image.height,
         "horizon_ratio": args.backdrop_horizon_ratio,
@@ -1170,9 +922,6 @@ def main(argv: list[str] | None = None) -> int:
         inputs={
             "directory": str(cutout_dir),
             "count": len(cutouts),
-            # True if ANY input was drawn. A run is only as trustworthy as its
-            # least trustworthy photograph, so one synthetic vehicle in a folder
-            # of thirty real ones taints the pooled totals and has to say so.
             "synthetic": any(cutout.synthetic for cutout in cutouts),
         },
     )
@@ -1192,3 +941,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -51,12 +51,6 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
-            # SQLite cannot ALTER or DROP a constraint in place; Alembic's batch
-            # mode works around it by rebuilding the table. The existing
-            # migrations still will not run on SQLite — they use PostgreSQL-only
-            # syntax such as UPDATE ... FROM — which is why
-            # `python -m scripts.init_db` builds the SQLite schema from the
-            # models instead. This keeps any *future* migration usable on both.
             render_as_batch=connection.dialect.name == "sqlite",
         )
 

@@ -107,9 +107,6 @@ def reset_password(user_id: int, request: Request,
                    administrator: DealershipAdministrator, session: DbSession):
     user = _target(session, administrator, request, user_id, "dealership_user_reset")
     if user.id == administrator.id:
-        # A reset revokes its target's sessions and forces a new password.
-        # Done to yourself, it ends the session you are using and leaves a
-        # one-time password, shown once, as the only way back in.
         raise HTTPException(
             status_code=409,
             detail="You cannot reset your own password. Use Change password instead.",
@@ -135,3 +132,4 @@ def deactivate_user(user_id: int, request: Request,
     _audit(session, administrator, request, "dealership_user_deactivate", "success", user.id)
     session.refresh(user)
     return _out(user)
+

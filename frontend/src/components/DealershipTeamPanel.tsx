@@ -1,16 +1,3 @@
-// A dealership's own team, as a platform administrator sees it — reached by
-// clicking a dealership's name on PlatformAdminPage rather than a route of
-// its own, since it is always looked at in the context of one dealership row
-// among many, not as a destination someone bookmarks.
-//
-// Deliberately a separate component from DealershipUsersPage rather than a
-// shared one parameterised by scope: that page already has its own tested
-// behaviour for "my own dealership" against /api/dealership/users, and
-// threading a second, platform-scoped API shape through it would make one
-// component respondsible for two different authorisation stories. The
-// markup below is intentionally close to that page's, for the same reason
-// the two API route files under it are close but separate — one role, one
-// scope, easy to follow on its own.
 
 import { useEffect, useState } from 'react'
 
@@ -38,9 +25,6 @@ export default function DealershipTeamPanel({
     finally { setLoading(false) }
   }
 
-  // Re-fetches if the panel is opened for a different dealership without
-  // unmounting — PlatformAdminPage keeps one panel instance and swaps which
-  // row it belongs to.
   useEffect(() => { void load() }, [dealershipId])
 
   async function add(event: React.FormEvent) {

@@ -1,16 +1,3 @@
-# Tests for image classification and the import-time size filter.
-#
-# classification.py keeps torch and transformers inside its loader, so the
-# scoring maths, the thresholds and the decisions can be exercised with nothing
-# installed. That is what most of this file does — the model contributes a list
-# of similarities and nothing else, so a list of similarities is what the tests
-# supply.
-#
-# The handful of tests that do need the model are skipped where it is absent,
-# so this suite runs clean on a laptop and in full on the GPU pod:
-#
-#     pytest tests/test_classification.py -v
-
 import ast
 import importlib.util
 import io
@@ -46,7 +33,7 @@ requires_model = pytest.mark.skipif(
 
 try:
     from api import url_import
-except ImportError:  # httpx and beautifulsoup4 are not in the light test env
+except ImportError:
     url_import = None
 
 requires_url_import = pytest.mark.skipif(
@@ -62,21 +49,13 @@ def uniform(labels, value=0.0):
 # ── The vocabulary ─────────────────────────────────────────────────────────────
 
 def test_kinds_match_the_database_constraint():
-    """
-    KINDS and ck_images_image_kind_allowed have to agree exactly. If they drift,
-    nothing fails until an insert is attempted with the new value, by which
-    point a listing has been processed and the result cannot be recorded.
-
-    Parsed rather than imported, so this needs no database and no SQLAlchemy.
-    """
+    """KINDS and ck_images_image_kind_allowed have to agree exactly."""
     sources = [
         ROOT / "database" / "models.py",
         ROOT / "migrations" / "versions" / "d7e2c9a13f84_add_image_kind.py",
     ]
 
     for path in sources:
-        # Adjacent string literals are folded into one constant by the parser,
-        # so the clause arrives here in one piece however it was wrapped.
         clauses = [
             node.value
             for node in ast.walk(ast.parse(path.read_text()))
@@ -123,9 +102,8 @@ def test_similarities_are_averaged_within_a_label():
 
 
 def test_a_mismatched_similarity_vector_is_an_error():
-    """
-    Silently truncating would misattribute every score after the first missing
-    one, which is a wrong answer rather than a failure.
+    """Silently truncating would misattribute every score after the first missing one,
+    which is a wrong answer rather than a failure.
     """
     with pytest.raises(ValueError):
         _label_scores([0.1, 0.2], ["a", "a", "b"])
@@ -139,9 +117,8 @@ def test_probabilities_are_a_distribution():
 
 
 def test_probabilities_survive_the_logit_scale():
-    """
-    exp(0.3 * 100) overflows a float. The maximum has to come off first, and
-    this is the arrangement where forgetting it raises rather than passes.
+    """exp(0.3 * 100) overflows a float. The maximum has to come off first, and this is
+    the arrangement where forgetting it raises rather than passes.
     """
     probabilities = _probabilities({"a": 8.0, "b": 7.5}, scale=1000.0)
     assert probabilities["a"] == pytest.approx(1.0)
@@ -152,7 +129,6 @@ def test_the_scale_is_what_spreads_them_out():
     scores = {"a": 0.30, "b": 0.28, "c": 0.20, "d": 0.19}
     flat = _probabilities(scores, scale=1.0)
     scaled = _probabilities(scores, scale=100.0)
-    # Unscaled, a 0.02 lead is indistinguishable from chance.
     assert flat["a"] < 0.30
     assert scaled["a"] > flat["a"]
 
@@ -180,12 +156,7 @@ def test_a_leader_below_the_threshold_is_unknown():
 
 
 def test_a_leader_without_a_margin_is_unknown():
-    """
-    The failure this was built for. The finance banner is a photograph of a
-    blue Mazda2 with a headline across it, so it fits "advertisement" and
-    "exterior" almost equally. Whichever leads, it is not identified, and an
-    unidentified photograph is not composited onto a turntable.
-    """
+    """The failure this was built for."""
     probabilities = {
         "exterior": 0.56, "advertisement": 0.44, "interior": 0.00, "detail": 0.00
     }
@@ -193,7 +164,6 @@ def test_a_leader_without_a_margin_is_unknown():
 
 
 def test_the_margin_is_measured_against_the_runner_up_only():
-    # 0.60 against a 0.14 field: clear of everything, and accepted.
     probabilities = {
         "exterior": 0.60, "interior": 0.14, "detail": 0.13, "advertisement": 0.13
     }
@@ -246,11 +216,7 @@ def test_a_confident_angle_is_reported():
 
 
 def test_adjacent_angles_do_not_need_a_margin():
-    """
-    Unlike the kind. A car turned slightly is genuinely between two of these,
-    and requiring a margin would empty the field for most photographs while
-    protecting against nothing worse than a wrong word.
-    """
+    """Unlike the kind."""
     probabilities = {
         "front": 0.36, "front_quarter": 0.34, "side": 0.15, "rear_quarter": 0.10,
         "rear": 0.05,
@@ -283,9 +249,8 @@ def test_nothing_else_is_processable(kind):
 
 
 def test_an_exterior_below_the_threshold_is_not_processable():
-    """
-    Reachable through a stored row: the label was written when the threshold
-    was lower than it is now.
+    """Reachable through a stored row: the label was written when the threshold was
+    lower than it is now.
     """
     assert not is_processable(Classification("exterior", 0.20, None, None))
 
@@ -307,19 +272,13 @@ def test_health_reports_the_three_things_the_caller_wires_to():
 
 @pytest.mark.skipif(HAS_MODEL, reason="torch is installed, so it is available")
 def test_health_does_not_claim_a_device_it_has_not_got():
-    """
-    Importing this module must work without torch — the light API and this
-    suite both do it — and health() has to say so rather than answering "cpu".
+    """Importing this module must work without torch — the light API and this suite both
+    do it — and health() has to say so rather than answering "cpu".
     """
     assert classification.health()["device"] == "unavailable"
 
 
 # ── classify(), with the model stood in for ────────────────────────────────────
-# The model's whole contribution is one similarity per prompt, so a list of
-# similarities stands in for it and the rest of classify() can be tested
-# anywhere. What this is really checking is that the flat vector is still
-# matched to the right labels — an ordering mistake there would be invisible in
-# the arithmetic and would misclassify everything.
 
 class StubRegistry:
     """Scores one kind and one angle above the rest by `lead`."""
@@ -363,9 +322,8 @@ def test_classify_finds_the_angle_of_an_exterior(monkeypatch, photograph):
 
 @pytest.mark.parametrize("kind", ["interior", "detail", "advertisement"])
 def test_classify_does_not_give_a_non_exterior_an_angle(monkeypatch, photograph, kind):
-    """
-    The angle would be meaningless, and the field is shown to the dealer. It is
-    also the contract the caller writes to the database against.
+    """The angle would be meaningless, and the field is shown to the dealer. It is also
+    the contract the caller writes to the database against.
     """
     monkeypatch.setattr(classification, "_registry", StubRegistry(kind))
     result = classification.classify(photograph)
@@ -404,9 +362,8 @@ def test_the_model_scores_every_prompt(loaded):
 
 @requires_model
 def test_a_blank_rectangle_is_not_composited(loaded):
-    """
-    A flat grey field is not a photograph of a car by any reading. Whatever it
-    scores as, the one thing that must not happen is that it is processed.
+    """A flat grey field is not a photograph of a car by any reading. Whatever it scores
+    as, the one thing that must not happen is that it is processed.
     """
     result = classification.classify(Image.new("RGB", (640, 480), (140, 140, 145)))
     assert result.kind in KINDS
@@ -416,9 +373,8 @@ def test_a_blank_rectangle_is_not_composited(loaded):
 
 @requires_model
 def test_an_image_with_transparency_is_accepted(loaded):
-    """
-    Banners and badges arrive as RGBA PNGs. The fourth channel has to be dealt
-    with here rather than in whatever version of the processor is installed.
+    """Banners and badges arrive as RGBA PNGs. The fourth channel has to be dealt with
+    here rather than in whatever version of the processor is installed.
     """
     result = classification.classify(Image.new("RGBA", (300, 300), (10, 20, 30, 0)))
     assert result.kind in KINDS
@@ -432,8 +388,6 @@ def test_the_angle_is_only_asked_about_exteriors(loaded):
 
 
 # ── The import-time size filter ────────────────────────────────────────────────
-# api/url_import.py, tested here because it is the first half of the same
-# defence: the badges and rating graphics it drops never reach the classifier.
 
 def encoded(width: int, height: int, fmt: str = "PNG") -> bytes:
     buffer = io.BytesIO()
@@ -472,3 +426,4 @@ def test_the_floor_is_inclusive():
 def test_anything_unreadable_is_rejected(content):
     """Including a truncated PNG header, which is a fetch that went wrong."""
     assert not url_import.is_large_enough(content)
+

@@ -1,17 +1,3 @@
-// A dialog that behaves like one, wrapped around the shared Modal primitive.
-//
-// `Modal` draws the correct surface — dimmed ink ground at 55% with blur, white
-// card, closes on a backdrop click — but it does nothing about the keyboard.
-// Escape is ignored, Tab walks straight out of the dialog and into the page
-// behind it, and when the dialog closes focus is left wherever it happened to
-// be, which for a keyboard user means being dropped back at the top of the
-// document. The primitive is owned elsewhere in this rebuild, so the missing
-// behaviour is added around it here rather than by editing it.
-//
-// The escape hatch at the bottom — setting aria-label on the primitive's own
-// dialog element — exists for the same reason: Modal accepts no ARIA props, so
-// an unnamed dialog is announced as just "dialog" unless it is labelled after
-// the fact.
 
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 
@@ -27,18 +13,8 @@ const FOCUSABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
-// Dialogs stack: a delete confirmation opens over a preview. Only the topmost
-// one may act on Escape, or one keypress would dismiss the entire stack.
 const openDialogs: symbol[] = []
 
-/**
- * Escape to close, Tab confined to the dialog, and focus returned to whatever
- * opened it.
- *
- * Exported on its own because `ConfirmDialog` renders `Modal` itself and gives
- * callers no element to hold on to: without a container it can still be given
- * Escape and focus restoration, which is most of the gap.
- */
 export function useDialogKeys({
   active,
   onClose,
@@ -48,9 +24,6 @@ export function useDialogKeys({
   onClose: () => void
   containerRef?: RefObject<HTMLElement | null>
 }) {
-  // Held in a ref so a new inline onClose on every render does not tear the
-  // listener down and put it back, which would lose the dialog's place in the
-  // stack and re-steal focus.
   const closeRef = useRef(onClose)
   useEffect(() => { closeRef.current = onClose })
 
@@ -59,10 +32,6 @@ export function useDialogKeys({
 
     const token = Symbol('dialog')
     openDialogs.push(token)
-    // Every dialog that uses this hook is also a Modal, which takes this same
-    // counted lock. The two used to keep separate copies of the page's
-    // overflow — which is how closing a removal confirmation left the whole
-    // app unable to scroll.
     const releaseScroll = lockPageScroll()
 
     const opener = document.activeElement as HTMLElement | null
@@ -110,7 +79,6 @@ export function useDialogKeys({
       }
     }
 
-    // Capture phase: the dialog answers Escape before anything inside it can.
     document.addEventListener('keydown', onKeyDown, true)
 
     const container = containerRef?.current
@@ -124,8 +92,6 @@ export function useDialogKeys({
       const index = openDialogs.indexOf(token)
       if (index >= 0) openDialogs.splice(index, 1)
       releaseScroll()
-      // Only if the opener is still on the page: the button that opened a
-      // delete confirmation is gone by the time the deletion finishes.
       if (opener && document.contains(opener)) opener.focus()
     }
   }, [active, containerRef])
@@ -138,7 +104,6 @@ export default function LibraryModal({
   children,
 }: {
   onClose: () => void
-  /** Names the dialog for a screen reader; without it it is just "dialog". */
   label: string
   maxWidth?: number
   children: ReactNode
@@ -148,10 +113,6 @@ export default function LibraryModal({
   useDialogKeys({ active: true, onClose, containerRef })
 
   useEffect(() => {
-    // Modal owns the element carrying role="dialog" and takes no ARIA props, so
-    // the name is applied to it directly. Reaching up the tree is unpleasant,
-    // but it is the only way to name the dialog without editing a file another
-    // agent owns.
     containerRef.current?.closest('[role="dialog"]')?.setAttribute('aria-label', label)
   }, [label])
 
@@ -162,9 +123,6 @@ export default function LibraryModal({
         tabIndex={-1}
         style={{
           outline: 'none',
-          // The dialog must never grow past the viewport: Modal's card clips
-          // its overflow, so anything taller would be unreachable rather than
-          // merely off-screen.
           maxHeight: 'calc(100vh - 48px)',
           overflowY: 'auto',
         }}

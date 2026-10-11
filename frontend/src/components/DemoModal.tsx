@@ -1,9 +1,3 @@
-// "Request a demo" form.
-//
-// There is no endpoint behind this yet — the backend has no mail transport and
-// no leads table. It shows the confirmation state so the flow can be reviewed,
-// but nothing is sent anywhere, which is why the confirmation avoids promising
-// that a message was delivered.
 
 import { useState } from 'react'
 

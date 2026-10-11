@@ -1,21 +1,3 @@
-// The listing preview: one large photograph with a thumbnail strip beneath it.
-//
-// This is how a buyer meets a car on a dealer's website, and it is what the
-// dealer is checking when they open a vehicle here — not a file listing. The
-// previous screen showed a flat grid of every file with its pixel dimensions
-// and byte size underneath, which answered questions nobody was asking and
-// buried the only one that matters: does this look like a car worth driving to
-// see?
-//
-// The photograph sits on ink, per guidelines §4: dark grounds are reserved for
-// imagery so the surrounding interface recedes and the vehicle dominates. It is
-// contained rather than cropped — a hero that crops a wagon's nose off is worse
-// than a letterboxed one, because the dealer cannot tell whether the pipeline
-// or the frame did it.
-//
-// Built as a tab list over a single panel. That is genuinely what a gallery is,
-// and it buys the arrow-key behaviour, the "selected" announcement and the
-// single tab stop that twenty separate buttons would not.
 
 import { useId, useRef, type CSSProperties, type KeyboardEvent } from 'react'
 
@@ -34,8 +16,6 @@ const arrowStyle = (side: 'left' | 'right'): CSSProperties => ({
   height: 36,
   borderRadius: '50%',
   border: 'none',
-  // Bone rather than a translucent ink: a dark chip on a dark photograph
-  // disappears, and the arrow has to stay visible over whatever is behind it.
   background: 'rgba(245,242,236,0.92)',
   color: C.ink,
   cursor: 'pointer',
@@ -71,31 +51,22 @@ export default function ListingGallery({
   images: ListingImage[]
   index: number
   onIndexChange: (index: number) => void
-  /** Prefixes every alt text; the position within the set is appended. */
   altPrefix: string
-  /** Names the strip for a screen reader, e.g. "Processed photographs". */
   label: string
   thumbMin?: number
-  /** Omitted where removal does not apply; shown as a labelled control when given. */
   onDelete?: (image: ListingImage) => void
 }) {
   const baseId = useId()
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  // Deleting the last photograph leaves the caller's index past the end for one
-  // render, so the clamp lives here rather than trusting every caller to reset.
   const safe = Math.min(Math.max(index, 0), images.length - 1)
   const current = images[safe]
 
-  // The caller renders its own empty state; there is nothing sensible to draw
-  // from an empty set.
   if (!current) return null
 
   function select(next: number, moveFocus = false) {
     const wrapped = (next + images.length) % images.length
     onIndexChange(wrapped)
-    // The thumbnail buttons all exist regardless of which is selected, so focus
-    // can move immediately without waiting for the re-render.
     if (moveFocus) tabRefs.current[wrapped]?.focus()
   }
 
@@ -120,8 +91,6 @@ export default function ListingGallery({
         id={panelId}
         role="tabpanel"
         aria-labelledby={`${baseId}-tab-${safe}`}
-        // Only made focusable when it holds nothing focusable itself: with more
-        // than one photograph the previous/next buttons are inside it.
         tabIndex={images.length > 1 ? undefined : 0}
         style={{
           position: 'relative',
@@ -170,8 +139,6 @@ export default function ListingGallery({
           fontFamily: MONO, fontSize: 11, letterSpacing: '0.08em', color: C.inkSoft,
           textTransform: 'uppercase', margin: 0,
         }}>
-          {/* Position and resolution only. The byte size of a JPEG tells a
-              dealer nothing about whether the photograph is any good. */}
           {String(safe + 1).padStart(2, '0')} / {String(images.length).padStart(2, '0')}
           {' · '}{current.width} × {current.height}
         </p>
@@ -198,8 +165,6 @@ export default function ListingGallery({
         aria-orientation="horizontal"
         style={{
           display: 'grid',
-          // auto-fill so the strip is four thumbnails on a laptop and a dozen
-          // on a 32-inch monitor without either being told a column count.
           gridTemplateColumns: `repeat(auto-fill, minmax(${thumbMin}px, 1fr))`,
           gap: 8,
           marginTop: 12,
@@ -227,9 +192,6 @@ export default function ListingGallery({
               alt={`${altPrefix} — ${i + 1} of ${images.length}`}
               style={{ width: '100%', height: '100%', display: 'block' }}
             />
-            {/* The selected ring is an overlay rather than a border on the
-                button, so selecting a thumbnail cannot nudge the grid by the
-                one pixel a border width change would add. */}
             <span
               aria-hidden
               style={{

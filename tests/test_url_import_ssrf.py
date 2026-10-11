@@ -227,3 +227,43 @@ def test_direct_image_url_is_imported(fake_dns):
     result = _run(url_import.fetch_images("http://img.example/car.jpg", transport=transport))
     assert len(result.images) == 1
     assert result.images[0].content == image
+
+
+def test_a_compressed_listing_page_is_read():
+    """Most sites send pages gzip-compressed. The body is decompressed as it
+    streams in, and decompressing it again crashed the import with a 500."""
+    import asyncio
+    import gzip
+    import io
+
+    import httpx
+    from PIL import Image
+
+    from api import url_import
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (900, 600), (200, 30, 30)).save(buffer, "JPEG")
+    photo = buffer.getvalue()
+    page = (b"<html><head><title>2021 Tesla Model 3</title></head><body>"
+            b'<img src="/a.jpg"><img src="/b.jpg"></body></html>')
+
+    def handler(request):
+        if request.url.path.endswith(".jpg"):
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=photo)
+        return httpx.Response(
+            200, headers={"content-type": "text/html", "content-encoding": "gzip"},
+            content=gzip.compress(page),
+        )
+
+    async def public(_host):
+        return None
+
+    original = url_import._ensure_public_host
+    url_import._ensure_public_host = public
+    try:
+        result = asyncio.run(url_import.fetch_images(
+            "https://dealer.example/cars/1", transport=httpx.MockTransport(handler)
+        ))
+    finally:
+        url_import._ensure_public_host = original
+    assert len(result.images) == 2

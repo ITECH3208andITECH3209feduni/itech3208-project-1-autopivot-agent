@@ -1,8 +1,4 @@
-"""Permanent AutoPivot dealership data models.
-
-Public demo uploads are temporary and are intentionally excluded from these
-tables.
-"""
+"""Permanent AutoPivot dealership data models."""
 
 from __future__ import annotations
 
@@ -44,7 +40,6 @@ class Dealership(Base):
 
     id: Mapped[int] = mapped_column(BigIntId, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    # Shown beneath the dealership name in the application sidebar.
     location: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     contact_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     contact_email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
@@ -94,19 +89,10 @@ class AuditLog(Base):
 
 
 class Backdrop(Base):
-    """A reusable backdrop in a dealership's library.
-
-    Backdrops are owned per dealership rather than shared globally: a new
-    dealership is provisioned with its own copies of the standard set, so it can
-    rename or remove them without affecting anyone else. Keeping dealership_id
-    NOT NULL also means the composite foreign key from processing_jobs enforces
-    tenant isolation in the database — with a nullable column, PostgreSQL would
-    skip that check entirely whenever the column was NULL.
-    """
+    """A reusable backdrop in a dealership's library."""
 
     __tablename__ = "backdrops"
     __table_args__ = (
-        # Target of the composite FK from processing_jobs.
         UniqueConstraint("id", "dealership_id", name="backdrop_dealership_pair"),
         UniqueConstraint("dealership_id", "name", name="backdrop_name_per_dealership"),
         CheckConstraint("length(trim(name)) > 0", name="name_not_blank"),
@@ -155,45 +141,16 @@ class Backdrop(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1000), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Which shot angles this backdrop suits. An empty array means all angles.
-    # The angle vocabulary is deliberately unconstrained for now: how angles are
-    # determined is still an open decision, and a CHECK written today would only
-    # have to be migrated away later.
-    # PostgreSQL gets a real text[]; the SQLite variant stores the same list as
-    # JSON, so the schema builds on a local developer machine with no
-    # PostgreSQL server and the test suite keeps working unchanged.
-    #
-    # default=list matters for SQLite. The server default below is PostgreSQL's
-    # array literal, which SQLite would hand back to the JSON type as the empty
-    # *object* {} rather than the empty list. Supplying the value from Python on
-    # every insert means the server default is never what gets read.
     suits_angles: Mapped[list[str]] = mapped_column(
         ARRAY(Text).with_variant(JSON(), "sqlite"),
         nullable=False,
         default=list,
         server_default="{}",
     )
-    # server_default=false() rather than the string "false": a plain string is
-    # emitted as the SQL literal 'false', which PostgreSQL casts to a boolean
-    # but SQLite stores as the text 'false' — and non-empty text reads back as
-    # True. The column then defaults to the opposite of what it says on every
-    # SQLite-backed test in the suite.
     is_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=false()
     )
 
-    # ── Geometry, measured from the image when it is uploaded ──
-    # A dealer's backdrop used to be composited against a ground line assumed to
-    # be 84% of the way down the canvas, which is right for the studio scenes
-    # and a guess for everything else: a showroom whose floor meets the wall
-    # higher than that left the vehicle sunk into the concrete. `horizon_y_ratio`
-    # is what Phase 1 aligns a photograph's estimated camera elevation against,
-    # and `floor_top_y_ratio` is where the floor begins.
-    #
-    # All nullable, because a backdrop uploaded before this existed has never
-    # been measured, and that is a different state from having been measured and
-    # found unreadable — which is recorded as method 'assumed' with a zero
-    # confidence. The compositor has to be able to tell those two apart.
     horizon_y_ratio: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 3), nullable=True
     )
@@ -207,17 +164,9 @@ class Backdrop(Base):
     floor_confidence: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 3), nullable=True
     )
-    # Only derivable when the dealer's camera recorded a focal length, so it
-    # stays null for a render and for a photograph stripped of its EXIF. Kept
-    # because it is what makes the backdrop's own viewpoint comparable with the
-    # elevation estimated for a photograph, rather than only with its horizon.
     camera_elevation_deg: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(5, 2), nullable=True
     )
-    # Set when a dealer has corrected the measurement by hand. Re-analysis must
-    # never overwrite a correction: the person who took the photograph knows
-    # where the floor is, and having their fix quietly reverted by a background
-    # job is worse than never having offered the fix at all.
     geometry_overridden: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=false()
     )
@@ -291,7 +240,6 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
-    # Every reset advances this value; JWTs issued before the reset are refused.
     token_version: Mapped[int] = mapped_column(nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, nullable=False, server_default=func.now()
@@ -346,8 +294,6 @@ class VehicleListing(Base):
         UniqueConstraint(
             "dealership_id", "stock_number", name="stock_number_per_dealership"
         ),
-        # Target of the composite FK from processing_jobs, which is what keeps a
-        # job, its listing and its backdrop inside one dealership.
         UniqueConstraint("id", "dealership_id", name="listing_dealership_pair"),
     )
 
@@ -361,7 +307,6 @@ class VehicleListing(Base):
     created_by_user_id: Mapped[int] = mapped_column(
         BigIntId, nullable=False, index=True
     )
-    # The dealership's own reference for the vehicle, shown as "STOCK #4471".
     stock_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     make: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -370,15 +315,9 @@ class VehicleListing(Base):
     variant: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
-    # Where the vehicle is in the sales cycle.
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="draft"
     )
-    # Where its photographs are in the processing pipeline. A separate axis to
-    # `status`: a listing can be sold with images still awaiting review, or
-    # fully processed while still a draft. This is maintained by the pipeline
-    # rather than derived per request, so the dashboard can sort and filter on
-    # it without aggregating over every job.
     processing_status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="pending"
     )
@@ -403,9 +342,6 @@ class VehicleListing(Base):
         overlaps="dealership,vehicle_listings",
     )
     images: Mapped[list[Image]] = relationship(back_populates="vehicle_listing")
-    # foreign_keys is required because processing_jobs now reaches this table by
-    # two paths: vehicle_listing_id alone, and the (vehicle_listing_id,
-    # dealership_id) pair that pins both to one dealership.
     processing_jobs: Mapped[list[ProcessingJob]] = relationship(
         back_populates="vehicle_listing",
         foreign_keys="[ProcessingJob.vehicle_listing_id]",
@@ -417,20 +353,6 @@ class Image(Base):
     __tablename__ = "images"
     __table_args__ = (
         UniqueConstraint("id", "vehicle_listing_id", name="image_listing_pair"),
-        # Which original a processed photograph was cut out of. The pair form
-        # mirrors the job constraints below it and leans on the same
-        # (id, vehicle_listing_id) target: a derived image can only name an
-        # original from its own listing, so the lineage cannot be made to cross
-        # a dealership boundary even by a query that forgot to scope itself.
-        #
-        # RESTRICT, like every neighbouring constraint, rather than CASCADE or
-        # SET NULL. A before-and-after pair is what the realism work is judged
-        # on, and both of the alternatives lose it silently: CASCADE would take
-        # the processed result away with the original without anyone asking for
-        # it, and SET NULL would leave an "after" that can no longer be shown
-        # beside anything. Deletion therefore clears the dependent rows
-        # deliberately and in order — see `_release_job_references` and
-        # `delete_listing` in api/routes_listings.py.
         ForeignKeyConstraint(
             ["source_image_id", "vehicle_listing_id"],
             ["images.id", "images.vehicle_listing_id"],
@@ -438,11 +360,6 @@ class Image(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            # A row that names itself as its own source can never be deleted:
-            # RESTRICT is checked against the row being removed as well, so the
-            # delete would be refused by the row's own reference. That is a
-            # photograph a dealer is permanently stuck with, so it is refused
-            # at write time instead.
             "source_image_id IS NULL OR source_image_id <> id",
             name="source_image_not_self",
         ),
@@ -466,10 +383,6 @@ class Image(Base):
         CheckConstraint("width > 0", name="width_positive"),
         CheckConstraint("height > 0", name="height_positive"),
         CheckConstraint(
-            # What the photograph is of, which is not the same as what role it
-            # plays in the listing. A URL import pulls in advertisement
-            # banners, dealer badges and interior shots alongside the vehicle,
-            # and only an exterior shot can be composited onto a backdrop.
             "image_kind IS NULL OR image_kind IN "
             "('exterior', 'interior', 'detail', 'advertisement', 'unknown')",
             name="image_kind_allowed",
@@ -483,16 +396,10 @@ class Image(Base):
         nullable=False,
         index=True,
     )
-    # The photograph this one was made from. Null on an original, and on every
-    # processed row written before this column existed, so it is read as "not
-    # known" rather than "no source". Indexed because PostgreSQL indexes a
-    # referencing column for nobody: without it the RESTRICT check runs a
-    # sequential scan of images every time a dealer deletes a photograph.
     source_image_id: Mapped[Optional[int]] = mapped_column(
         BigIntId, nullable=True, index=True
     )
     image_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    # Null until something has looked at it. Set by the classifier.
     image_kind: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     kind_confidence: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 3), nullable=True
@@ -533,17 +440,12 @@ class ProcessingJob(Base):
             name="plate_overlay_image_same_listing",
             ondelete="RESTRICT",
         ),
-        # Ties the job's dealership to its listing's dealership...
         ForeignKeyConstraint(
             ["vehicle_listing_id", "dealership_id"],
             ["vehicle_listings.id", "vehicle_listings.dealership_id"],
             name="job_listing_same_dealership",
             ondelete="RESTRICT",
         ),
-        # ...and the same dealership to the backdrop's, so a job can never
-        # reference another dealership's backdrop. This pair of constraints is
-        # what replaces the old background_image_same_listing rule, which made
-        # a shared backdrop library impossible to express.
         ForeignKeyConstraint(
             ["backdrop_id", "dealership_id"],
             ["backdrops.id", "backdrops.dealership_id"],
@@ -564,9 +466,6 @@ class ProcessingJob(Base):
             name="review_state_allowed",
         ),
         CheckConstraint(
-            # 'blur', 'pixelate' and 'white' name the method actually applied.
-            # 'masked' predates them and is kept so rows written before the
-            # pipeline reported the specific method stay valid.
             "plate_treatment IS NULL OR "
             "plate_treatment IN ('masked', 'overlay', 'none', "
             "'blur', 'pixelate', 'white')",
@@ -581,11 +480,6 @@ class ProcessingJob(Base):
             name="angle_confidence_range",
         ),
         CheckConstraint(
-            # The bounds are elevation.MIN_ELEVATION_DEG and MAX_ELEVATION_DEG,
-            # written out rather than imported: elevation.py pulls in OpenCV and
-            # NumPy, which live in requirements-ml.txt, and this module is loaded
-            # by the light API that must install and serve without either.
-            # tests/test_camera_elevation.py fails if the two ever disagree.
             "camera_elevation_deg IS NULL OR "
             "camera_elevation_deg BETWEEN -5 AND 35",
             name="camera_elevation_range",
@@ -595,10 +489,6 @@ class ProcessingJob(Base):
             name="elevation_confidence_range",
         ),
         CheckConstraint(
-            # elevation.ELEVATION_METHODS, for the reason given above. Unlike
-            # detected_angle this vocabulary is closed and settled — it names the
-            # four rungs of one cascade rather than a taxonomy still under
-            # discussion — so it is worth constraining rather than leaving open.
             "elevation_method IS NULL OR elevation_method IN "
             "('wheel_ellipse', 'roof_underside', 'shot_angle', 'assumed')",
             name="elevation_method_allowed",
@@ -616,8 +506,6 @@ class ProcessingJob(Base):
         nullable=False,
         index=True,
     )
-    # Denormalised from the listing so the composite foreign keys above can
-    # enforce that a job, its listing and its backdrop share one dealership.
     dealership_id: Mapped[int] = mapped_column(
         BigIntId, nullable=False, index=True
     )
@@ -632,34 +520,10 @@ class ProcessingJob(Base):
         String(20), nullable=False, server_default="pending"
     )
 
-    # ── Pipeline results, populated on completion ──
-    # The shot angle the detector reported, and how sure it was. Both stay
-    # nullable: how angles get determined is an open decision, and the vocabulary
-    # is deliberately unconstrained until it is settled.
     detected_angle: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     angle_confidence: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 3), nullable=True
     )
-    # Where the camera was when the photograph was taken: the elevation in
-    # degrees above the horizontal through the wheel centres, how far the
-    # estimator trusts it, and which rung of elevation.py's cascade produced it.
-    # Two decimal places because the estimator's own error budget is measured in
-    # whole degrees, so anything finer would be recording noise.
-    #
-    # Nullable for the same reason detected_angle is, and one more. A job can
-    # finish without there being anything to measure — an advertisement banner
-    # and a photograph with no vehicle in it both stop before a cutout exists —
-    # and every job that ran before this column did has no estimate that could
-    # be reconstructed now.
-    #
-    # But an exterior photograph that reached the compositor always gets a
-    # number, because the cascade's last rung assumes standing eye level rather
-    # than declining. Recording that assumption instead of leaving these null is
-    # the whole point of elevation_method: a null cannot be told apart from a run
-    # where the estimator never happened at all, and Phase 1 has to know the
-    # difference before it shifts a backdrop's horizon. Shifting on a value
-    # nobody estimated would move every one of a dealer's photographs by the same
-    # invented amount, which is a worse result than not shifting them.
     camera_elevation_deg: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 2), nullable=True
     )
@@ -669,9 +533,6 @@ class ProcessingJob(Base):
     elevation_method: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     plates_detected: Mapped[Optional[int]] = mapped_column(nullable=True)
     plate_treatment: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    # Distinct from `status`. A job can complete successfully and still need a
-    # human to look at it — no vehicle found, for instance — which is not the
-    # same as having failed.
     review_state: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     model_used: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -706,3 +567,4 @@ class ProcessingJob(Base):
         foreign_keys=[plate_overlay_image_id, vehicle_listing_id],
         viewonly=True,
     )
+

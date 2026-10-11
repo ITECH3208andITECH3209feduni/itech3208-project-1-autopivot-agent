@@ -1,8 +1,4 @@
-"""Dashboard statistics.
-
-The listing reads that used to live here moved to routes_listings.py once they
-grew write operations; this module is only the three figures on the tiles.
-"""
+"""Dashboard statistics."""
 
 from __future__ import annotations
 
@@ -19,12 +15,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 
 def _dealership_id(user: User) -> int:
-    """The dealership every query here is scoped to.
-
-    Platform admins have no dealership of their own, so they have no dashboard.
-    They are rejected rather than silently receiving an unscoped view of every
-    dealership's stock.
-    """
+    """The dealership every query here is scoped to."""
     if user.dealership_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -76,10 +67,6 @@ def dashboard_stats(user: ReadyUser, session: DbSession) -> DashboardStats:
         )
     )
 
-    # "Images processed" — the composites the pipeline produced this month, not
-    # the originals a dealer uploaded. DashboardStats is scoped to the current
-    # month (see the NavCounts docstring), so this uses the same month boundary
-    # as vehicles_this_month above.
     images_processed = session.scalar(
         select(func.count(Image.id))
         .join(VehicleListing, VehicleListing.id == Image.vehicle_listing_id)
@@ -102,3 +89,4 @@ def dashboard_stats(user: ReadyUser, session: DbSession) -> DashboardStats:
         images_processed=images_processed or 0,
         needs_review=needs_review or 0,
     )
+
