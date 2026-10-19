@@ -43,6 +43,7 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
 
@@ -177,41 +178,135 @@ class VehicleFrameDetector {
   }
 }
 
-/// Converts a live [CameraImage] from `controller.startImageStream` into
-/// the [InputImage] ML Kit expects.
+/// The screen's device orientation fed into
+/// [androidRotationCompensationDegrees], in degrees. Fixed at 0, not read
+/// live, because `capture_screen.dart`'s initState locks the whole screen
+/// to portrait (`SystemChrome.setPreferredOrientations` with
+/// `DeviceOrientation.portraitUp`) for as long as it stays open, and
+/// landscape capture is explicitly out of scope for now (tracked
+/// separately, not part of this change) — the real device orientation
+/// never gets a chance to be anything else while this code runs. Named
+/// here rather than inlined as a bare 0 so that wiring up the real value
+/// later, if landscape capture happens, is a one-constant change rather
+/// than a rewrite of the formula around it.
+const int _deviceOrientationDegrees = 0;
+
+/// ML Kit's own documented Android rotation-compensation formula (from
+/// google_mlkit_commons' README example) — factored out of
+/// [inputImageFromCameraImage] rather than inlined there, so it can be
+/// exercised directly at device orientations other than the fixed
+/// [_deviceOrientationDegrees]. That is not just tidiness: at device
+/// orientation 0, adding and subtracting it are the same thing — 0 is its
+/// own negation — so the back- and front-camera formulas below collapse
+/// to an identical result for every sensorOrientation, and nothing
+/// observable from [inputImageFromCameraImage] today could ever catch the
+/// two formulas' signs being swapped. This function is what actually
+/// pins the sign down in vehicle_frame_detector_android_test.dart, called
+/// there at a non-zero device orientation even though production code
+/// only ever calls it with [_deviceOrientationDegrees] (0).
 ///
-/// iOS-only for now — this app is iOS-first this session (see the doc
-/// comment at the top of capture_screen.dart), and Android's rotation maths
-/// (sensor orientation combined with device orientation) is genuinely
-/// different from iOS's, not just a different enum value. Returns null on
-/// Android rather than guessing at that maths and shipping it untested: on
-/// Android this feature simply does not run yet, which fails safe — the
-/// shutter behaves exactly as it did before this feature existed — rather
-/// than failing by handing ML Kit an incorrectly-rotated image it would
-/// silently misread.
+/// Front and back need opposite signs because a front camera's sensor
+/// feed is mirrored before it reaches the app, so the two rotations work
+/// against each other rather than adding.
+@visibleForTesting
+int androidRotationCompensationDegrees({
+  required int sensorOrientation,
+  required CameraLensDirection lensDirection,
+  required int deviceOrientationDegrees,
+}) {
+  if (lensDirection == CameraLensDirection.front) {
+    return (sensorOrientation + deviceOrientationDegrees) % 360;
+  }
+  return (sensorOrientation - deviceOrientationDegrees + 360) % 360;
+}
+
+/// Converts a live [CameraImage] from `controller.startImageStream` into
+/// the [InputImage] ML Kit expects. Handles iOS and Android; anything
+/// else — web, desktop, a camera handing back a format neither branch
+/// below expects — returns null and fails exactly as safe as it always
+/// has: the shutter behaves as though this feature were not there, rather
+/// than handing ML Kit a frame it would silently misread.
+///
+/// iOS hands [CameraDescription.sensorOrientation] straight to ML Kit as
+/// the rotation — AVFoundation has already baked device orientation into
+/// the frame before this code ever sees it, so there is nothing else to
+/// combine. Android has not done that: the sensor and the device can be
+/// rotated relative to each other independently, so the two have to be
+/// combined here instead (see [androidRotationCompensationDegrees] for
+/// the formula and [_deviceOrientationDegrees] for why that side of it is
+/// fixed at 0 today).
+///
+/// Camera format follows the same split `capture_screen.dart` requests:
+/// bgra8888 on iOS, nv21 on Android. Both arrive as exactly one plane, for
+/// different reasons — bgra8888 is interleaved to begin with, while the
+/// camera plugin's nv21 output on Android is already merged into one
+/// standard-layout NV21 buffer (the full Y plane, then interleaved VU) on
+/// the native side before Dart ever sees it. Confirmed directly against
+/// camera_android_camerax 0.7.5+1's own
+/// `ImageAnalysisProxyApi`/`ImageProxyUtils` source (the installed
+/// version, from pubspec.lock) rather than assumed — so, exactly like
+/// bgra8888, there is one plane to hand ML Kit here, not three to merge.
+///
+/// [debugIsIOS] and [debugIsAndroid] exist only so a test can stand in
+/// for each platform in turn. dart:io's `Platform.isIOS`/`Platform.isAndroid`
+/// are hard-wired to whatever OS `flutter test` itself runs on — never
+/// actually iOS or Android — and nothing in dart:io can override that,
+/// which is also why the iOS branch below had no test of its own until
+/// this file grew an Android one. Production code never passes either
+/// parameter; both default to the real `Platform` flags.
 InputImage? inputImageFromCameraImage(
   CameraImage image,
-  CameraDescription camera,
-) {
-  if (!Platform.isIOS) return null;
+  CameraDescription camera, {
+  bool? debugIsIOS,
+  bool? debugIsAndroid,
+}) {
+  if (debugIsIOS ?? Platform.isIOS) {
+    final rotation = InputImageRotationValue.fromRawValue(
+      camera.sensorOrientation,
+    );
+    if (rotation == null) return null;
 
-  final rotation = InputImageRotationValue.fromRawValue(
-    camera.sensorOrientation,
-  );
-  if (rotation == null) return null;
+    final reportedFormat = InputImageFormatValue.fromRawValue(image.format.raw);
+    if (reportedFormat != InputImageFormat.bgra8888) return null;
+    const format = InputImageFormat.bgra8888;
 
-  final reportedFormat = InputImageFormatValue.fromRawValue(image.format.raw);
-  if (reportedFormat != InputImageFormat.bgra8888) return null;
-  const format = InputImageFormat.bgra8888;
+    final plane = image.planes.first;
+    return InputImage.fromBytes(
+      bytes: plane.bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: rotation,
+        format: format,
+        bytesPerRow: plane.bytesPerRow,
+      ),
+    );
+  }
 
-  final plane = image.planes.first;
-  return InputImage.fromBytes(
-    bytes: plane.bytes,
-    metadata: InputImageMetadata(
-      size: Size(image.width.toDouble(), image.height.toDouble()),
-      rotation: rotation,
-      format: format,
-      bytesPerRow: plane.bytesPerRow,
-    ),
-  );
+  if (debugIsAndroid ?? Platform.isAndroid) {
+    final rotationDegrees = androidRotationCompensationDegrees(
+      sensorOrientation: camera.sensorOrientation,
+      lensDirection: camera.lensDirection,
+      deviceOrientationDegrees: _deviceOrientationDegrees,
+    );
+    final rotation = InputImageRotationValue.fromRawValue(rotationDegrees);
+    if (rotation == null) return null;
+
+    final reportedFormat = InputImageFormatValue.fromRawValue(image.format.raw);
+    if (reportedFormat != InputImageFormat.nv21) return null;
+    const format = InputImageFormat.nv21;
+
+    // One plane already, not three to merge — see the doc comment above.
+    final plane = image.planes.first;
+    return InputImage.fromBytes(
+      bytes: plane.bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: rotation,
+        format: format,
+        bytesPerRow: plane.bytesPerRow,
+      ),
+    );
+  }
+
+  return null;
 }

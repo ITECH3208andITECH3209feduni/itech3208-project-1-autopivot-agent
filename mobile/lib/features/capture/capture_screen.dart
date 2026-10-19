@@ -14,7 +14,7 @@
 /// banner (only the most fundamental active problem is ever shown at once,
 /// never a stack of four):
 ///  1. [VehicleFrameDetector] — is a car actually in frame, reasonably
-///     sized, centred (ML Kit, iOS only for now).
+///     sized, centred (ML Kit, running on both iOS and Android).
 ///  2. [DeviceTiltDetector] — is the phone tilted to the angle this shot's
 ///     [CaptureAngle.targetElevationDeg] actually wants, and level
 ///     side-to-side (the accelerometer; see that file's own doc comment for
@@ -28,6 +28,29 @@
 ///     [_holdSteadyDuration], not just be true on one lucky frame, and for
 ///     the angle actually being shot, before the shutter actually enables
 ///     (see [_updateHoldSteady]).
+///
+/// Demo capture mode (`AppPreferences.demoCaptureModeEnabled`, read once in
+/// [_CaptureScreenState.initState]) is the one deliberate exception to all
+/// of this: a trade-show booth has no car to point a camera at, so when
+/// it's on, every one of the four checks above is bypassed outright rather
+/// than made trivially easy to pass — no camera opens, no permission is
+/// requested, [DeviceTiltDetector] and [VehicleFrameDetector] never start,
+/// and the hold-steady window above doesn't apply either. What a real
+/// capture would have shown live is the bundled sample for the angle being
+/// asked for instead (see demo_sample_photos.dart), and the shutter
+/// "captures" that photograph into exactly the same map a real shot would
+/// — see [_CaptureScreenState._buildDemoBody] and
+/// [_CaptureScreenState._captureDemo]. Everything from there on — review,
+/// vehicle details, submit, the real backend pipeline — runs completely
+/// unchanged and unaware a camera was ever absent: the one simulated thing
+/// is the car being a photograph instead of a live feed, nothing
+/// downstream of that. Whichever [CaptureAngle] values have no bundled
+/// sample behind them (see demo_sample_photos.dart's own
+/// `demoAvailableAngles`) are pre-skipped the moment demo mode is detected,
+/// the same state a deliberate Skip leaves behind. Drafts don't exist in
+/// this mode either — see
+/// [_CaptureScreenState._saveDraft]'s own guard — since a demo set is never
+/// real work worth protecting against losing.
 ///
 /// Exposure and focus lock to whatever the first successful shot of a set
 /// metered ([_lockExposureAndFocus]), rather than each of the 8 shots
@@ -106,6 +129,7 @@ import 'camera_session.dart';
 import 'capture_angles.dart';
 import 'capture_draft.dart';
 import 'capture_submission.dart';
+import 'demo_sample_photos.dart';
 import 'device_tilt_detector.dart';
 import 'draft_resume_prompt.dart';
 import 'hold_steady.dart';
@@ -195,6 +219,23 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// "done", it is "deliberately left for later", and the two must not be
   /// conflated when deciding what is next.
   final Set<CaptureAngle> _skipped = {};
+
+  /// Whether this screen is standing in bundled sample photographs for a
+  /// live feed — see the top-of-file doc comment's demo capture mode
+  /// section. Read once, in [initState], before the camera session would
+  /// otherwise start.
+  late final bool _demoMode;
+
+  /// The bundled sample currently standing in for the live feed in demo
+  /// mode — see [_syncDemoPreview]. Null outside that mode, and briefly
+  /// null inside it too, for the gap between a new angle becoming current
+  /// and its own sample finishing the copy out of the asset bundle.
+  XFile? _demoPreview;
+
+  /// Which angle [_demoPreview] actually belongs to, so a stale sample
+  /// from the angle just shot (or just skipped) never flashes up again for
+  /// the next one while its own copy is still in flight.
+  CaptureAngle? _demoPreviewAngle;
 
   bool _capturing = false;
   bool _submitting = false;
@@ -357,18 +398,46 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     // an unlocked landscape rotation here is what made the feed look
     // squashed rather than simply rotated.
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    _camera.start();
-    _tiltDetector.start((reading) {
-      if (!mounted) return;
-      setState(() {
-        _tiltReading = reading;
-        _updateHoldSteady();
+    // Read once, before anything below acts on it: AppBootstrap has already
+    // loaded this provider by the time any screen shows (see its own doc
+    // comment), so a synchronous read here is safe, and demo mode is a
+    // deliberate choice the booth operator made opening this screen, not
+    // something that should change under a photographer mid-set just
+    // because Settings happens to be reachable from somewhere else at the
+    // same time.
+    _demoMode = ref.read(appPreferencesProvider).demoCaptureModeEnabled;
+    if (_demoMode) {
+      // Whichever angles have no bundled sample behind them (see
+      // demo_sample_photos.dart's own demoAvailableAngles) — the real
+      // camera that would otherwise let a photographer shoot one for real
+      // never opens below — are seeded into the skip set right here, the
+      // same state a deliberate Skip leaves behind, rather than ever being
+      // offered as the angle to shoot next. _currentAngle already walks
+      // past anything in _skipped, so this is the whole fix — no new
+      // branching in that sequencing logic itself, and nothing here needs
+      // to change if the available set grows or shrinks later.
+      _skipped.addAll(
+        CaptureAngle.values.toSet().difference(demoAvailableAngles),
+      );
+      _syncDemoPreview();
+    } else {
+      _camera.start();
+      _tiltDetector.start((reading) {
+        if (!mounted) return;
+        setState(() {
+          _tiltReading = reading;
+          _updateHoldSteady();
+        });
       });
-    });
+    }
     // After the first frame, not inline here: offering to resume a draft
     // means showing a dialog, which needs a BuildContext already attached to
-    // the tree.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _offerDraftResume());
+    // the tree. Never offered in demo mode at all — a demo set has no draft
+    // to resume (see _saveDraft's own guard), so there is nothing this could
+    // ever find.
+    if (!_demoMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _offerDraftResume());
+    }
   }
 
   /// Checks for a draft saved by a previous "Save Draft" (see
@@ -450,6 +519,38 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     );
   }
 
+  /// Keeps [_demoPreview] matched to whichever angle demo mode is
+  /// currently asking for. Called from every place that can change
+  /// [_currentAngle] while [_demoMode] is on — initState for the first
+  /// one, [_captureDemo] for the next one once a shot "lands", and
+  /// [_selectAngle]/[_skip] for a filmstrip tap or a deliberate Skip — the
+  /// same convention [_updateHoldSteady] already follows for the real
+  /// gates it tracks. A no-op outside demo mode, so calling it alongside
+  /// those is free everywhere else.
+  void _syncDemoPreview() {
+    if (!_demoMode) return;
+    final angle = _currentAngle;
+    if (angle == _demoPreviewAngle) return;
+    _demoPreviewAngle = angle;
+    _demoPreview = null;
+    if (angle != null) unawaited(_loadDemoPreview(angle));
+  }
+
+  /// Copies [angle]'s bundled sample and shows it once it lands — see
+  /// [loadDemoSamplePhoto]'s own doc comment for why asking for the same
+  /// angle more than once in a session (here, then again in
+  /// [_captureDemo] for the shot itself) is the designed case, not a
+  /// wasted repeat. Checks [_currentAngle], not just [mounted], before
+  /// applying the result: by the time a slow copy finishes, a filmstrip
+  /// tap or a shot already taken may have moved on to a different angle,
+  /// and that angle's own call to [_syncDemoPreview] is the one whose
+  /// result should win.
+  Future<void> _loadDemoPreview(CaptureAngle angle) async {
+    final file = await loadDemoSamplePhoto(angle);
+    if (!mounted || _currentAngle != angle) return;
+    setState(() => _demoPreview = file);
+  }
+
   /// The camera hardware is released while the app is out of the foreground
   /// and re-acquired on return — a controller left open behind a
   /// backgrounded app is a known source of crashes on both platforms, not a
@@ -496,12 +597,19 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         description,
         ResolutionPreset.high,
         enableAudio: false,
-        // bgra8888 is what inputImageFromCameraImage expects and is the one
-        // format group ML Kit documents support on iOS; left unset on other
-        // platforms since on-device detection does not run there yet (see
-        // that function's doc comment) and there is no reason to force an
-        // unusual format group for a feature that will not use it.
-        imageFormatGroup: Platform.isIOS ? ImageFormatGroup.bgra8888 : null,
+        // bgra8888 on iOS, nv21 on Android — the one format group each
+        // platform's ML Kit documents as supported, and the one
+        // inputImageFromCameraImage and analyzeImageQuality are each
+        // written to read (see those two functions' own doc comments for
+        // why nv21 specifically, not the plugin's own default of yuv420).
+        // Left unset on any other platform, since on-device detection does
+        // not run there (same doc comments) and there is no reason to force
+        // an unusual format group for a feature that will not use it.
+        imageFormatGroup: Platform.isIOS
+            ? ImageFormatGroup.bgra8888
+            : Platform.isAndroid
+            ? ImageFormatGroup.nv21
+            : null,
       );
       return await startOrClose(
         controller,
@@ -512,7 +620,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
           // landed on, and a front-facing camera in particular often cannot
           // zoom at all.
           final maxZoomLevel = await controller.getMaxZoomLevel();
-          if (Platform.isIOS) {
+          // Android gets the same analysis stream iOS always has, now that
+          // the format group above gives ML Kit a buffer layout it
+          // actually understands on that platform too.
+          if (Platform.isIOS || Platform.isAndroid) {
             await controller.startImageStream(
               (image) => _onCameraFrame(image, description),
             );
@@ -635,8 +746,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
 
   String _messageFor(Object error) => switch (error) {
     CameraException(
-      code:
-          'CameraAccessDenied' ||
+      code: 'CameraAccessDenied' ||
           'CameraAccessDeniedWithoutPrompt' ||
           'CameraAccessRestricted',
     ) =>
@@ -698,18 +808,54 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     }
   }
 
+  /// Demo mode's shutter — see the top-of-file doc comment's demo capture
+  /// mode section. A separate method from [_capture] rather than a branch
+  /// inside it: the two share nothing but the bookkeeping once a
+  /// photograph actually exists (writing it into [_captured], clearing a
+  /// stale skip/jump, the haptic) — every step before that in [_capture] —
+  /// takePicture() itself, the exposure lock — either has no camera here to
+  /// call or is meaningless without one. [angle] is always [_currentAngle]
+  /// at the one call site, [_buildDemoBody], which never hands this an
+  /// angle outside [demoAvailableAngles] — see that method's own
+  /// onSelectAngle guard — so this never needs [loadDemoSamplePhoto]'s own
+  /// refusal.
+  Future<void> _captureDemo(CaptureAngle angle) async {
+    if (_capturing) return;
+    setState(() => _capturing = true);
+    try {
+      final photo = await loadDemoSamplePhoto(angle);
+      if (!mounted) return;
+      setState(() {
+        _captured[angle] = photo;
+        _skipped.remove(angle);
+        if (_jumpTarget == angle) _jumpTarget = null;
+        _syncDemoPreview();
+      });
+      haptic(ref, HapticFeedbackType.medium);
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
   /// The current set, written to disk — see [_capture]'s own call site for
   /// why this runs after every shot rather than only at exit — with the
   /// submit of it that stopped short, if one did (see
   /// [CaptureSubmission.unfinished]), so a retry after the camera closes
   /// still carries on with the listing that submit created.
-  Future<void> _saveDraft() => saveCaptureDraft(
-    capturedPaths: _captured.map(
-      (angle, file) => MapEntry(angle, file.path),
-    ),
-    skipped: _skipped,
-    unfinishedSubmission: _submission.unfinished,
-  );
+  Future<void> _saveDraft() {
+    // Demo mode's photographs are temporary copies of a bundled asset, not
+    // real work a photographer could lose, and resuming them later would
+    // only hand back whatever today's samples happen to be anyway — see
+    // the top-of-file doc comment's demo capture mode section. Every call
+    // site above (after a shot, on a failed submit, on Save Draft) stays
+    // unchanged; this is the one place that needs to know.
+    if (_demoMode) return Future<void>.value();
+    return saveCaptureDraft(
+      capturedPaths: _captured.map((angle, file) => MapEntry(angle, file.path)),
+      skipped: _skipped,
+      unfinishedSubmission: _submission.unfinished,
+    );
+  }
 
   /// Best-effort — not every camera on every device actually supports a
   /// lock (older or unusual hardware can reject the mode change), and
@@ -754,11 +900,20 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// next", regardless of what it currently shows. One method rather than
   /// three, since all three are really the same intent.
   void _selectAngle(CaptureAngle angle) {
+    // In demo mode, whichever angles have no bundled sample are never a
+    // valid target for this method -- not only when the filmstrip would
+    // offer them (it already stays off them, see _buildDemoBody's onSelectAngle),
+    // but also from ReviewScreen's "tap an empty slot to retake it" flow in
+    // _submit, which has no demo-mode awareness of its own and would
+    // otherwise hand either straight through, leaving the shutter pointed
+    // at an angle _captureDemo has no sample to answer.
+    if (_demoMode && !demoAvailableAngles.contains(angle)) return;
     setState(() {
       _captured.remove(angle);
       _skipped.remove(angle);
       _jumpTarget = angle;
       _updateHoldSteady();
+      _syncDemoPreview();
     });
   }
 
@@ -776,6 +931,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       // target bypasses that check on purpose.
       if (_jumpTarget == angle) _jumpTarget = null;
       _updateHoldSteady();
+      _syncDemoPreview();
     });
   }
 
@@ -810,6 +966,12 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         ..clear()
         ..addAll(result.photos);
       _updateHoldSteady();
+      // Review can hand back a photo map with the angle it leaves current
+      // no longer captured (a delete, or a retake of a different angle):
+      // _currentAngle may now point somewhere _demoPreview hasn't caught up
+      // to yet. Every other place that can move _currentAngle while demo
+      // mode is on already calls this; this was the one gap.
+      _syncDemoPreview();
     });
 
     switch (result) {
@@ -875,13 +1037,20 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
           :final photoCount,
           :final processingWarning,
         ):
-          try {
-            await clearCaptureDraft();
-          } catch (_) {
-            // The set is on the server by now, so this is tidying up after a
-            // finished submit, not part of it. A draft left behind only means
-            // being offered those photographs again next time; reporting the
-            // submit as failed would invite retrying what is already done.
+          // Demo mode never wrote a draft (see _saveDraft's own guard), so
+          // there is nothing of its own to tidy up here -- and no reason to
+          // go anywhere near whatever unrelated real draft a non-demo
+          // session might currently have on disk.
+          if (!_demoMode) {
+            try {
+              await clearCaptureDraft();
+            } catch (_) {
+              // The set is on the server by now, so this is tidying up
+              // after a finished submit, not part of it. A draft left
+              // behind only means being offered those photographs again
+              // next time; reporting the submit as failed would invite
+              // retrying what is already done.
+            }
           }
           if (!mounted) return;
           haptic(ref, HapticFeedbackType.medium);
@@ -930,7 +1099,14 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   /// without meaning to, so neither is allowed to close this screen
   /// silently once anything has been captured or skipped.
   Future<void> _handleCloseRequest() async {
-    if (_captured.isEmpty && _skipped.isEmpty) {
+    // In demo mode, _skipped always starts seeded with whichever angles
+    // have no bundled sample (see initState) — that is housekeeping, not
+    // something a photographer did, so on its own it must not be what
+    // turns this into "there is real work here, protect it" below.
+    final meaningfulSkips = _demoMode
+        ? _skipped.intersection(demoAvailableAngles)
+        : _skipped;
+    if (_captured.isEmpty && meaningfulSkips.isEmpty) {
       (widget.onClose ?? () => Navigator.of(context).pop()).call();
       return;
     }
@@ -967,7 +1143,12 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
 
     if (action == _QuitAction.saveDraft) {
       await _saveDraft();
-    } else {
+    } else if (!_demoMode) {
+      // Demo mode never wrote a draft (see _saveDraft's own guard), and this
+      // dialog can now only reach Discard here with real work to confirm
+      // away in the first place (see meaningfulSkips above) -- but still,
+      // never go near whatever unrelated real draft a non-demo session
+      // might have on disk.
       await clearCaptureDraft();
     }
     if (!mounted) return;
@@ -977,18 +1158,86 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
   @override
   Widget build(BuildContext context) {
     final canAct = !_submitting;
-    final blockingMessage = _blockingMessage;
-    // Green tint fires as soon as every check agrees — a moment before the
-    // shutter itself unlocks (see settled below) — so the photographer sees
-    // "you've got it" and knows to hold rather than only finding out once
-    // the shutter silently becomes tappable.
-    final instantaneouslyGood =
-        blockingMessage == null && _currentAngle != null;
-    final settled = _holdSteady.isSettled(
-      target: _currentAngle,
-      now: DateTime.now(),
-    );
-    final canCapture = canAct && instantaneouslyGood && settled;
+
+    // Demo mode gets a body of its own rather than a fifth case squeezed
+    // into the switch below: _state never leaves _CameraInitializing in
+    // this mode (the camera session is never started — see initState), so
+    // none of that sealed hierarchy's other three cases would ever apply,
+    // and "no camera hardware" is a different, real fact about a device
+    // that this is not. See the top-of-file doc comment's demo capture
+    // mode section.
+    final Widget preview;
+    if (_demoMode) {
+      preview = _buildDemoBody(canAct);
+    } else {
+      final blockingMessage = _blockingMessage;
+      // Green tint fires as soon as every check agrees — a moment before
+      // the shutter itself unlocks (see settled below) — so the
+      // photographer sees "you've got it" and knows to hold rather than
+      // only finding out once the shutter silently becomes tappable.
+      final instantaneouslyGood =
+          blockingMessage == null && _currentAngle != null;
+      final settled = _holdSteady.isSettled(
+        target: _currentAngle,
+        now: DateTime.now(),
+      );
+      final canCapture = canAct && instantaneouslyGood && settled;
+
+      preview = switch (_state) {
+        _CameraInitializing() => const _CenteredMessage(
+          message: 'Starting camera…',
+          showSpinner: true,
+        ),
+        _CameraUnavailable(:final message) => _CenteredMessage(
+          message: message,
+          onRetry: _camera.start,
+        ),
+        _NoCameraHardware() => _CaptureBody(
+          controller: null,
+          currentAngle: _currentAngle,
+          captured: _captured,
+          skipped: _skipped,
+          capturing: _capturing,
+          submitting: _submitting,
+          blockingMessage: null,
+          aligned: false,
+          tiltReading: null,
+          exposureLocked: false,
+          onUnlockExposure: null,
+          onCapture: null,
+          onSelectAngle: canAct ? _selectAngle : null,
+          onSkip: (canAct && _currentAngle != null) ? _skip : null,
+          onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+          zoomLevel: _zoomLevel,
+          maxZoomLevel: 1.0,
+          onSetZoom: null,
+          demoPreviewFile: null,
+          showDemoBadge: false,
+        ),
+        _CameraReady(:final controller) => _CaptureBody(
+          controller: controller,
+          currentAngle: _currentAngle,
+          captured: _captured,
+          skipped: _skipped,
+          capturing: _capturing,
+          submitting: _submitting,
+          blockingMessage: blockingMessage,
+          aligned: instantaneouslyGood,
+          tiltReading: _tiltReading,
+          exposureLocked: _exposureLocked,
+          onUnlockExposure: canAct ? _unlockExposure : null,
+          onCapture: canCapture ? _capture : null,
+          onSelectAngle: canAct ? _selectAngle : null,
+          onSkip: (canAct && _currentAngle != null) ? _skip : null,
+          onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+          zoomLevel: _zoomLevel,
+          maxZoomLevel: _maxZoomLevel,
+          onSetZoom: canAct ? _setZoom : null,
+          demoPreviewFile: null,
+          showDemoBadge: false,
+        ),
+      };
+    }
 
     return PopScope(
       canPop: false,
@@ -999,58 +1248,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            Positioned.fill(
-              child: switch (_state) {
-                _CameraInitializing() => const _CenteredMessage(
-                  message: 'Starting camera…',
-                  showSpinner: true,
-                ),
-                _CameraUnavailable(:final message) => _CenteredMessage(
-                  message: message,
-                  onRetry: _camera.start,
-                ),
-                _NoCameraHardware() => _CaptureBody(
-                  controller: null,
-                  currentAngle: _currentAngle,
-                  captured: _captured,
-                  skipped: _skipped,
-                  capturing: _capturing,
-                  submitting: _submitting,
-                  blockingMessage: null,
-                  aligned: false,
-                  tiltReading: null,
-                  exposureLocked: false,
-                  onUnlockExposure: null,
-                  onCapture: null,
-                  onSelectAngle: canAct ? _selectAngle : null,
-                  onSkip: (canAct && _currentAngle != null) ? _skip : null,
-                  onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
-                  zoomLevel: _zoomLevel,
-                  maxZoomLevel: 1.0,
-                  onSetZoom: null,
-                ),
-                _CameraReady(:final controller) => _CaptureBody(
-                  controller: controller,
-                  currentAngle: _currentAngle,
-                  captured: _captured,
-                  skipped: _skipped,
-                  capturing: _capturing,
-                  submitting: _submitting,
-                  blockingMessage: blockingMessage,
-                  aligned: instantaneouslyGood,
-                  tiltReading: _tiltReading,
-                  exposureLocked: _exposureLocked,
-                  onUnlockExposure: canAct ? _unlockExposure : null,
-                  onCapture: canCapture ? _capture : null,
-                  onSelectAngle: canAct ? _selectAngle : null,
-                  onSkip: (canAct && _currentAngle != null) ? _skip : null,
-                  onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
-                  zoomLevel: _zoomLevel,
-                  maxZoomLevel: _maxZoomLevel,
-                  onSetZoom: canAct ? _setZoom : null,
-                ),
-              },
-            ),
+            Positioned.fill(child: preview),
             Positioned(
               top: Space.sm,
               left: Space.sm,
@@ -1071,6 +1269,49 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
           ],
         ),
       ),
+    );
+  }
+
+  /// What demo mode shows in place of the live camera and the four-way
+  /// camera-state switch in [build] — see that method's own comment for
+  /// why this is not a fifth case stuffed into that switch instead. [angle]
+  /// is read once, into every field below that needs it, so the body this
+  /// returns is self-consistent even though [_currentAngle] is a getter
+  /// that could in principle change between two reads of it.
+  Widget _buildDemoBody(bool canAct) {
+    final angle = _currentAngle;
+    return _CaptureBody(
+      controller: null,
+      currentAngle: angle,
+      captured: _captured,
+      skipped: _skipped,
+      capturing: _capturing,
+      submitting: _submitting,
+      // Nothing is ever blocking in this mode — the real gates are bypassed
+      // outright (see the top-of-file doc comment), not just quick to
+      // satisfy — so this stays null rather than routing through
+      // _blockingMessage's real computation, which has nothing meaningful
+      // to say with no camera running.
+      blockingMessage: null,
+      aligned: angle != null,
+      tiltReading: null,
+      exposureLocked: false,
+      onUnlockExposure: null,
+      onCapture: (canAct && !_capturing && angle != null)
+          ? () => _captureDemo(angle)
+          : null,
+      // The guard against an angle outside demoAvailableAngles now lives
+      // inside _selectAngle itself — see its own doc comment — since the
+      // filmstrip tap this used to guard here was never the only way to
+      // reach it.
+      onSelectAngle: canAct ? _selectAngle : null,
+      onSkip: (canAct && angle != null) ? _skip : null,
+      onSubmit: (canAct && _captured.isNotEmpty) ? _submit : null,
+      zoomLevel: 1.0,
+      maxZoomLevel: 1.0,
+      onSetZoom: null,
+      demoPreviewFile: angle == null ? null : _demoPreview,
+      showDemoBadge: true,
     );
   }
 }
@@ -1172,6 +1413,8 @@ class _CaptureBody extends StatelessWidget {
     required this.zoomLevel,
     required this.maxZoomLevel,
     required this.onSetZoom,
+    required this.demoPreviewFile,
+    required this.showDemoBadge,
   });
 
   /// Null on a device with no camera to preview — see [_NoCameraHardware].
@@ -1242,22 +1485,45 @@ class _CaptureBody extends StatelessWidget {
   /// [onCapture] is null for.
   final ValueChanged<double>? onSetZoom;
 
+  /// The bundled sample shown in place of the live feed while demo capture
+  /// mode is on — see the top-of-file doc comment's demo capture mode
+  /// section. Null outside that mode, and null inside it too for the brief
+  /// gap before a newly-current angle's own sample has finished copying
+  /// out of the asset bundle; either way [_NoPreviewPlaceholder] shows
+  /// underneath, exactly as it already does for [_NoCameraHardware].
+  final XFile? demoPreviewFile;
+
+  /// Whether to show the "DEMO — sample photos" badge — see
+  /// [_DemoModeBadge]. The one field here actually keyed on demo mode
+  /// rather than on "is there a controller": every other field above
+  /// already has a sensible value to pass for that mode (null controller,
+  /// null tilt, locked-out exposure) without this widget needing to know
+  /// why.
+  final bool showDemoBadge;
+
   @override
   Widget build(BuildContext context) {
     final controller = this.controller;
     final angle = currentAngle;
+    final demoPreview = demoPreviewFile;
     return Stack(
       fit: StackFit.expand,
       children: [
-        controller == null
-            ? const _NoPreviewPlaceholder()
-            : _CameraPreviewFilled(controller: controller),
+        controller != null
+            ? _CameraPreviewFilled(controller: controller)
+            : demoPreview != null
+            ? _DemoPreviewFilled(file: demoPreview)
+            : const _NoPreviewPlaceholder(),
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.only(top: Space.sm),
             child: Column(
               children: [
                 _ProgressPill(currentAngle: angle),
+                if (showDemoBadge) ...[
+                  const SizedBox(height: Space.sm),
+                  const _DemoModeBadge(),
+                ],
                 if (angle != null) ...[
                   const SizedBox(height: Space.sm),
                   _LevelIndicator(
@@ -1272,8 +1538,11 @@ class _CaptureBody extends StatelessWidget {
                 // Lives up here rather than sharing the centre with the
                 // guide overlay below — two things both reaching for screen
                 // centre is how they end up printed on top of one another
-                // instead of either being readable.
-                if (controller == null) ...[
+                // instead of either being readable. Demo mode's own badge
+                // just above already explains the absent feed, so the
+                // generic notice would be a second, slightly wrong
+                // explanation for the same gap.
+                if (controller == null && !showDemoBadge) ...[
                   const SizedBox(height: Space.sm),
                   const _NoCameraNotice(),
                 ],
@@ -1680,6 +1949,28 @@ class _NoPreviewPlaceholder extends StatelessWidget {
   }
 }
 
+/// Demo mode's stand-in for [_CameraPreviewFilled] — the bundled sample for
+/// whichever angle is current, filling the screen the same cover-fit way
+/// the live feed does, so swapping one for the other changes only what the
+/// car is, never how the rest of this screen is laid out around it. No
+/// sensor-orientation dance to do here unlike that class: a still JPEG has
+/// no "landscape sensor, portrait screen" mismatch to correct for.
+class _DemoPreviewFilled extends StatelessWidget {
+  const _DemoPreviewFilled({required this.file});
+
+  final XFile file;
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.file(
+      File(file.path),
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+    );
+  }
+}
+
 /// The small "no camera" caption itself — see [_NoPreviewPlaceholder] for
 /// why it lives up here rather than centred on screen.
 class _NoCameraNotice extends StatelessWidget {
@@ -1702,6 +1993,42 @@ class _NoCameraNotice extends StatelessWidget {
             Text(
               'No camera on this device',
               style: T.caption.copyWith(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Demo capture mode's own tell, so nobody mistakes a booth walkthrough for
+/// a real capture mid-set — see the top-of-file doc comment's demo capture
+/// mode section. [_Glass] rather than a style of its own, like every other
+/// pill on this screen, and shown for as long as this mode is on, not just
+/// while there would otherwise be a blank gap to fill.
+class _DemoModeBadge extends StatelessWidget {
+  const _DemoModeBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Glass(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.theater_comedy_outlined,
+              size: 14,
+              color: Colors.amber,
+            ),
+            const SizedBox(width: Space.xs),
+            Text(
+              'DEMO — sample photos',
+              style: T.caption.copyWith(
+                color: Colors.amber,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -1757,12 +2084,21 @@ class _ProgressDots extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A dot snapping straight to forestLift reads as a flicker next to
+    // this screen's other state changes, which all ease -- the same
+    // reasoning as _FilmstripTile's own fill-in, just an implicit
+    // Container tween here rather than a keyed switch, since there is no
+    // outgoing/incoming pair of widgets to cross-fade between.
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         for (var i = 0; i < total; i++) ...[
           if (i > 0) const SizedBox(width: 3.5),
-          Container(
+          AnimatedContainer(
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 200),
             width: 4,
             height: 4,
             decoration: BoxDecoration(
@@ -2012,11 +2348,35 @@ class _FilmstripTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final photo = file;
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     final label = photo != null
         ? '${angle.label}, captured. Double tap to reshoot.'
         : isSkipped
         ? '${angle.label}, skipped. Double tap to shoot next.'
         : '${angle.label}. Double tap to shoot this next.';
+
+    Widget content = const SizedBox.shrink();
+    if (photo != null) {
+      Widget image = Image.file(
+        File(photo.path),
+        width: _size,
+        height: _size,
+        fit: BoxFit.cover,
+      );
+      // Tagged per angle so Flutter's navigator pairs this thumbnail with
+      // its counterpart in ReviewScreen's own grid tile (_GridTile) on the
+      // push transition between the two screens -- skipped outright under
+      // reduced motion rather than built and then suppressed, the same
+      // call skeleton.dart's ShimmerGroup makes for its own sweep.
+      if (!reduceMotion) {
+        image = Hero(tag: 'capture-photo-${angle.name}', child: image);
+      }
+      content = ClipRRect(borderRadius: Radii.controlAll, child: image);
+    } else if (isSkipped) {
+      content = const Center(
+        child: Icon(Icons.remove_rounded, size: 14, color: Colors.white38),
+      );
+    }
 
     return Semantics(
       button: true,
@@ -2041,24 +2401,24 @@ class _FilmstripTile extends StatelessWidget {
             ),
             child: Stack(
               children: [
-                if (photo != null)
-                  ClipRRect(
-                    borderRadius: Radii.controlAll,
-                    child: Image.file(
-                      File(photo.path),
-                      width: _size,
-                      height: _size,
-                      fit: BoxFit.cover,
-                    ),
-                  )
-                else if (isSkipped)
-                  const Center(
-                    child: Icon(
-                      Icons.remove_rounded,
-                      size: 14,
-                      color: Colors.white38,
-                    ),
+                // A tile popping straight from empty to captured reads as
+                // a glitch next to every other state change on this screen
+                // already easing -- keyed on capture state alone, so
+                // skip/un-skip (sharing the "not captured" branch above)
+                // still swaps instantly, exactly as before this existed.
+                AnimatedSwitcher(
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 220),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(scale: animation, child: child),
                   ),
+                  child: KeyedSubtree(
+                    key: ValueKey(photo != null),
+                    child: content,
+                  ),
+                ),
                 if (photo != null)
                   Positioned(
                     right: 1,

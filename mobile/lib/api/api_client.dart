@@ -350,11 +350,21 @@ class ApiClient {
 
   /// Overrides the classifier's exclusion for one original photograph — see
   /// the server route's own doc comment for why this is a one-way door
-  /// rather than a toggle.
-  Future<ListingImage> includeImage(int listingId, int imageId) async {
+  /// rather than a toggle. [mode] 'rerun' (the default, and the only mode
+  /// this ever sent before it took one) treats the photograph as exterior
+  /// and leaves the usual reprocessing flow to pick it up; 'keep_only'
+  /// leaves the classifier's own verdict on the record and instead opts the
+  /// photograph out of the pipeline for good, for one a dealer wants visible
+  /// as-is rather than cut out and composited.
+  Future<ListingImage> includeImage(
+    int listingId,
+    int imageId, {
+    String mode = 'rerun',
+  }) async {
     final json = await _send(
       () => _dio.post(
         '/api/listings/$listingId/images/$imageId/include',
+        data: {'mode': mode},
         options: _options(),
       ),
     );
@@ -373,17 +383,24 @@ class ApiClient {
         .toList();
   }
 
-  /// Queues every unprocessed photograph on a listing. [backdropId] is
-  /// optional — without one the vehicle comes back on a transparent
-  /// background, per `ProcessRequest`'s own doc comment.
+  /// Queues every unprocessed photograph on a listing — or, with [force],
+  /// every original on it regardless of whether it already has a
+  /// successful result, so a dealer who adds or changes a backdrop after a
+  /// listing is already done still has a way to see the whole set redone
+  /// with it. [backdropId] is optional either way — without one the vehicle
+  /// comes back on a transparent background, per `ProcessRequest`'s own doc
+  /// comment. `force` is only sent when true, so a plain reprocess (the
+  /// overwhelmingly common call) is the same request body as before this
+  /// parameter existed.
   Future<ProcessingSummary> processListing(
     int listingId, {
     int? backdropId,
+    bool force = false,
   }) async {
     final json = await _send(
       () => _dio.post(
         '/api/listings/$listingId/process',
-        data: {'backdrop_id': ?backdropId},
+        data: {'backdrop_id': ?backdropId, if (force) 'force': true},
         options: _options(),
       ),
     );

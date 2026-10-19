@@ -137,12 +137,14 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
   void _openListing(VehicleListing listing) =>
       context.push(AppRoutes.listingDetailPath(listing.id), extra: listing);
 
-  /// Confirms, then archives, one vehicle — the [Dismissible] wrapping each
-  /// row calls this as `confirmDismiss`, which is why it returns whether the
-  /// swipe should actually complete rather than performing the archive and
-  /// reporting nothing back. Returning `false` on either a decline or a
-  /// failed request animates the row back into place instead of leaving a
-  /// gap for a vehicle that, from the server's side, was never touched.
+  /// Confirms, then archives, one vehicle — called both as the
+  /// [Dismissible]'s own `confirmDismiss` (why it returns whether to
+  /// proceed rather than acting and reporting nothing back: returning
+  /// `false` on either a decline or a failed request animates the swiped
+  /// row back into place instead of leaving a gap for a vehicle that, from
+  /// the server's side, was never touched) and from the long-press menu's
+  /// Archive row via [_archiveFromSheet], which has no row of its own to
+  /// animate and acts on the same boolean directly.
   Future<bool> _confirmArchive(VehicleListing listing) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -172,6 +174,60 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
         current.listings.where((l) => l.id != listingId).toList(),
       ),
     );
+  }
+
+  /// Opens the long-press menu for one row — see [_ListingActionsSheet] for
+  /// the sheet itself and why both its actions are things this card already
+  /// supports somewhere else on screen.
+  void _openActionsSheet(VehicleListing listing) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: C.paper,
+      showDragHandle: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.card)),
+      ),
+      builder: (context) => _ListingActionsSheet(
+        listing: listing,
+        onArchive: () => _archiveFromSheet(listing),
+        onDelete: () => _deleteFromSheet(listing),
+      ),
+    );
+  }
+
+  Future<void> _archiveFromSheet(VehicleListing listing) async {
+    if (await _confirmArchive(listing)) _removeFromList(listing.id);
+  }
+
+  Future<void> _deleteFromSheet(VehicleListing listing) async {
+    if (await _confirmDelete(listing)) _removeFromList(listing.id);
+  }
+
+  /// Confirms, then deletes, one vehicle entirely — every photograph on it,
+  /// originals and processed results alike, the same call
+  /// listing_detail_screen.dart's own overflow menu already makes. Reached
+  /// only from the long-press menu: unlike archiving there is no swipe
+  /// gesture for this one, since a swipe that deletes outright rather than
+  /// just archiving is exactly the kind of irreversible slip a confirmation
+  /// dialog exists to prevent in the first place.
+  Future<bool> _confirmDelete(VehicleListing listing) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => _DeleteListingConfirmDialog(listing: listing),
+    );
+    if (confirmed != true || !mounted) return false;
+
+    try {
+      await ref.read(apiClientProvider).deleteListing(listing.id);
+      haptic(ref, HapticFeedbackType.medium);
+      return true;
+    } on ApiException catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    }
   }
 
   @override
@@ -255,6 +311,7 @@ class _ListingsScreenState extends ConsumerState<ListingsScreen> {
               child: _ListingRow(
                 listing: listing,
                 onTap: () => _openListing(listing),
+                onLongPress: () => _openActionsSheet(listing),
               ),
             ),
           );
@@ -443,11 +500,18 @@ class _ListingsSkeleton extends StatelessWidget {
 /// One vehicle: its title, its pipeline status, its stock number if it has
 /// one, and its image count. Opens the listing detail screen on tap — its
 /// photographs, and the ability to remove one that turned out to be no good.
+/// Long-pressing opens [_ListingActionsSheet] instead — Archive and Delete,
+/// alongside the swipe gesture this same row already answers to.
 class _ListingRow extends StatelessWidget {
-  const _ListingRow({required this.listing, required this.onTap});
+  const _ListingRow({
+    required this.listing,
+    required this.onTap,
+    required this.onLongPress,
+  });
 
   final VehicleListing listing;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -484,6 +548,7 @@ class _ListingRow extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onTap,
+            onLongPress: onLongPress,
             child: Padding(
               padding: const EdgeInsets.all(Space.lg),
               child: Column(
@@ -597,6 +662,175 @@ class _ArchiveConfirmDialog extends StatelessWidget {
                     ),
                     onPressed: () => Navigator.of(context).pop(true),
                     child: const Text('Archive'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Long-press menu ──────────────────────────────────────────────────────────
+
+/// What a long press on [_ListingRow] opens: the same sheet shape AppShell
+/// uses for its own account sheet (drag handle, rounded top corners,
+/// C.paper — see `_AppShellState._openAccountSheet`), carrying the two
+/// actions this card already supports somewhere else on screen — Archive
+/// from the swipe gesture above, Delete from listing_detail_screen.dart's
+/// own overflow menu — so neither needs a gesture of its own once a listing
+/// already has one here. Both rows pop the sheet before doing anything
+/// else, the order AppShell's own `_AccountSheetRow` uses, so a confirm
+/// dialog or an error snackbar reads as belonging to the list underneath,
+/// not to a sheet still animating closed on top of it.
+class _ListingActionsSheet extends StatelessWidget {
+  const _ListingActionsSheet({
+    required this.listing,
+    required this.onArchive,
+    required this.onDelete,
+  });
+
+  final VehicleListing listing;
+  final VoidCallback onArchive;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          Space.lg,
+          Space.sm,
+          Space.lg,
+          Space.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(listing.title, style: serif(24)),
+            const SizedBox(height: Space.sm),
+            const Divider(height: 1, color: C.line),
+            _ListingActionRow(
+              icon: Icons.archive_outlined,
+              label: 'Archive listing',
+              onTap: () {
+                Navigator.of(context).pop();
+                onArchive();
+              },
+            ),
+            const Divider(height: 1, color: C.line),
+            _ListingActionRow(
+              icon: Icons.delete_outline,
+              label: 'Delete listing',
+              destructive: true,
+              onTap: () {
+                Navigator.of(context).pop();
+                onDelete();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One row in [_ListingActionsSheet] — `_AccountSheetRow`'s own shape
+/// (`widgets/app_shell.dart`), duplicated rather than shared: that one is
+/// private to AppShell's sheet the same way this one is private to this
+/// screen's, and neither file is the natural home for a third, shared copy
+/// over just two uses. [destructive] is the one addition, for Delete's rust
+/// tint — the same colour `PopupMenuItem` already gives "Delete listing" in
+/// listing_detail_screen.dart's own overflow menu.
+class _ListingActionRow extends StatelessWidget {
+  const _ListingActionRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = destructive ? C.rust : C.ink;
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: Space.sm),
+              Expanded(
+                child: Text(
+                  label,
+                  style: T.body.copyWith(fontSize: 15, color: color),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Confirms before deleting the whole listing from this screen's long-press
+/// menu — same shape as [_ArchiveConfirmDialog] above, and as
+/// listing_detail_screen.dart's own dialog of the same name for the same
+/// action reached from that screen's overflow menu instead.
+class _DeleteListingConfirmDialog extends StatelessWidget {
+  const _DeleteListingConfirmDialog({required this.listing});
+
+  final VehicleListing listing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: C.white,
+      shape: const RoundedRectangleBorder(borderRadius: Radii.cardAll),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Delete "${listing.title}"?', style: serif(24)),
+            const SizedBox(height: Space.sm),
+            const Text(
+              'This removes the listing and every photograph on it — '
+              'originals and processed results alike. This cannot be undone.',
+              style: T.bodySmall,
+            ),
+            const SizedBox(height: Space.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: Space.sm),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: C.rust,
+                      minimumSize: const Size(0, 48),
+                    ),
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Delete listing'),
                   ),
                 ),
               ],

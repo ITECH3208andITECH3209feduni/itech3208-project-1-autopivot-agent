@@ -127,6 +127,11 @@ export type ListingImage = {
   source_image_id?: number | null
   image_kind: ImageKind | null
   kind_confidence: number | null
+  // Permanent opt-out of the pipeline for this one original, set via
+  // includeImage's "keep_only" mode. Optional so a value coming back without
+  // it (an older fixture, say) still satisfies this type — the API itself
+  // always sends a real boolean, never omits it.
+  kept_without_processing?: boolean
   original_filename: string
   image_url: string
   width: number
@@ -383,10 +388,20 @@ export const api = {
   deleteImage: (listingId: number, imageId: number) =>
     request<void>(`/api/listings/${listingId}/images/${imageId}`, { method: 'DELETE' }),
 
-  processListing: (listingId: number, backdropId: number | null) =>
+  // mode "rerun" overrides the classifier's verdict to exterior (today's only
+  // behaviour, and still the default a caller gets by omitting the field);
+  // "keep_only" leaves that verdict alone and opts the image out of the
+  // pipeline instead — see kept_without_processing on ListingImage.
+  includeImage: (listingId: number, imageId: number, mode: 'rerun' | 'keep_only') =>
+    request<ListingImage>(`/api/listings/${listingId}/images/${imageId}/include`, {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
+
+  processListing: (listingId: number, backdropId: number | null, force = false) =>
     request<ProcessingSummary>(`/api/listings/${listingId}/process`, {
       method: 'POST',
-      body: JSON.stringify({ backdrop_id: backdropId }),
+      body: JSON.stringify({ backdrop_id: backdropId, force }),
     }),
 
   listingJobs: (listingId: number) =>

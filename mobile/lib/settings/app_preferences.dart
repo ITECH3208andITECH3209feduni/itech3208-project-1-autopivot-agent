@@ -1,9 +1,12 @@
 /// Where the toggles on the Settings screen live — biometric unlock, haptic
-/// feedback, and whether the welcome tour has already been shown.
+/// feedback, whether the welcome tour has already been shown, and whether
+/// capture should hand back bundled sample photos instead of opening the
+/// camera (demo capture mode, for showing the app at a trade-show booth with
+/// no car on hand).
 ///
 /// Secure storage, the same mechanism `auth/token_store.dart` uses for the
 /// session token, rather than a new dependency like `shared_preferences` for
-/// three small values: nothing here is sensitive the way a bearer token is,
+/// four small values: nothing here is sensitive the way a bearer token is,
 /// but reusing what is already wired in is simpler than a second storage
 /// mechanism for a handful of booleans, and the values are not large or
 /// numerous enough for that to cost anything.
@@ -19,6 +22,7 @@ class AppPreferences {
   static const _biometricLockKey = 'autopivot.biometric_lock_enabled';
   static const _hapticsKey = 'autopivot.haptics_enabled';
   static const _welcomeTourSeenKey = 'autopivot.welcome_tour_seen';
+  static const _demoCaptureModeKey = 'autopivot.demo_capture_mode_enabled';
 
   final FlutterSecureStorage _storage;
 
@@ -46,6 +50,15 @@ class AppPreferences {
 
   Future<void> setWelcomeTourSeen(bool value) =>
       _storage.write(key: _welcomeTourSeenKey, value: value.toString());
+
+  /// Off by default — turning on a mode nobody asked for, swapping the
+  /// camera for canned photos, is a worse surprise than leaving it off until
+  /// a booth actually needs it.
+  Future<bool> demoCaptureModeEnabled() async =>
+      await _storage.read(key: _demoCaptureModeKey) == 'true';
+
+  Future<void> setDemoCaptureModeEnabled(bool value) =>
+      _storage.write(key: _demoCaptureModeKey, value: value.toString());
 }
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -56,6 +69,7 @@ class AppPreferencesState {
     required this.biometricLockEnabled,
     required this.hapticsEnabled,
     required this.welcomeTourSeen,
+    required this.demoCaptureModeEnabled,
   });
 
   const AppPreferencesState.initial()
@@ -63,27 +77,32 @@ class AppPreferencesState {
       biometricLockEnabled = false,
       hapticsEnabled = true,
       welcomeTourSeen =
-          true; // assumed seen until proven otherwise — see load()
+          true, // assumed seen until proven otherwise — see load()
+      demoCaptureModeEnabled = false;
 
   /// False for the one frame before [AppPreferencesController.load] resolves.
-  /// Nothing reads the three booleans below as meaningful until this is true;
+  /// Nothing reads the four booleans below as meaningful until this is true;
   /// see that method's own doc comment for why [welcomeTourSeen] in
   /// particular defaults to true rather than false while this is false.
   final bool loaded;
   final bool biometricLockEnabled;
   final bool hapticsEnabled;
   final bool welcomeTourSeen;
+  final bool demoCaptureModeEnabled;
 
   AppPreferencesState copyWith({
     bool? loaded,
     bool? biometricLockEnabled,
     bool? hapticsEnabled,
     bool? welcomeTourSeen,
+    bool? demoCaptureModeEnabled,
   }) => AppPreferencesState(
     loaded: loaded ?? this.loaded,
     biometricLockEnabled: biometricLockEnabled ?? this.biometricLockEnabled,
     hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
     welcomeTourSeen: welcomeTourSeen ?? this.welcomeTourSeen,
+    demoCaptureModeEnabled:
+        demoCaptureModeEnabled ?? this.demoCaptureModeEnabled,
   );
 }
 
@@ -116,12 +135,14 @@ class AppPreferencesController extends Notifier<AppPreferencesState> {
       _store.biometricLockEnabled(),
       _store.hapticsEnabled(),
       _store.welcomeTourSeen(),
+      _store.demoCaptureModeEnabled(),
     ]);
     state = AppPreferencesState(
       loaded: true,
       biometricLockEnabled: results[0],
       hapticsEnabled: results[1],
       welcomeTourSeen: results[2],
+      demoCaptureModeEnabled: results[3],
     );
   }
 
@@ -138,6 +159,11 @@ class AppPreferencesController extends Notifier<AppPreferencesState> {
   Future<void> setWelcomeTourSeen(bool value) async {
     state = state.copyWith(welcomeTourSeen: value);
     await _store.setWelcomeTourSeen(value);
+  }
+
+  Future<void> setDemoCaptureModeEnabled(bool value) async {
+    state = state.copyWith(demoCaptureModeEnabled: value);
+    await _store.setDemoCaptureModeEnabled(value);
   }
 }
 

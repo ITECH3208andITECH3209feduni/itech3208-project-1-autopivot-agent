@@ -1,8 +1,8 @@
-/// App preferences: biometric lock, haptic feedback, and a way back into
-/// the welcome tour. Reached from the account sheet's own Settings row —
-/// every signed-in role gets this one, unlike Team or Dealerships, which
-/// are administration for exactly one role each and happen to share the
-/// same sheet.
+/// App preferences: biometric lock, haptic feedback, demo capture mode, and
+/// a way back into the welcome tour. Reached from the account sheet's own
+/// Settings row — every signed-in role gets this one, unlike Team or
+/// Dealerships, which are administration for exactly one role each and
+/// happen to share the same sheet.
 library;
 
 import 'package:flutter/material.dart';
@@ -151,6 +151,21 @@ class _AppSettingsScreenState extends ConsumerState<AppSettingsScreen> {
                             onChanged: (value) => ref
                                 .read(appPreferencesProvider.notifier)
                                 .setHapticsEnabled(value),
+                          ),
+                          const SizedBox(height: Space.xl),
+                          Text('DEMO', style: T.caption),
+                          const SizedBox(height: Space.sm),
+                          _SettingsToggleRow(
+                            icon: Icons.photo_library_outlined,
+                            title: 'Demo capture mode',
+                            subtitle:
+                                'Use bundled sample photos instead of the '
+                                'camera — for showing the app without a car '
+                                'on hand.',
+                            value: prefs.demoCaptureModeEnabled,
+                            onChanged: (value) => ref
+                                .read(appPreferencesProvider.notifier)
+                                .setDemoCaptureModeEnabled(value),
                           ),
                           const SizedBox(height: Space.xl),
                           Text('HELP', style: T.caption),

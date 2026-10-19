@@ -34,7 +34,15 @@ export function describeKind(kind: ImageKind | null): KindDescription | null {
 }
 
 export function isExcluded(image: ListingImage): boolean {
-  return image.image_kind !== null && image.image_kind !== 'exterior'
+  // kept_without_processing is a deliberate, permanent opt-out of the
+  // pipeline for this one image — the classifier's verdict is left on the
+  // record rather than overwritten, so that verdict alone can no longer be
+  // the last word on whether this shows as excluded.
+  return (
+    image.image_kind !== null &&
+    image.image_kind !== 'exterior' &&
+    !image.kept_without_processing
+  )
 }
 
 export function pickPreviewImage(images: ListingImage[]): ListingImage | null {

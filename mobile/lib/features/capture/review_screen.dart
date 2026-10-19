@@ -571,6 +571,27 @@ class _GridTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final captured = file != null;
 
+    Widget photo = DecoratedBox(
+      decoration: BoxDecoration(
+        color: C.bone,
+        border: Border.all(color: C.line),
+      ),
+      child: const Center(
+        child: Icon(Icons.camera_alt_outlined, color: C.lineStrong),
+      ),
+    );
+    if (captured) {
+      photo = Image.file(File(file!.path), fit: BoxFit.cover);
+      // Tagged to match _FilmstripTile's own Hero back on CaptureScreen --
+      // same string, built off the same angle -- so the navigator picks
+      // the two up as a pair on the push transition that opened this
+      // screen. Skipped under reduced motion for the same reason that
+      // file's own doc comment gives.
+      if (!MediaQuery.of(context).disableAnimations) {
+        photo = Hero(tag: 'capture-photo-${angle.name}', child: photo);
+      }
+    }
+
     return InkWell(
       onTap: onTap,
       borderRadius: Radii.controlAll,
@@ -583,21 +604,7 @@ class _GridTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (captured)
-                    Image.file(File(file!.path), fit: BoxFit.cover)
-                  else
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: C.bone,
-                        border: Border.all(color: C.line),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.camera_alt_outlined,
-                          color: C.lineStrong,
-                        ),
-                      ),
-                    ),
+                  photo,
                   if (captured)
                     Positioned(
                       top: Space.xs,

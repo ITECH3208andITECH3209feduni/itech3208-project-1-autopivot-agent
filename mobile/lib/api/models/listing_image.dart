@@ -14,6 +14,7 @@ class ListingImage {
     required this.height,
     required this.fileSizeBytes,
     required this.createdAt,
+    required this.keptWithoutProcessing,
   });
 
   final int id;
@@ -46,15 +47,28 @@ class ListingImage {
   final int fileSizeBytes;
   final DateTime createdAt;
 
+  /// A dealer's permanent opt-out of the pipeline for this one original —
+  /// set by the include endpoint's 'keep_only' mode for a photograph that
+  /// should stay visible as a normal original (an interior shot, say)
+  /// without ever being cut out and composited. Deliberately independent of
+  /// [imageKind]: that stays whatever the classifier decided, so the record
+  /// of what the photograph actually is survives a dealer's decision to show
+  /// it anyway.
+  final bool keptWithoutProcessing;
+
   bool get isOriginal => imageType == 'original';
   bool get isProcessed => imageType == 'processed';
 
   /// True when the classifier looked at this photograph and decided it was
-  /// not usable — an advertisement, an interior shot, a close-up of a part.
-  /// Null (not yet classified) is deliberately not excluded: excluding
-  /// something the classifier has not actually judged would misrepresent
-  /// what happened to it.
-  bool get isExcluded => imageKind != null && imageKind != 'exterior';
+  /// not usable — an advertisement, an interior shot, a close-up of a part —
+  /// and nobody has since asked for it to be kept as-is anyway. Null (not
+  /// yet classified) is deliberately not excluded: excluding something the
+  /// classifier has not actually judged would misrepresent what happened to
+  /// it. [keptWithoutProcessing] overrides this regardless of [imageKind],
+  /// because it is a dealer's explicit "show it as a normal photograph", not
+  /// a change of mind about what the photograph is of.
+  bool get isExcluded =>
+      imageKind != null && imageKind != 'exterior' && !keptWithoutProcessing;
 
   factory ListingImage.fromJson(Map<String, dynamic> json) => ListingImage(
     id: json['id'] as int,
@@ -68,5 +82,9 @@ class ListingImage {
     height: json['height'] as int,
     fileSizeBytes: json['file_size_bytes'] as int,
     createdAt: DateTime.parse(json['created_at'] as String),
+    // Absent on a server from before this column existed — false is the
+    // same "nothing has opted this out" reading as everywhere else in this
+    // file that defaults rather than requires a key that may not exist yet.
+    keptWithoutProcessing: json['kept_without_processing'] as bool? ?? false,
   );
 }

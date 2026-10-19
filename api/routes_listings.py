@@ -21,6 +21,7 @@ from api import processing, storage, url_import
 from api.deps import DbSession, ReadyUser
 from api.schemas import (
     ImageOut,
+    IncludeImageRequest,
     ProcessingJobOut,
     ProcessingSummary,
     ProcessRequest,
@@ -91,6 +92,7 @@ def _serialise_image(image: Image) -> ImageOut:
         source_image_id=image.source_image_id,
         image_kind=image.image_kind,
         kind_confidence=float(image.kind_confidence) if image.kind_confidence is not None else None,
+        kept_without_processing=image.kept_without_processing,
         original_filename=image.original_filename,
         image_url=f"/api/files/{image.storage_path}",
         width=image.width,
@@ -626,7 +628,9 @@ def process_listing(
     session: DbSession,
     background: BackgroundTasks,
 ) -> ProcessingSummary:
-    """Queue every unprocessed photograph on this listing."""
+    """Queue every unprocessed photograph on this listing — or, with `force`,
+    every original on it, redone from scratch against a (possibly new)
+    backdrop."""
     listing = _owned_listing(session, user, listing_id)
 
     if processing.get_processor() is None:
@@ -652,7 +656,7 @@ def process_listing(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Backdrop not found."
             )
 
-    jobs = processing.create_jobs(session, listing, backdrop)
+    jobs = processing.create_jobs(session, listing, backdrop, force=payload.force)
     in_flight = any(
         job.status in ("pending", "processing")
         for job in processing.latest_jobs(session, listing.id)
@@ -682,9 +686,20 @@ def listing_jobs(
 
 @router.post("/{listing_id}/images/{image_id}/include", response_model=ImageOut)
 def include_image(
-    listing_id: int, image_id: int, user: ReadyUser, session: DbSession
+    listing_id: int,
+    image_id: int,
+    user: ReadyUser,
+    session: DbSession,
+    payload: IncludeImageRequest = IncludeImageRequest(),
 ) -> ImageOut:
-    """Override the classifier's exclusion for one original photograph."""
+    """Override the classifier's exclusion for one original photograph.
+
+    Mode "rerun" (the default, and all the mobile app has ever asked for)
+    marks it exterior so the pipeline composites it, as before. Mode
+    "keep_only" leaves the classifier's verdict on the record and instead
+    keeps the photograph as it is — for a shot that belongs in the gallery
+    but should never be cut out and composited, an interior say.
+    """
     listing = _owned_listing(session, user, listing_id)
     image = session.scalar(
         select(Image).where(
@@ -699,10 +714,16 @@ def include_image(
             detail="Only an original photograph can be included this way.",
         )
 
-    image.image_kind = "exterior"
+    if payload.mode == "keep_only":
+        image.kept_without_processing = True
+    else:
+        image.image_kind = "exterior"
     session.commit()
     session.refresh(image)
-    logger.info("Image included despite classification — listing=%s image=%s", listing_id, image_id)
+    logger.info(
+        "Image included despite classification — listing=%s image=%s mode=%s",
+        listing_id, image_id, payload.mode,
+    )
     return _serialise_image(image)
 
 

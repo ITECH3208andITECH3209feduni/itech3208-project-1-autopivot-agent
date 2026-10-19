@@ -168,26 +168,40 @@ def create_jobs(
     listing: VehicleListing,
     backdrop: Optional[Backdrop],
     processing_type: str = "full_pipeline",
+    force: bool = False,
 ) -> list[ProcessingJob]:
-    """Queue one job per original photograph."""
+    """Queue one job per original photograph.
+
+    Ordinarily an original with a completed, successful job is already done
+    and is left alone. `force` redoes the listing from scratch instead,
+    queuing a fresh job for every original — including those — since there is
+    no stored pre-backdrop cutout to recomposite from; run_job's own cleanup
+    then keeps the one-processed-image-per-original invariant once a fresh
+    job succeeds. Either way, an original with a job genuinely in flight right
+    now is left to it rather than queued again, and one kept_without_processing
+    is never queued at all — a permanent opt-out, force or not.
+    """
     originals = session.scalars(
         select(Image).where(
             Image.vehicle_listing_id == listing.id,
             Image.image_type == "original",
+            Image.kept_without_processing.is_(False),
         ).order_by(Image.created_at, Image.id)
     ).all()
 
-    already_done = {
-        job.input_image_id
-        for job in session.scalars(
-            select(ProcessingJob).where(
-                ProcessingJob.vehicle_listing_id == listing.id,
-                ProcessingJob.status == "completed",
-                ProcessingJob.review_state == "ok",
-                ProcessingJob.output_image_id.is_not(None),
-            )
-        ).all()
-    }
+    already_done: set[int] = set()
+    if not force:
+        already_done = {
+            job.input_image_id
+            for job in session.scalars(
+                select(ProcessingJob).where(
+                    ProcessingJob.vehicle_listing_id == listing.id,
+                    ProcessingJob.status == "completed",
+                    ProcessingJob.review_state == "ok",
+                    ProcessingJob.output_image_id.is_not(None),
+                )
+            ).all()
+        }
     in_flight: set[int] = set()
     for job in session.scalars(
         select(ProcessingJob).where(
@@ -354,6 +368,7 @@ def run_job(session: Session, job: ProcessingJob) -> None:
             job.status = "completed"
             job.review_state = "ok"
             job.error_message = outcome.review_note
+            _retire_stale_output(session, source.id, keep_image_id=output.id)
 
         job.completed_at = datetime.now(timezone.utc)
         session.flush()
@@ -399,6 +414,40 @@ def _record_kind(session: Session, image_id: int, outcome: ProcessOutcome) -> No
     if outcome.image_kind != EXTERIOR:
         statement = statement.where(Image.image_kind.is_distinct_from(EXTERIOR))
     session.execute(statement)
+
+
+def _retire_stale_output(session: Session, source_image_id: int, keep_image_id: int) -> None:
+    """Drop whatever processed image this original had before, now that a
+    fresh one has replaced it. `force` is the only way a second successful
+    job can reach this for the same original, but it is unconditional here
+    because it is the one-processed-image-per-original invariant, not a
+    force-specific step. Mirrors the cleanup shape delete_image already uses
+    in routes_listings.py for the same images.storage_path lifecycle: null
+    the job reference first, then delete the row and its file.
+    """
+    stale = session.scalars(
+        select(Image).where(
+            Image.source_image_id == source_image_id,
+            Image.image_type == "processed",
+            Image.id != keep_image_id,
+        )
+    ).all()
+    if not stale:
+        return
+
+    stale_ids = {image.id for image in stale}
+    for job in session.scalars(
+        select(ProcessingJob).where(ProcessingJob.output_image_id.in_(stale_ids))
+    ).all():
+        job.output_image_id = None
+
+    paths = [image.storage_path for image in stale]
+    for image in stale:
+        session.delete(image)
+    session.flush()
+
+    for path in paths:
+        storage.delete(path)
 
 
 def run_listing_jobs(listing_id: int) -> None:

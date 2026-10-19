@@ -200,6 +200,7 @@ class ImageOut(BaseModel):
     source_image_id: Optional[int] = None
     image_kind: Optional[str] = None
     kind_confidence: Optional[float] = None
+    kept_without_processing: bool = False
     original_filename: str
     image_url: str
     width: int
@@ -231,6 +232,20 @@ class VehicleListingDetail(VehicleListingOut):
 
 class ProcessRequest(BaseModel):
     backdrop_id: Optional[int] = None
+    force: bool = False
+
+
+class IncludeImageRequest(BaseModel):
+    """How to include a photograph the classifier left out of the exteriors.
+
+    "rerun" (the default, and all the mobile app has ever sent) is today's
+    include: mark it exterior so the pipeline composites it next time.
+    "keep_only" leaves the classifier's verdict on the record and instead
+    keeps the photograph as it is, for a shot — an interior, say — that
+    belongs in the gallery but should never be cut out and composited.
+    """
+
+    mode: str = Field(default="rerun", pattern="^(rerun|keep_only)$")
 
 
 class UrlImportRequest(BaseModel):

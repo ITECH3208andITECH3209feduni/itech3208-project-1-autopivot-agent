@@ -29,7 +29,7 @@ from sqlalchemy.orm import sessionmaker
 
 import classification
 from api import processing, routes_listings, storage
-from api.schemas import ProcessRequest
+from api.schemas import IncludeImageRequest, ProcessRequest
 from database import connection
 from database.base import Base
 from database.models import Dealership, Image, ProcessingJob, User, VehicleListing
@@ -131,10 +131,20 @@ def press_process(factory):
         task.func(*task.args, **task.kwargs)
 
 
-def include(factory, image_id):
-    """POST /api/listings/{id}/images/{image_id}/include, called as the route function."""
+def include(factory, image_id, mode=None):
+    """POST /api/listings/{id}/images/{image_id}/include, called as the route function.
+
+    With no `mode`, calls include_image exactly as every caller did before
+    `mode` existed — the omitted-field case the mobile app still relies on.
+    """
     with factory() as session:
-        routes_listings.include_image(LISTING_ID, image_id, session.get(User, USER_ID), session)
+        user = session.get(User, USER_ID)
+        if mode is None:
+            routes_listings.include_image(LISTING_ID, image_id, user, session)
+        else:
+            routes_listings.include_image(
+                LISTING_ID, image_id, user, session, IncludeImageRequest(mode=mode)
+            )
 
 
 def kind_of(factory, image_id):
@@ -397,3 +407,58 @@ def test_an_include_made_while_the_photograph_is_in_the_models_is_kept(
     assert not run.is_alive(), "the run never finished"
 
     assert kind_of(sessions, image_id) == "exterior"
+
+
+# ── mode "keep_only": kept as-is, never run through the pipeline ──────────────
+
+def test_include_keep_only_marks_the_photograph_kept_without_touching_its_kind(
+    sessions,
+):
+    """
+    mode "keep_only" is for a shot that belongs in the gallery as-is — an
+    interior, say — and must never be cut out and composited. Unlike mode
+    "rerun" it leaves the classifier's verdict exactly as it found it: only
+    kept_without_processing changes.
+    """
+    image_id = add_photograph(sessions, kind="interior")
+
+    include(sessions, image_id, mode="keep_only")
+
+    with sessions() as session:
+        image = session.get(Image, image_id)
+        assert image.kept_without_processing is True
+        assert image.image_kind == "interior"
+
+
+def test_include_mode_rerun_matches_the_omitted_field_default(sessions):
+    """mode "rerun", named explicitly, is byte-for-byte today's behaviour —
+    the same thing an omitted field already does — and does not set
+    kept_without_processing."""
+    image_id = add_photograph(sessions, kind="interior")
+
+    include(sessions, image_id, mode="rerun")
+
+    with sessions() as session:
+        image = session.get(Image, image_id)
+        assert image.image_kind == "exterior"
+        assert image.kept_without_processing is False
+
+
+def test_include_response_and_a_later_get_both_report_kept_without_processing(
+    sessions,
+):
+    """Whatever marks a photograph kept-without-processing has to be visible
+    to clients again: in include's own response, and on a plain re-read."""
+    image_id = add_photograph(sessions, kind="interior")
+
+    with sessions() as session:
+        result = routes_listings.include_image(
+            LISTING_ID, image_id, session.get(User, USER_ID), session,
+            IncludeImageRequest(mode="keep_only"),
+        )
+    assert result.kept_without_processing is True
+
+    with sessions() as session:
+        listing = routes_listings.get_listing(LISTING_ID, session.get(User, USER_ID), session)
+    (image_out,) = [i for i in listing.images if i.id == image_id]
+    assert image_out.kept_without_processing is True

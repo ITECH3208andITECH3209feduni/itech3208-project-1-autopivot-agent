@@ -157,7 +157,7 @@ def queue_everything(factory):
         return [job.id for job in jobs]
 
 
-def press_process(factory):
+def press_process(factory, force=False):
     """POST /api/listings/{id}/process, called as the route function.
 
     Returns the summary it answered with and the background tasks it
@@ -166,7 +166,7 @@ def press_process(factory):
     background = BackgroundTasks()
     with factory() as session:
         summary = routes_listings.process_listing(
-            LISTING_ID, ProcessRequest(), session.get(User, USER_ID), session, background
+            LISTING_ID, ProcessRequest(force=force), session.get(User, USER_ID), session, background
         )
     return summary, background
 
@@ -735,3 +735,142 @@ def test_a_job_left_pending_by_a_stopped_server_is_run_once_by_the_next_press(
     assert pipeline.calls[contents[image_id]] == 1
     assert history(sessions) == {image_id: [("completed", "ok")]}
     assert listing_status(sessions) == "complete"
+
+
+# ── force: redoing a listing against a new backdrop ───────────────────────────
+#
+# There is no stored pre-backdrop cutout, so `force` is a real second run of
+# the pipeline, not a cheap recomposite — and the first path that can leave
+# two processed Images for one original. These tests are the invariant that
+# protects: run_job retires whichever processed Image a photograph had before
+# once the fresh one succeeds, force never doubles up on a job already going,
+# and a permanently kept-without-processing photograph is never queued at all.
+
+
+def test_force_requeues_a_finished_photograph_and_retires_its_old_output(
+    sessions, monkeypatch
+):
+    """
+    force exists so a complete listing can be redone against a new backdrop,
+    so a photograph with a successful output must be queued again rather than
+    called done. Once the fresh job succeeds, the stale processed Image is
+    gone — not just orphaned — and the old job's output_image_id is null
+    while the new job's points at the new row, so one original never ends up
+    with two processed images on record.
+    """
+    (image_id,) = add_photographs(sessions, 1)
+    monkeypatch.setattr(processing, "_processor", Pipeline())
+    _, background = press_process(sessions)
+    run_scheduled(background)
+
+    with sessions() as session:
+        old_job = session.scalars(
+            select(ProcessingJob).where(ProcessingJob.input_image_id == image_id)
+        ).one()
+        old_job_id, old_output_id = old_job.id, old_job.output_image_id
+        old_output_path = session.get(Image, old_output_id).storage_path
+    assert old_output_id is not None
+    assert (storage.STORAGE_ROOT / old_output_path).is_file()
+
+    _, background = press_process(sessions, force=True)
+    run_scheduled(background)
+
+    with sessions() as session:
+        jobs = session.scalars(
+            select(ProcessingJob)
+            .where(ProcessingJob.input_image_id == image_id)
+            .order_by(ProcessingJob.id)
+        ).all()
+        assert len(jobs) == 2
+        old, new = jobs
+        assert old.id == old_job_id
+        assert old.output_image_id is None
+        assert new.status == "completed" and new.output_image_id is not None
+        assert session.get(Image, old_output_id) is None
+        new_output_path = session.get(Image, new.output_image_id).storage_path
+
+    assert not (storage.STORAGE_ROOT / old_output_path).exists()
+    assert (storage.STORAGE_ROOT / new_output_path).is_file()
+
+
+def test_force_does_not_double_queue_a_pending_job(sessions):
+    """A photograph already queued and waiting its turn is left to it — force
+    must not add a second job on top of the one it already has."""
+    (image_id,) = add_photographs(sessions, 1)
+    add_job(sessions, image_id, status="pending")
+
+    with sessions() as session:
+        jobs = processing.create_jobs(
+            session, session.get(VehicleListing, LISTING_ID), None, force=True
+        )
+        session.commit()
+
+    assert jobs == []
+    assert history(sessions) == {image_id: [("pending", None)]}
+
+
+def test_force_does_not_double_queue_a_job_currently_processing(sessions, monkeypatch):
+    """
+    The same guarantee against the job genuinely in the models right now, not
+    one a dead server left behind looking like it: force must not queue a
+    second job underneath the run already working on this photograph.
+    """
+    (image_id,) = add_photographs(sessions, 1)
+    pipeline = Pipeline(hold_first=True)
+    monkeypatch.setattr(processing, "_processor", pipeline)
+    queue_everything(sessions)
+
+    run = listing_run()
+    run.start()
+    try:
+        assert pipeline.inside.wait(HANG_GUARD_S), "the run never reached the models"
+        with sessions() as session:
+            jobs = processing.create_jobs(
+                session, session.get(VehicleListing, LISTING_ID), None, force=True
+            )
+            session.commit()
+    finally:
+        pipeline.go.set()
+        run.finish()
+
+    assert jobs == []
+    assert run.error is None
+    assert history(sessions) == {image_id: [("completed", "ok")]}
+
+
+def test_create_jobs_without_force_still_leaves_a_finished_photograph_alone(
+    sessions, monkeypatch
+):
+    """Unchanged behaviour: with no `force` (the default create_jobs has
+    always had), a photograph that already has a completed, successful job
+    is not queued again."""
+    add_photographs(sessions, 1)
+    monkeypatch.setattr(processing, "_processor", Pipeline())
+    queue_everything(sessions)
+    processing.run_listing_jobs(LISTING_ID)
+
+    with sessions() as session:
+        jobs = processing.create_jobs(session, session.get(VehicleListing, LISTING_ID), None)
+        session.commit()
+
+    assert jobs == []
+
+
+def test_force_never_queues_a_photograph_kept_without_processing(sessions):
+    """
+    kept_without_processing is a permanent opt-out, not a one-time skip —
+    force, the strongest case there is, still must not queue a job for it.
+    """
+    (image_id,) = add_photographs(sessions, 1)
+    with sessions() as session:
+        session.get(Image, image_id).kept_without_processing = True
+        session.commit()
+
+    with sessions() as session:
+        jobs = processing.create_jobs(
+            session, session.get(VehicleListing, LISTING_ID), None, force=True
+        )
+        session.commit()
+
+    assert jobs == []
+    assert history(sessions) == {}

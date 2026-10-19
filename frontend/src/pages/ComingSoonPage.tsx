@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useSignInRedirect } from '../auth/AuthContext'
 import LoginModal from '../components/LoginModal'
 import PreviewToggle from '../components/PreviewToggle'
+import RealPhotoShowcase from '../components/RealPhotoShowcase'
 import { C, MONO, RADIUS_CONTROL, SANS, serif } from '../design'
 
 export default function ComingSoonPage() {
@@ -88,6 +89,8 @@ export default function ComingSoonPage() {
           Dealer accounts are provisioned directly
         </div>
       </main>
+
+      <RealPhotoShowcase />
 
       <footer style={{
         padding: '24px 32px', display: 'flex', alignItems: 'center',

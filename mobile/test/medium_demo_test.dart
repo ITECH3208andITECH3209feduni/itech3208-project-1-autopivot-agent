@@ -76,6 +76,16 @@ class _MemoryPreferences extends AppPreferences {
 
   @override
   Future<void> setWelcomeTourSeen(bool value) async {}
+
+  // Demo capture mode is irrelevant to every scenario this file drives, but
+  // AppPreferencesController.load() awaits this pair alongside the other
+  // three -- an un-overridden pair here falls through to the real,
+  // un-mocked FlutterSecureStorage channel and hangs the test indefinitely.
+  @override
+  Future<bool> demoCaptureModeEnabled() async => false;
+
+  @override
+  Future<void> setDemoCaptureModeEnabled(bool value) async {}
 }
 
 /// Stands in for the server at the transport, as in session_expiry_test.dart.

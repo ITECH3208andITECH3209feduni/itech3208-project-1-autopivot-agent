@@ -5,10 +5,14 @@
 /// perfectly framed, perfectly centred car and still be useless because the
 /// photographer's hand moved or the sun bounced straight off a door panel.
 ///
-/// Runs on the same BGRA8888 camera frame `capture_screen.dart` already
-/// decodes for ML Kit, at the same throttled cadence — no extra frame
-/// capture, just extra arithmetic on bytes already in hand. Deliberately
-/// samples a sparse grid (every [_stride]th pixel) rather than every pixel:
+/// Runs on the same camera frame `capture_screen.dart`'s stream is already
+/// decoding, at the same throttled cadence — no extra frame capture, just
+/// extra arithmetic on bytes already in hand. Which bytes those are depends
+/// on platform: iOS hands over BGRA8888 (the format ML Kit's own frame also
+/// arrives in), Android NV21 — see [_lumaReader], the one place in this
+/// file that has to know the difference. Everything below works in plain
+/// 0-255 luma, oblivious to which format produced it. Deliberately samples
+/// a sparse grid (every [_stride]th pixel) rather than every pixel:
 /// a full-resolution double loop in Dart on a live camera frame would cost
 /// far more than the 400ms analysis budget this shares with ML Kit allows,
 /// and a sparse grid is entirely sufficient for a coarse "is this obviously
@@ -76,12 +80,14 @@ ImageQualityReading analyzeImageQuality(CameraImage image) {
   final width = image.width;
   final height = image.height;
 
-  double lumaAt(int x, int y) {
-    final offset = y * bytesPerRow + x * 4;
-    final b = bytes[offset];
-    final g = bytes[offset + 1];
-    final r = bytes[offset + 2];
-    return 0.299 * r + 0.587 * g + 0.114 * b;
+  final lumaAt = _lumaReader(image.format.group, bytes, bytesPerRow);
+  // A format this check has no byte layout for (yuv420, jpeg, unknown):
+  // capture_screen.dart only ever requests bgra8888 (iOS) or nv21 (Android)
+  // for the stream this runs on, so in practice this never fires. It's a
+  // safety net against misreading bytes under a layout assumption that
+  // doesn't hold, not a path either platform actually takes today.
+  if (lumaAt == null) {
+    return const ImageQualityReading(sharpness: 0, overexposedFraction: 0);
   }
 
   var sampleCount = 0;
@@ -118,6 +124,47 @@ ImageQualityReading analyzeImageQuality(CameraImage image) {
     overexposedFraction: overexposedCount / sampleCount,
   );
 }
+
+/// A reader for the 0-255 luma value at pixel ([x], [y]) out of [bytes], one
+/// plane laid out with row stride [bytesPerRow] — or null when [group] is a
+/// format this check doesn't have a byte layout for.
+///
+/// Looked up once per frame rather than branched on per pixel, and keyed on
+/// [group] rather than on `Platform.isIOS`/`isAndroid`: this does the right
+/// thing for whatever bytes a frame actually carries, not whatever a given
+/// platform is merely expected to send — the two happen to line up today
+/// (see capture_screen.dart's `imageFormatGroup`), but the format a camera
+/// stream delivers is a configuration choice, not a law of the platform. A
+/// function keyed on the real thing is also the one a test can drive
+/// directly, with made-up bytes and a format label, without pretending to
+/// be a platform at all.
+double Function(int x, int y)? _lumaReader(
+  ImageFormatGroup group,
+  List<int> bytes,
+  int bytesPerRow,
+) => switch (group) {
+  ImageFormatGroup.bgra8888 => (x, y) {
+    // iOS's single plane interleaves 4 bytes per pixel as B-G-R-A
+    // (kCVPixelFormatType_32BGRA) — the standard luma weights applied to
+    // the red/green/blue bytes sitting at offsets 2/1/0 within each.
+    final offset = y * bytesPerRow + x * 4;
+    final b = bytes[offset];
+    final g = bytes[offset + 1];
+    final r = bytes[offset + 2];
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  },
+  ImageFormatGroup.nv21 => (x, y) {
+    // NV21's first plane *is* luma already: one byte per pixel, the
+    // 0-255 value directly, no RGB math to do. The interleaved VU bytes
+    // that follow belong to a second plane this function never reads —
+    // planes.first stops at the end of Y, and this check has no use for
+    // colour.
+    return bytes[y * bytesPerRow + x].toDouble();
+  },
+  ImageFormatGroup.yuv420 ||
+  ImageFormatGroup.jpeg ||
+  ImageFormatGroup.unknown => null,
+};
 
 ImageQuality evaluateImageQuality(ImageQualityReading reading) {
   if (reading.overexposedFraction > _overexposedFractionThreshold) {

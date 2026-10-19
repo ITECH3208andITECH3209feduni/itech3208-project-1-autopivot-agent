@@ -158,6 +158,10 @@ class _Server extends ApiClient {
   Future<ProcessingSummary> processListing(
     int listingId, {
     int? backdropId,
+    // Unused here: this fake models a fresh submission's own first queue,
+    // which force has nothing to do with. Declared only because an override
+    // must accept every named parameter the method it overrides does.
+    bool force = false,
   }) async {
     final listing = _find(listingId);
     if (processingUnavailable) throw const ApiServerException();

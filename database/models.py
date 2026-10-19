@@ -404,6 +404,9 @@ class Image(Base):
     kind_confidence: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(4, 3), nullable=True
     )
+    kept_without_processing: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
+    )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[str] = mapped_column(
         String(1000), nullable=False, unique=True

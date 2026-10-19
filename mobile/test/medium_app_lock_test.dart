@@ -87,6 +87,16 @@ class _MemoryPreferences extends AppPreferences {
 
   @override
   Future<void> setWelcomeTourSeen(bool value) async {}
+
+  // Demo capture mode is irrelevant to every scenario this file drives, but
+  // AppPreferencesController.load() awaits this pair alongside the other
+  // three -- an un-overridden pair here falls through to the real,
+  // un-mocked FlutterSecureStorage channel and hangs the test indefinitely.
+  @override
+  Future<bool> demoCaptureModeEnabled() async => false;
+
+  @override
+  Future<void> setDemoCaptureModeEnabled(bool value) async {}
 }
 
 /// The phone's own biometric or passcode check, as local_auth asks for it.

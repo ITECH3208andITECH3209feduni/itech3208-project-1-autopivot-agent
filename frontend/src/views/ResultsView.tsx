@@ -196,9 +196,12 @@ function VehiclesList() {
 
 type GalleryMode = 'processed' | 'original'
 
-function ExcludedTile({ image, onRemove, reason, badge }: {
+function ExcludedTile({ image, onRemove, onInclude, reason, badge }: {
   image: ListingImage
   onRemove: () => void
+  // Only the kind-excluded ("left out of the listing") section passes this —
+  // a job-failure tile has nothing a classifier verdict could fix.
+  onInclude?: (mode: 'rerun' | 'keep_only') => void
   reason?: string
   badge?: string
 }) {
@@ -235,7 +238,21 @@ function ExcludedTile({ image, onRemove, reason, badge }: {
         }}>
           {image.original_filename}
         </p>
-        <div style={{ marginTop: 'auto', paddingTop: 4 }}>
+        <div style={{ marginTop: 'auto', paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {onInclude && (
+            <>
+              <RemoveBtn
+                label="Include for processing"
+                ariaLabel={`Include for processing — ${image.original_filename}`}
+                onClick={() => onInclude('rerun')}
+              />
+              <RemoveBtn
+                label="Include without processing"
+                ariaLabel={`Include without processing — ${image.original_filename}`}
+                onClick={() => onInclude('keep_only')}
+              />
+            </>
+          )}
           <RemoveBtn
             label="Remove"
             ariaLabel={`Remove ${image.original_filename}`}
@@ -332,16 +349,26 @@ function VehicleDetail({ listingId }: { listingId: number }) {
     return () => { cancelled = true }
   }, [])
 
-  async function startProcessing() {
+  async function startProcessing(force: boolean) {
     setStarting(true)
     setProcessError(null)
     try {
-      await api.processListing(listingId, backdropId)
+      await api.processListing(listingId, backdropId, force)
       navigate(`/app/processing/${listingId}`)
     } catch (err) {
       setProcessError((err as Error).message)
     } finally {
       setStarting(false)
+    }
+  }
+
+  async function includeImage(image: ListingImage, mode: 'rerun' | 'keep_only') {
+    setActionError(null)
+    try {
+      await api.includeImage(listingId, image.id, mode)
+      await load()
+    } catch (err) {
+      setActionError((err as Error).message)
     }
   }
 
@@ -415,8 +442,12 @@ function VehicleDetail({ listingId }: { listingId: number }) {
     const seen = latestJob.get(job.input_image_id)
     if (!seen || job.id > seen.id) latestJob.set(job.input_image_id, job)
   }
-  const unusable = kept
-    .filter(i => !hasOutput.has(i.id))
+  // Everything the normal (force: false) path still has to do. None left
+  // means "process remaining" has nothing left to mean — that is the signal
+  // to offer a redo instead.
+  const unprocessedKept = kept.filter(i => !hasOutput.has(i.id))
+  const readyToRedo = kept.length > 0 && unprocessedKept.length === 0
+  const unusable = unprocessedKept
     .map(i => ({ image: i, job: latestJob.get(i.id) }))
     .filter((x): x is { image: ListingImage; job: ProcessingJob } =>
       !!x.job && x.job.status !== 'pending' && x.job.status !== 'processing'
@@ -588,6 +619,7 @@ function VehicleDetail({ listingId }: { listingId: number }) {
               <ExcludedTile
                 key={image.id}
                 image={image}
+                onInclude={mode => void includeImage(image, mode)}
                 onRemove={() => setImageToDelete(image)}
               />
             ))}
@@ -598,11 +630,14 @@ function VehicleDetail({ listingId }: { listingId: number }) {
       {kept.length > 0 && (
         <Card style={{ padding: 20, marginTop: 32, maxWidth: 640 }}>
           <p style={sectionHeading}>
-            {processed.length ? 'Process remaining photographs' : 'Process these photographs'}
+            {readyToRedo
+              ? 'Redo with a different backdrop'
+              : processed.length ? 'Process remaining photographs' : 'Process these photographs'}
           </p>
           <p style={{ ...quietBody, margin: '0 0 16px' }}>
-            Vehicle detection, background removal, plate masking, then the chosen
-            backdrop. Without one the vehicle comes back on transparency.
+            {readyToRedo
+              ? 'Every photograph here already has a result. Pick a backdrop and run the whole listing through the pipeline again from the original photographs — this replaces what is there now.'
+              : 'Vehicle detection, background removal, plate masking, then the chosen backdrop. Without one the vehicle comes back on transparency.'}
           </p>
 
           {processError && <Alert>{processError}</Alert>}
@@ -630,8 +665,10 @@ function VehicleDetail({ listingId }: { listingId: number }) {
                 ))}
               </select>
             </label>
-            <SolidBtn onClick={startProcessing} disabled={starting}>
-              {starting ? 'Starting…' : 'Start processing'}
+            <SolidBtn onClick={() => startProcessing(readyToRedo)} disabled={starting}>
+              {starting
+                ? (readyToRedo ? 'Redoing…' : 'Starting…')
+                : (readyToRedo ? 'Redo with this backdrop' : 'Start processing')}
             </SolidBtn>
           </div>
 

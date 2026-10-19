@@ -40,6 +40,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/api_exception.dart';
+import '../../api/models/backdrop.dart';
 import '../../api/models/listing_detail.dart';
 import '../../api/models/listing_image.dart';
 import '../../api/models/processing_summary.dart';
@@ -47,6 +48,7 @@ import '../../api/models/vehicle_listing.dart';
 import '../../auth/auth_controller.dart';
 import '../../design/tokens.dart';
 import '../../design/typography.dart';
+import '../../settings/app_preferences.dart';
 import '../../widgets/authed_image.dart';
 import '../../widgets/primitives.dart';
 import '../../widgets/skeleton.dart';
@@ -145,6 +147,15 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   bool _retrying = false;
   bool _deletingListing = false;
 
+  /// The dealership's backdrop library, offered once [_loadedBody] finds
+  /// nothing left outstanding — see [_redoSection]. Null while still
+  /// loading, distinct from an empty list once a dealership turns out to
+  /// have no backdrops at all.
+  List<Backdrop>? _redoBackdrops;
+  String? _redoBackdropsError;
+  int? _selectedRedoBackdropId;
+  bool _redoing = false;
+
   /// The most recent delete or include failure, already safe to show as-is
   /// per [ApiException.message]. Cleared at the start of the next attempt
   /// rather than on a timer or a dismiss button, neither of which the brief
@@ -157,6 +168,20 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
   /// after that point invalidates it.
   ProcessingSummary? _progress;
   Timer? _pollTimer;
+
+  /// Whether the last summary [_noteProgress] saw still had outstanding
+  /// work — compared against each new one to catch the one moment that
+  /// actually matters: the pipeline finishing while this screen is open,
+  /// not an already-finished listing simply being opened. Starts false
+  /// specifically so that moment can never fire on this screen's very first
+  /// load, however complete the listing already is — there is nothing yet
+  /// for it to have transitioned from.
+  bool _wasInProgress = false;
+
+  /// Whether [_ProcessingCompleteCelebration] belongs in the tree right now
+  /// — see [_noteProgress] for what sets it, and the widget's own
+  /// `onFinished` for what clears it again once its one playthrough ends.
+  bool _showCelebration = false;
 
   @override
   void initState() {
@@ -183,6 +208,11 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       await _refreshProgress();
       if (!mounted) return;
       _pollWhileProcessing(listing.processingStatus);
+      // Also unconditional, and for the same reason: a listing already
+      // complete when this screen opens must find the redo picker ready,
+      // not waiting on a second fetch triggered only once _loadedBody first
+      // notices there is nothing left outstanding.
+      await _loadRedoBackdrops();
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _state = _LoadFailed(e.message));
@@ -198,9 +228,57 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       final summary = await ref
           .read(apiClientProvider)
           .listingJobs(widget.listingId);
-      if (mounted) setState(() => _progress = summary);
+      if (mounted) {
+        setState(() {
+          _progress = summary;
+          _noteProgress(summary);
+        });
+      }
     } on ApiException {
       // Leave whatever _progress already had.
+    }
+  }
+
+  /// Compares the processing state a fresh summary carries against the
+  /// state the previous one carried, to catch the pipeline genuinely
+  /// finishing while this screen is open and polling. Called from both
+  /// places that update [_progress] — this method and the poll tick inside
+  /// [_pollWhileProcessing] — right after each does, so neither has to
+  /// duplicate the comparison. Never fires on this screen's first load,
+  /// however complete the listing already is — see [_wasInProgress]'s own
+  /// doc comment.
+  void _noteProgress(ProcessingSummary summary) {
+    final inProgress = summary.isInProgress;
+    if (_wasInProgress && !inProgress) {
+      haptic(ref, HapticFeedbackType.medium);
+      _showCelebration = true;
+    }
+    _wasInProgress = inProgress;
+  }
+
+  /// See [_load]'s call to this and [_redoSection]: a failure here is not
+  /// worth taking the whole screen down for, the same reasoning
+  /// [_refreshProgress] already applies to itself. A dealership with none
+  /// yet gets back an empty list, not an error — see [ApiClient.backdrops]'s
+  /// own doc comment — so [_redoBackdropsError] only ever means the request
+  /// itself failed.
+  Future<void> _loadRedoBackdrops() async {
+    try {
+      final backdrops = await ref.read(apiClientProvider).backdrops();
+      if (!mounted) return;
+      setState(() {
+        _redoBackdrops = backdrops;
+        // A choice already made (by whoever is mid-redo) always wins — only
+        // default once, the same rule review_screen.dart's own backdrop
+        // picker applies to its first load.
+        if (_selectedRedoBackdropId == null) {
+          final defaults = backdrops.where((b) => b.isDefault);
+          if (defaults.isNotEmpty) _selectedRedoBackdropId = defaults.first.id;
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _redoBackdropsError = e.message);
     }
   }
 
@@ -230,7 +308,10 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
       try {
         final summary = await api.listingJobs(widget.listingId);
         if (!mounted) return;
-        setState(() => _progress = summary);
+        setState(() {
+          _progress = summary;
+          _noteProgress(summary);
+        });
         if (!summary.isInProgress) {
           _pollTimer?.cancel();
           await _load();
@@ -319,10 +400,17 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
     }
   }
 
-  /// Overrides the classifier's exclusion for one photograph — see the
-  /// server route's own doc comment for why this is one-way, not a toggle
+  /// Overrides the classifier's exclusion for one photograph, in either of
+  /// the two ways [_ExcludedTile] offers: [mode] 'rerun' treats it as an
+  /// exterior photograph for the usual reprocessing flow to pick up;
+  /// 'keep_only' leaves the classifier's own verdict on the record and
+  /// instead opts the photograph out of the pipeline for good. See the
+  /// server route's own doc comment for why neither direction is a toggle
   /// back to the original classification.
-  Future<void> _handleInclude(ListingImage image) async {
+  Future<void> _handleInclude(
+    ListingImage image, {
+    required String mode,
+  }) async {
     if (_includingImageIds.contains(image.id)) return;
 
     setState(() {
@@ -333,7 +421,7 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
     try {
       final updated = await ref
           .read(apiClientProvider)
-          .includeImage(widget.listingId, image.id);
+          .includeImage(widget.listingId, image.id, mode: mode);
       if (!mounted) return;
 
       final current = _state;
@@ -396,6 +484,37 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
     }
   }
 
+  /// Redoes every photograph on a listing that already has nothing left to
+  /// queue — see [_redoSection], offered only then. Unlike [_handleRetry],
+  /// which only ever picks up outstanding work, this deliberately re-runs
+  /// photographs that already have a successful result, which is why it is
+  /// the one caller on this screen that passes `force` — see
+  /// `ApiClient.processListing`'s own doc comment for what that does
+  /// server-side.
+  Future<void> _handleRedo() async {
+    if (_redoing) return;
+    setState(() {
+      _redoing = true;
+      _actionErrorMessage = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .processListing(
+            widget.listingId,
+            backdropId: _selectedRedoBackdropId,
+            force: true,
+          );
+      if (!mounted) return;
+      await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _actionErrorMessage = e.message);
+    } finally {
+      if (mounted) setState(() => _redoing = false);
+    }
+  }
+
   IconButton _backButton() => IconButton(
     onPressed: () => Navigator.of(context).pop(),
     icon: const Icon(Icons.arrow_back, color: C.inkSoft),
@@ -404,7 +523,27 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: SafeArea(child: _content(_state)));
+    return Scaffold(
+      body: SafeArea(
+        child: Stack(
+          children: [
+            _content(_state),
+            if (_showCelebration)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Center(
+                    child: _ProcessingCompleteCelebration(
+                      onFinished: () {
+                        if (mounted) setState(() => _showCelebration = false);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _content(_Load state) => switch (state) {
@@ -622,6 +761,15 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                   const SizedBox(height: Space.sm),
                   _needsReviewWrap(needsReviewOriginals, jobsByInputImageId),
                 ],
+                // Nothing left to queue — Process/Retry above have no work
+                // left to offer, but a dealer who adds a new backdrop after
+                // the fact still has a reason to redo the whole set with it.
+                if (awaitingOriginals.isEmpty &&
+                    needsReviewOriginals.isEmpty &&
+                    originals.isNotEmpty) ...[
+                  const SizedBox(height: Space.xl),
+                  _redoSection(),
+                ],
                 if (excludedOriginals.isNotEmpty) ...[
                   const SizedBox(height: Space.xl),
                   _sectionHeading('EXCLUDED (${excludedOriginals.length})'),
@@ -689,22 +837,20 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
         ),
         Padding(
           padding: const EdgeInsets.only(top: Space.sm),
-          child: PopupMenuButton<void>(
-            enabled: !_deletingListing,
+          // A direct action, not a menu that opens to reveal its one item —
+          // the overflow menu this used to be made sense only once there was
+          // more than one thing in it. The confirmation dialog this already
+          // asks before doing anything stays exactly as it was; only the
+          // extra tap to find the option is gone.
+          child: IconButton(
+            onPressed: _deletingListing
+                ? null
+                : () => _handleDeleteListing(listing),
             icon: Icon(
-              Icons.more_vert,
-              color: _deletingListing ? C.inkSoft : C.ink,
+              Icons.delete_outline,
+              color: _deletingListing ? C.inkSoft : C.rust,
             ),
-            tooltip: 'More',
-            itemBuilder: (context) => [
-              PopupMenuItem<void>(
-                onTap: () => _handleDeleteListing(listing),
-                child: Text(
-                  'Delete listing',
-                  style: T.body.copyWith(color: C.rust),
-                ),
-              ),
-            ],
+            tooltip: 'Delete listing',
           ),
         ),
       ],
@@ -815,12 +961,223 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                 'Excluded original photograph: ${image.originalFilename}. '
                 '$reason',
             isDeleting: _deletingImageIds.contains(image.id),
-            isIncluding: _includingImageIds.contains(image.id),
+            isUpdating: _includingImageIds.contains(image.id),
             onDelete: () => _handleDelete(image),
-            onInclude: () => _handleInclude(image),
+            onInclude: () => _handleInclude(image, mode: 'rerun'),
+            onKeep: () => _handleInclude(image, mode: 'keep_only'),
           ),
         );
       }).toList(),
+    );
+  }
+
+  /// Lets a dealer redo every photograph on a listing that already has
+  /// nothing outstanding, with a different backdrop — [_handleRetry] above
+  /// has nothing left to offer once every original is paired, but a
+  /// dealership that adds a backdrop afterwards still has a reason to run
+  /// the whole set through the pipeline again. There is no shared
+  /// backdrop-picker widget to reuse here any more than
+  /// [_DeleteConfirmDialog] had a shared dialog to reuse — the only other
+  /// one in this app lives on `review_screen.dart`'s own form, built around
+  /// a `TextFormField`-heavy layout this screen has no equivalent of.
+  Widget _redoSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _sectionHeading('REDO WITH A NEW BACKDROP'),
+            _redoButton(),
+          ],
+        ),
+        const SizedBox(height: Space.sm),
+        _redoBackdropPickerBody(),
+      ],
+    );
+  }
+
+  /// [_handleRedo], beside [_redoSection]'s own heading — the same small,
+  /// inline style as [_processButton], for the same reason: it sits next to
+  /// a caption-sized heading rather than standing on its own.
+  Widget _redoButton() => TextButton(
+    onPressed: _redoing ? null : _handleRedo,
+    style: TextButton.styleFrom(
+      padding: EdgeInsets.zero,
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+    child: Text(
+      _redoing ? 'Redoing…' : 'Redo',
+      style: T.caption.copyWith(color: C.forest),
+    ),
+  );
+
+  /// The three states [_loadRedoBackdrops] can leave this in — the same
+  /// three states `review_screen.dart`'s own `_backdropPicker` handles for
+  /// the same reason, though that screen's private widget is not reachable
+  /// from here (see [_redoSection]'s own doc comment).
+  Widget _redoBackdropPickerBody() {
+    final error = _redoBackdropsError;
+    if (error != null) {
+      return Text(
+        "Backdrops couldn't be loaded, so redoing now would use a "
+        'transparent background.',
+        style: T.bodySmall,
+      );
+    }
+    final backdrops = _redoBackdrops;
+    if (backdrops == null) {
+      return const SizedBox(
+        height: 32,
+        child: Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (backdrops.isEmpty) {
+      return Text(
+        'No backdrops in the library yet — redoing now would use a '
+        'transparent background.',
+        style: T.bodySmall,
+      );
+    }
+    return _redoBackdropPicker(backdrops);
+  }
+
+  /// Chips rather than `review_screen.dart`'s own image-tile picker: that one
+  /// sits inside a form already dense with text fields and benefits from a
+  /// thumbnail to tell backdrops apart at a glance; here it is the only
+  /// thing in its section, and [Wrap] plus [ChoiceChip] is the pattern
+  /// [_excludedWrap] already uses on this exact screen for "pick one of
+  /// several options" at a glance.
+  Widget _redoBackdropPicker(List<Backdrop> backdrops) {
+    return Wrap(
+      spacing: Space.sm,
+      runSpacing: Space.xs,
+      children: [
+        ChoiceChip(
+          label: const Text('None'),
+          selected: _selectedRedoBackdropId == null,
+          onSelected: (_) => setState(() => _selectedRedoBackdropId = null),
+        ),
+        for (final backdrop in backdrops)
+          ChoiceChip(
+            label: Text(backdrop.name),
+            selected: _selectedRedoBackdropId == backdrop.id,
+            onSelected: (_) =>
+                setState(() => _selectedRedoBackdropId = backdrop.id),
+          ),
+      ],
+    );
+  }
+}
+
+/// The one-shot checkmark [_ListingDetailScreenState._noteProgress] shows
+/// when the pipeline genuinely finishes while this screen is open, rather
+/// than an already-complete listing simply being opened. Only ever mounted
+/// for the length of one celebration — built conditionally by
+/// [_ListingDetailScreenState.build] rather than kept around and toggled —
+/// so "on mount" and "the moment the celebration should play" are the same
+/// moment, the same reasoning [ShimmerGroup] (skeleton.dart) applies to its
+/// own reduced-motion check living in [State.didChangeDependencies] rather
+/// than [State.initState]: `MediaQuery` is not attached yet in the latter.
+class _ProcessingCompleteCelebration extends StatefulWidget {
+  const _ProcessingCompleteCelebration({required this.onFinished});
+
+  /// Called once this tile has shown long enough to actually be seen —
+  /// settled instantly under reduced motion, animated in otherwise — so
+  /// [_ListingDetailScreenState] can take it out of the tree again. Without
+  /// this it would sit on screen, centred over everything, for good.
+  final VoidCallback onFinished;
+
+  @override
+  State<_ProcessingCompleteCelebration> createState() =>
+      _ProcessingCompleteCelebrationState();
+}
+
+class _ProcessingCompleteCelebrationState
+    extends State<_ProcessingCompleteCelebration>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  /// Guards [didChangeDependencies] against starting a second time — it can
+  /// run again later for reasons that have nothing to do with this widget
+  /// (a theme or locale change further up the tree), and this plays once
+  /// per mount, not once per such call.
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    // Scale is the bounce, so it is the one allowed to overshoot past 1.0 —
+    // Curves.elasticOut does exactly that, which is the whole appeal of it
+    // here. Opacity cannot tolerate the same overshoot (Opacity asserts its
+    // value stays within 0.0-1.0), so it eases in on a plain curve instead.
+    _scale = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
+    _opacity = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (MediaQuery.of(context).disableAnimations) {
+      // The settled "done" look, straight away — full size, fully opaque —
+      // rather than any faster or simplified version of the same bounce.
+      _controller.value = 1;
+      _scheduleFinish();
+    } else {
+      _controller.forward().whenComplete(_scheduleFinish);
+    }
+  }
+
+  /// However this tile reached its settled look — animated in, or straight
+  /// there under reduced motion — it stays long enough to actually be seen
+  /// before [onFinished] removes it.
+  void _scheduleFinish() {
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (mounted) widget.onFinished();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: ScaleTransition(
+        scale: _scale,
+        child: Semantics(
+          liveRegion: true,
+          label: 'Processing complete',
+          child: Container(
+            padding: const EdgeInsets.all(Space.md),
+            decoration: const BoxDecoration(
+              color: C.white,
+              shape: BoxShape.circle,
+              boxShadow: cardShadow,
+            ),
+            child: const Icon(Icons.check_circle, color: C.forest, size: 40),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -829,8 +1186,8 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
 
 /// One photograph: the image itself, a delete button overlaid in a corner,
 /// Used for processed results and usable originals; an excluded original
-/// uses [_ExcludedTile] instead, which needs a reason caption and a second
-/// action this tile does not.
+/// uses [_ExcludedTile] instead, which needs a reason caption and further
+/// actions this tile does not.
 class _PhotoTile extends StatelessWidget {
   const _PhotoTile({
     required this.image,
@@ -998,15 +1355,81 @@ class _BeforeAfterTile extends StatefulWidget {
   State<_BeforeAfterTile> createState() => _BeforeAfterTileState();
 }
 
-class _BeforeAfterTileState extends State<_BeforeAfterTile> {
+class _BeforeAfterTileState extends State<_BeforeAfterTile>
+    with SingleTickerProviderStateMixin {
   /// 0 shows only the processed result, 1 shows only the original. Starts
   /// at the midpoint — the same split point the old side-by-side layout
   /// showed by default, just now adjustable instead of fixed.
   double _split = 0.5;
 
+  /// Plays [_sweepAnimation] once, on first appearance — see
+  /// [didChangeDependencies] — so a tile a visitor has not touched yet still
+  /// demonstrates that it is draggable at all, rather than sitting dead
+  /// still until someone happens to try.
+  late final AnimationController _sweepController;
+
+  /// 0.5 → ~0.15 → ~0.85 → back to 0.5, the brief demonstration sweep.
+  /// Weighted 1:2:1 so each leg covers roughly the same split distance per
+  /// unit time before [Curves.easeInOut] shapes the overall pacing.
+  late final Animation<double> _sweepAnimation;
+
+  /// Guards [didChangeDependencies] against starting the sweep a second
+  /// time — it can run again later for reasons that have nothing to do with
+  /// this tile (a theme or locale change further up the tree), and this is
+  /// a once-per-tile demonstration, not a once-per-call one.
+  bool _sweepStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _sweepController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+    );
+    _sweepAnimation =
+        TweenSequence<double>([
+            TweenSequenceItem(tween: Tween(begin: 0.5, end: 0.15), weight: 1),
+            TweenSequenceItem(tween: Tween(begin: 0.15, end: 0.85), weight: 2),
+            TweenSequenceItem(tween: Tween(begin: 0.85, end: 0.5), weight: 1),
+          ]).animate(
+            CurvedAnimation(parent: _sweepController, curve: Curves.easeInOut),
+          )
+          ..addListener(_onSweepTick);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MediaQuery isn't available yet in initState — see skeleton.dart's
+    // ShimmerGroup for the same reasoning. Nothing to sweep for the
+    // single-pane fallback either (widget.original == null): there is no
+    // split to demonstrate.
+    if (_sweepStarted || widget.original == null) return;
+    _sweepStarted = true;
+    // Reduced motion means landing straight at the resting split with no
+    // transient movement at all, not a faster or simplified version of the
+    // same sweep — _split is already 0.5, so there is nothing further to do.
+    if (!MediaQuery.of(context).disableAnimations) {
+      _sweepController.forward();
+    }
+  }
+
+  void _onSweepTick() => setState(() => _split = _sweepAnimation.value);
+
   void _setSplitFromDx(double dx, double width) {
     if (width <= 0) return;
+    // A real drag or tap always wins over the auto-sweep immediately, even
+    // mid-flight — stopping first means the very next frame reflects the
+    // gesture, not wherever the sweep had reached, and nothing further
+    // overwrites it afterwards either.
+    _sweepController.stop();
     setState(() => _split = (dx / width).clamp(0.0, 1.0));
+  }
+
+  @override
+  void dispose() {
+    _sweepController.dispose();
+    super.dispose();
   }
 
   @override
@@ -1177,33 +1600,44 @@ class _CompareTag extends StatelessWidget {
 
 // ── Excluded tile ────────────────────────────────────────────────────────────
 
-/// An excluded original: the image, dimmed, a reason underneath it, and two
-/// actions — Include (overrides the classifier) or Delete. Until now Delete
-/// was the only action available here, which meant a photograph the
-/// classifier misjudged — an interior shot a dealer actually wanted, say —
-/// had no way back in except leaving it out entirely.
+/// An excluded original: the image, dimmed, a reason underneath it, and
+/// three actions — Include (overrides the classifier and reprocesses it),
+/// Keep as-is (leaves the classifier's verdict alone but shows it as a
+/// normal original anyway) or Delete. Until Include existed, Delete was the
+/// only action available here, which meant a photograph the classifier
+/// misjudged — an interior shot a dealer actually wanted, say — had no way
+/// back in except leaving it out entirely; Keep as-is covers the half of
+/// that gap Include does not, for a photograph a dealer wants visible but
+/// genuinely has no exterior to cut out.
 class _ExcludedTile extends StatelessWidget {
   const _ExcludedTile({
     required this.image,
     required this.reason,
     required this.semanticLabel,
     required this.isDeleting,
-    required this.isIncluding,
+    required this.isUpdating,
     required this.onDelete,
     required this.onInclude,
+    required this.onKeep,
   });
 
   final ListingImage image;
   final String reason;
   final String semanticLabel;
   final bool isDeleting;
-  final bool isIncluding;
+
+  /// True while either include mode is in flight — the two share one busy
+  /// flag because only one can ever run at a time (see
+  /// `_ListingDetailScreenState._includingImageIds`) and both equally mean
+  /// "don't let anything else on this tile start yet".
+  final bool isUpdating;
   final VoidCallback onDelete;
   final VoidCallback onInclude;
+  final VoidCallback onKeep;
 
   @override
   Widget build(BuildContext context) {
-    final busy = isDeleting || isIncluding;
+    final busy = isDeleting || isUpdating;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1226,8 +1660,8 @@ class _ExcludedTile extends StatelessWidget {
                 ),
                 if (busy)
                   Semantics(
-                    label: isIncluding
-                        ? 'Including this photograph'
+                    label: isUpdating
+                        ? 'Updating this photograph'
                         : 'Deleting this photograph',
                     child: const Stack(
                       fit: StackFit.expand,
@@ -1253,28 +1687,55 @@ class _ExcludedTile extends StatelessWidget {
         const SizedBox(height: Space.xs),
         Text(reason, style: T.bodySmall),
         const SizedBox(height: Space.xs),
-        Row(
-          children: [
-            Expanded(
-              child: TextButton(
-                onPressed: busy ? null : onInclude,
-                style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                child: Text(
-                  'Include',
-                  style: T.caption.copyWith(color: C.forest),
-                ),
-              ),
-            ),
-            Expanded(
-              child: TextButton(
-                onPressed: busy ? null : onDelete,
-                style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                child: Text('Delete', style: T.caption.copyWith(color: C.rust)),
-              ),
-            ),
-          ],
+        // Stacked rather than [_PhotoTile]'s old two-across row: a third
+        // action made two Expanded thirds of a 148-wide tile too tight for
+        // "Keep as-is" at a larger text scale, and intrinsic-width rows are
+        // already how [_NeedsReviewTile] lays out its own single action.
+        _ExcludedTileAction(
+          label: 'Include',
+          color: C.forest,
+          onPressed: busy ? null : onInclude,
+        ),
+        const SizedBox(height: Space.xs),
+        _ExcludedTileAction(
+          label: 'Keep as-is',
+          color: C.forest,
+          onPressed: busy ? null : onKeep,
+        ),
+        const SizedBox(height: Space.xs),
+        _ExcludedTileAction(
+          label: 'Delete',
+          color: C.rust,
+          onPressed: busy ? null : onDelete,
         ),
       ],
+    );
+  }
+}
+
+/// One action on an [_ExcludedTile] — compact like [_processButton], since
+/// three of these now stack in the same space two used to share as a row.
+class _ExcludedTileAction extends StatelessWidget {
+  const _ExcludedTileAction({
+    required this.label,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(label, style: T.caption.copyWith(color: color)),
     );
   }
 }

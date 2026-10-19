@@ -12,7 +12,7 @@ android {
     // targetSdk/minSdk below are untouched: this only changes what API
     // surface is visible at compile time, not what the app opts into at
     // runtime or which devices it installs on.
-    compileSdk = 37
+    compileSdkVersion("android-37.0")
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
